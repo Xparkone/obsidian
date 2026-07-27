@@ -277,7 +277,7 @@ Week 19+    ████████  持续学习 + 认证准备 + 实战项目
 - [[Docker-Build从入门到高级]]
 - [[Drone-CI-配置语法]]
 - [[Kaniko-容器镜像构建工具]]
-- [[gitlab-ci-argocd/README]]
+- [[CI-CD/gitlab-ci-argocd/README]]
 
 ### SRE
 - [[Prometheus-Grafana-Alertmanager-入门介绍]]
