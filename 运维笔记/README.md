@@ -82,8 +82,8 @@
 
 ### 脚本与工具
 
-- [kubectl-快捷工具-k.md](脚本与工具/kubectl-快捷工具-k.md) · [安装说明](脚本与工具/kubectl-快捷工具-k-安装说明.md)
-- [kubectl-交互式工具-kf.md](脚本与工具/kubectl-交互式工具-kf.md) · [安装说明](脚本与工具/kubectl-交互式工具-kf-安装说明.md)
+- [kubectl-快捷工具-k.md](kubectl-快捷工具-k.md) · [安装说明](kubectl-快捷工具-k-安装说明.md)
+- [kubectl-交互式工具-kf.md](kubectl-交互式工具-kf.md) · [安装说明](kubectl-交互式工具-kf-安装说明.md)
 
 ### 学习
 
