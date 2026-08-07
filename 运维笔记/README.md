@@ -6,18 +6,19 @@
 
 | 分类 | 说明 |
 |------|------|
-| [容器编排](容器编排/) | Docker / K8s / K3s / Istio / Argo |
-| [CI-CD](CI-CD/) | 流水线语法、镜像构建、Git、GitLab+ArgoCD 示例 |
+| [容器编排](容器编排/) | Docker / K8s / K3s / Helm / Istio / Argo |
+| [CI-CD](CI-CD/) | 流水线语法、GitLab、镜像构建、示例工程 |
 | [云服务](云服务/) | 公有云 / 私有云 / 虚拟化 / GPU 硬件 / ParallelCluster |
-| [网络](网络/) | DNS、VPN、Nginx、SSH 隧道 |
+| [网络](网络/) | DNS、VPN、Nginx、代理、抓包、域名 |
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
-| [监控](监控/) | Prometheus / Grafana / Alertmanager |
+| [监控](监控/) | Prometheus / Grafana / Loki / VictoriaLogs / DeepFlow |
+| [自动化](自动化/) | Ansible、知识库工作流与示例 |
 | [中间件](中间件/) | 消息队列等 |
-| [安全](安全/) | 访问控制（RBAC） |
+| [安全](安全/) | RBAC、UFW、高防与 WAF |
 | [脚本与工具](脚本与工具/) | kubectl 快捷脚本（k / kf） |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
 | [ai](ai/) | LLM / MCP / Skill / Hermes |
-| [go](go/) · [python](python/) | 语言入门与对比 |
+| [go](go/) · [python](python/) | 语言入门、对比与示例代码 |
 
 ---
 
@@ -32,13 +33,21 @@
 - [k8s-architecture.excalidraw.md](容器编排/k8s-architecture.excalidraw.md)
 - [K3s-部署指南.md](容器编排/K3s-部署指南.md)
 - [Docker-Build从入门到高级.md](容器编排/Docker-Build从入门到高级.md)
+- [Helm-3-从入门到生产实践.md](容器编排/Helm-3-从入门到生产实践.md)
 - [Istio-服务网格详解.md](容器编排/Istio-服务网格详解.md)
+- [Istio详细入门与实践指南.md](容器编排/Istio详细入门与实践指南.md)
 - [Argo-项目详解.md](容器编排/Argo-项目详解.md)
 
 ### CI-CD
 
 - [Git-命令详解.md](CI-CD/Git-命令详解.md)
 - [GitLab-CI-配置语法.md](CI-CD/GitLab-CI-配置语法.md)
+- [GitLab CICD YAML详细语法与使用方法.md](CI-CD/GitLab%20CICD%20YAML详细语法与使用方法.md)
+- [GitLab CICD 与 Gitea Actions 语法和使用指南.md](CI-CD/GitLab%20CICD%20与%20Gitea%20Actions%20语法和使用指南.md)
+- [GitLab 功能全景技术文档.md](CI-CD/GitLab%20功能全景技术文档.md)
+- [GitLab 域名配置技术文档（自建 Omnibus）.md](CI-CD/GitLab%20域名配置技术文档（自建%20Omnibus）.md)
+- [GitLab 数据导入技术文档：场景分流与实操指南.md](CI-CD/GitLab%20数据导入技术文档：场景分流与实操指南.md)
+- [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md)
 - [GitHub-Actions-配置语法.md](CI-CD/GitHub-Actions-配置语法.md)
 - [Jenkinsfile-配置语法.md](CI-CD/Jenkinsfile-配置语法.md)
 - [Drone-CI-配置语法.md](CI-CD/Drone-CI-配置语法.md)
@@ -47,6 +56,7 @@
 - [Kaniko-容器镜像构建工具.md](CI-CD/Kaniko-容器镜像构建工具.md)
 - [海外弹性GitLab-Runner构建方案.md](CI-CD/海外弹性GitLab-Runner构建方案.md)
 - [gitlab-ci-argocd/](CI-CD/gitlab-ci-argocd/) — GitLab CI + ArgoCD 示例工程
+- [examples/gitlab-compose/](CI-CD/examples/gitlab-compose/) — GitLab Docker Compose 示例
 
 ### 云服务
 
@@ -63,27 +73,50 @@
 - [DNS-详解.md](网络/DNS-详解.md)
 - [VPN-详解与配置.md](网络/VPN-详解与配置.md)
 - [Nginx-完全指南.md](网络/Nginx-完全指南.md)
+- [nginx-lua-guide.md](网络/nginx-lua-guide.md)
+- [l4-vs-l7-proxy-guide.md](网络/l4-vs-l7-proxy-guide.md)
+- [domain-name-guide.md](网络/domain-name-guide.md)
+- [tcpdump-guide.md](网络/tcpdump-guide.md)
 - [SSH-反向隧道配置.md](网络/SSH-反向隧道配置.md)
 
 ### 数据库
 
+- [数据库技术文档：从入门到落地使用.md](数据库/数据库技术文档：从入门到落地使用.md)
 - [MySQL-常用命令.md](数据库/MySQL-常用命令.md)
 - [PostgreSQL-常用命令.md](数据库/PostgreSQL-常用命令.md)
+- [PostgreSQL由浅到深-运维与开发指南.md](数据库/PostgreSQL由浅到深-运维与开发指南.md)
 - [MongoDB-常用命令.md](数据库/MongoDB-常用命令.md)
+- [MongoDB由浅到深-运维与开发指南.md](数据库/MongoDB由浅到深-运维与开发指南.md)
 - [Redis-常用命令.md](数据库/Redis-常用命令.md)
 - [Redis-原理详解.md](数据库/Redis-原理详解.md)
 - [Redis-缓存雪崩击穿穿透.md](数据库/Redis-缓存雪崩击穿穿透.md)
 
-### 监控 / 中间件 / 安全
+### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md](监控/日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md)
+- [VictoriaLogs-Grafana-Alloy部署运维文档.md](监控/VictoriaLogs-Grafana-Alloy部署运维文档.md)
+- [deepflow-deployment-and-usage.md](监控/deepflow-deployment-and-usage.md)
+
+### 自动化
+
+- [ansible-README.md](自动化/ansible-README.md)
+- [ansible-usage-guide.md](自动化/ansible-usage-guide.md)
+- [ops-kb-workflow-guide.md](自动化/ops-kb-workflow-guide.md)
+- [examples/nginx-site/](自动化/examples/nginx-site/) — Ansible Nginx 站点示例
+- [workflows/](自动化/workflows/) — 知识库 chatbot 等工作流配置
+
+### 中间件 / 安全
+
 - [消息队列对比.md](中间件/消息队列对比.md)
 - [RBAC详解.md](安全/RBAC详解.md)
+- [ufw-usage-guide.md](安全/ufw-usage-guide.md)
+- [高防与WAF技术说明.md](安全/高防与WAF技术说明.md)
 
 ### 脚本与工具
 
-- [kubectl-快捷工具-k.md](kubectl-快捷工具-k.md) · [安装说明](kubectl-快捷工具-k-安装说明.md)
-- [kubectl-交互式工具-kf.md](kubectl-交互式工具-kf.md) · [安装说明](kubectl-交互式工具-kf-安装说明.md)
+- [kubectl-快捷工具-k.md](脚本与工具/kubectl-快捷工具-k.md) · [安装说明](脚本与工具/kubectl-快捷工具-k-安装说明.md)
+- [kubectl-交互式工具-kf.md](脚本与工具/kubectl-交互式工具-kf.md) · [安装说明](脚本与工具/kubectl-交互式工具-kf-安装说明.md)
 
 ### 学习
 
@@ -96,4 +129,5 @@
 
 - [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
+- [todo-api/](go/todo-api/) — Go Todo API 示例
 - [Python入门介绍.md](python/Python入门介绍.md) · [Python-列表-元组-字典详解.md](python/Python-列表-元组-字典详解.md)

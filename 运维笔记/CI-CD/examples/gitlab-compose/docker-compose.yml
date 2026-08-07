@@ -1,0 +1,29 @@
+# GitLab CE — Docker Compose 示例
+# 参考官方文档：https://docs.gitlab.com/install/docker/installation/
+# 使用前请将下方标记为【需要确认】的值改成你的实际环境。
+
+services:
+  gitlab:
+    # 【需要确认】建议钉死具体版本，例如 17.11.0-ce.0；勿长期用 latest
+    image: gitlab/gitlab-ce:17.11.0-ce.0
+    container_name: gitlab
+    restart: always
+    # 【需要确认】与访问域名一致
+    hostname: 'gitlab.example.com'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # 【需要确认】对外访问 URL（协议 + 域名 + 可选端口）
+        external_url 'http://gitlab.example.com'
+        # 时区
+        gitlab_rails['time_zone'] = 'Asia/Shanghai'
+        # 若宿主机 SSH 映射为 8022:22，需同步声明，便于克隆地址显示正确端口
+        # gitlab_rails['gitlab_shell_ssh_port'] = 8022
+    ports:
+      - '80:80'      # 【需要确认】HTTP
+      - '443:443'    # 【需要确认】HTTPS（启用 TLS 时使用）
+      - '8022:22'    # 【需要确认】宿主机 SSH 端口 → 容器内 22，避免与宿主机 sshd 冲突
+    volumes:
+      - './config:/etc/gitlab'
+      - './logs:/var/log/gitlab'
+      - './data:/var/opt/gitlab'
+    shm_size: '256m'

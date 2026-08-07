@@ -1,0 +1,718 @@
+app:
+  description: 面向运维与计算机的个人知识库助手：问题分类 → 知识检索 → 可执行问答；支持笔记整理入库。
+  icon: desktop_computer
+  icon_background: '#E8F4FF'
+  icon_type: emoji
+  mode: advanced-chat
+  name: 运维个人知识库助手
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/openai_api_compatible:0.0.55@5c176d4096c09792c4a320ccd9b1e14e0428ab5e57137cfeb7dced48e2e7da2e
+    version: null
+kind: app
+version: 0.7.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      - .MD
+      - .TXT
+      - .YML
+      - .YAML
+      - .CONF
+      - .LOG
+      allowed_file_types:
+      - image
+      - document
+      allowed_file_upload_methods:
+      - remote_url
+      - local_file
+      enabled: true
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: |
+      你好，我是你的运维 / 计算机个人知识库助手。
+
+      我会先对问题分类，再检索你的知识库（Ansible、UFW、DNS、tcpdump、GitLab、Docker/K8s 等），优先给出可执行的结论与命令。
+
+      你可以：
+      - 直接问排障 / 配置问题
+      - 说「整理成笔记」把经验沉淀为 Markdown
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+    - UFW 怎么只允许指定 IP 访问 SSH？
+    - 用 tcpdump 抓 HTTP 包并过滤主机名怎么写？
+    - Ansible 部署 Nginx 站点的推荐 role 结构？
+    - GitLab Docker Compose 升级要注意什么？
+    - 帮我把这段排障过程整理成可入库笔记
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    # Start → Classifier
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: question-classifier
+      id: edge-start-classifier
+      selected: false
+      source: '1711528708197'
+      sourceHandle: source
+      target: '2000000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # Classifier classes 1-5 (运维核心) → KB Core
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-linux-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-linux'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-net-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-net'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-fw-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-fw'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-troubleshoot-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-troubleshoot'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-ansible-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-ansible'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # Classifier classes 6-8 (平台工程) → KB Platform
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-container-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-container'
+      target: '2000000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-cicd-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-cicd'
+      target: '2000000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-db-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-db'
+      target: '2000000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # 其它 → KB Core（先检索个人库，再通用回答）
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: knowledge-retrieval
+      id: edge-cls-other-kb
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-other'
+      target: '2000000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # 知识沉淀 → LLM Note（不经检索）
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: question-classifier
+        targetType: llm
+      id: edge-cls-note-llm
+      selected: false
+      source: '2000000000001'
+      sourceHandle: 'cls-note'
+      target: '2000000000022'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # KB Core → LLM Ops
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: llm
+      id: edge-kb-core-llm
+      selected: false
+      source: '2000000000010'
+      sourceHandle: source
+      target: '2000000000020'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # KB Platform → LLM Platform
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: llm
+      id: edge-kb-platform-llm
+      selected: false
+      source: '2000000000011'
+      sourceHandle: source
+      target: '2000000000021'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    # LLMs → Answers
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: answer
+      id: edge-llm-ops-answer
+      selected: false
+      source: '2000000000020'
+      sourceHandle: source
+      target: '2000000000030'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: answer
+      id: edge-llm-platform-answer
+      selected: false
+      source: '2000000000021'
+      sourceHandle: source
+      target: '2000000000031'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: answer
+      id: edge-llm-note-answer
+      selected: false
+      source: '2000000000022'
+      sourceHandle: source
+      target: '2000000000032'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: 用户消息入口
+        selected: false
+        title: 开始
+        type: start
+        variables: []
+      height: 73
+      id: '1711528708197'
+      position:
+        x: 40
+        y: 520
+      positionAbsolute:
+        x: 40
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        classes:
+        - id: cls-linux
+          name: Linux 系统与 Shell 运维（进程、服务、systemd、权限、磁盘、用户、包管理、日志）
+        - id: cls-net
+          name: 网络 / DNS / 域名（TCP/UDP、路由、解析、证书、反向代理、域名绑定）
+        - id: cls-fw
+          name: 防火墙 / UFW / 安全（端口放行、IP 白名单、iptables、基础加固）
+        - id: cls-troubleshoot
+          name: 排障 / 抓包 / 监控（tcpdump、连通性、超时、性能、日志定位）
+        - id: cls-ansible
+          name: 自动化 / Ansible（playbook、role、inventory、幂等部署）
+        - id: cls-container
+          name: 容器 / Docker / K8s / Helm / Istio（镜像、编排、Ingress、服务网格）
+        - id: cls-cicd
+          name: CI/CD / GitLab（Pipeline、Runner、Compose 部署、Omnibus、导入导出）
+        - id: cls-db
+          name: 数据库（安装、备份恢复、连接排障、基础调优）
+        - id: cls-note
+          name: 知识沉淀 / 笔记整理（用户要求把内容整理成 Markdown 入库笔记）
+        - id: cls-other
+          name: 其它计算机问题（编程基础、工具使用、无法归入上述类别，仍先查知识库）
+        desc: 按运维主题分流；多数类别进入知识检索，笔记整理走格式化节点。
+        instructions: |
+          你是运维问题分类器。根据用户问题选择唯一最贴合的类别。
+          规则：
+          1. 涉及防火墙规则、UFW、端口开放 → 防火墙类别
+          2. 涉及抓包、丢包、超时排查、tcpdump → 排障类别
+          3. 涉及 Ansible/playbook/role → 自动化类别
+          4. 涉及 GitLab CI、.gitlab-ci.yml、Runner → CI/CD 类别
+          5. 用户明确说「整理笔记」「写成文档」「入库」→ 知识沉淀
+          6. 无法判断时选「其它计算机问题」
+        model:
+          completion_params:
+            frequency_penalty: 0
+            max_tokens: 256
+            presence_penalty: 0
+            temperature: 0.1
+            top_p: 1
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/openai_api_compatible/openai_api_compatible
+        query_variable_selector:
+        - '1711528708197'
+        - sys.query
+        selected: false
+        title: 运维主题分类
+        topics: []
+        type: question-classifier
+        vision:
+          enabled: false
+      height: 420
+      id: '2000000000001'
+      position:
+        x: 340
+        y: 360
+      positionAbsolute:
+        x: 340
+        y: 360
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 280
+      zIndex: 0
+    - data:
+        dataset_ids: []
+        desc: '【需要确认】绑定「运维核心」知识库：Ansible / UFW / DNS / tcpdump 等本地 guide'
+        metadata_filtering_mode: disabled
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1711528708197'
+        - sys.query
+        retrieval_mode: multiple
+        selected: false
+        multiple_retrieval_config:
+          reranking_enable: false
+          top_k: 6
+          score_threshold_enabled: true
+          score_threshold: 0.3
+        title: 知识检索·运维核心
+        type: knowledge-retrieval
+      height: 146
+      id: '2000000000010'
+      position:
+        x: 700
+        y: 280
+      positionAbsolute:
+        x: 700
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids: []
+        desc: '【需要确认】绑定「平台工程」知识库：GitLab / Docker / K8s / Helm / Istio / 数据库'
+        metadata_filtering_mode: disabled
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1711528708197'
+        - sys.query
+        retrieval_mode: multiple
+        selected: false
+        multiple_retrieval_config:
+          reranking_enable: false
+          top_k: 6
+          score_threshold_enabled: true
+          score_threshold: 0.3
+        title: 知识检索·平台工程
+        type: knowledge-retrieval
+      height: 146
+      id: '2000000000011'
+      position:
+        x: 700
+        y: 520
+      positionAbsolute:
+        x: 700
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '2000000000010'
+          - result
+        desc: 运维核心问答：先结论、给命令、标注来源
+        memory:
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 12
+        model:
+          completion_params:
+            frequency_penalty: 0
+            max_tokens: 2048
+            presence_penalty: 0
+            temperature: 0.3
+            top_p: 1
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/openai_api_compatible/openai_api_compatible
+        prompt_template:
+        - id: prompt-ops-core
+          role: system
+          text: |
+            你是资深运维助手，同时对接用户的个人知识库。
+
+            知识库上下文在 <context></context> 中：
+            <context>
+            {{#context#}}
+            </context>
+
+            ## 回答规范
+            1. **先给结论**（1–3 句），再给可执行步骤与命令。
+            2. **优先引用知识库**：有命中时，在相关段落后标注来源（文档名/标题）；不要隐瞒引用。
+            3. **未命中或相关度低**：可基于通用运维知识作答，但必须写明 `【通用知识·未命中知识库】`，并说明哪些点需要用户按实际环境核对。
+            4. 命令默认给出可复制的代码块；注明适用系统（如 Debian/Ubuntu、RHEL），破坏性操作加 ⚠️。
+            5. 不确定版本号、路径、参数时不要编造，改为给出核验命令。
+            6. 用用户提问的语言回答；默认中文。
+            7. 若问题含日志/配置片段，先定位最可能根因，再给排查顺序（由易到难）。
+        selected: false
+        title: LLM·运维核心
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 98
+      id: '2000000000020'
+      position:
+        x: 1000
+        y: 280
+      positionAbsolute:
+        x: 1000
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '2000000000011'
+          - result
+        desc: 平台工程问答：GitLab / 容器 / 数据库
+        memory:
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 12
+        model:
+          completion_params:
+            frequency_penalty: 0
+            max_tokens: 2048
+            presence_penalty: 0
+            temperature: 0.3
+            top_p: 1
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/openai_api_compatible/openai_api_compatible
+        prompt_template:
+        - id: prompt-ops-platform
+          role: system
+          text: |
+            你是资深 DevOps / 平台工程助手，对接用户个人知识库（GitLab、Docker、K8s、Helm、Istio、数据库等）。
+
+            知识库上下文：
+            <context>
+            {{#context#}}
+            </context>
+
+            ## 回答规范
+            1. 先结论，再步骤；优先给可落地的 YAML/命令片段。
+            2. 有知识库依据时标注来源；无依据时标注 `【通用知识·未命中知识库】`。
+            3. 区分环境：自建 Omnibus / Docker Compose / K8s 不要混用配置。
+            4. CI/CD 问题先明确 Runner 类型、触发条件与缓存/制品策略。
+            5. 数据库操作强调备份与回滚；给出验证步骤。
+            6. 不确定处明确写出需用户确认的项。
+            7. 默认中文；代码与配置标识符保留原文。
+        selected: false
+        title: LLM·平台工程
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 98
+      id: '2000000000021'
+      position:
+        x: 1000
+        y: 520
+      positionAbsolute:
+        x: 1000
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 把对话内容整理为可粘贴入库的 Markdown 笔记
+        memory:
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 20
+        model:
+          completion_params:
+            frequency_penalty: 0
+            max_tokens: 3072
+            presence_penalty: 0
+            temperature: 0.2
+            top_p: 1
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/openai_api_compatible/openai_api_compatible
+        prompt_template:
+        - id: prompt-kb-note
+          role: system
+          text: |
+            你是运维知识库编辑。把用户提供的内容整理成可直接保存到个人知识库的 Markdown。
+
+            ## 输出要求
+            1. 只输出一篇完整 Markdown（可用 ```markdown 包裹，或直接输出 md）。
+            2. 结构建议：
+               - 标题（简洁、可检索）
+               - 适用场景 / 前置条件
+               - 核心结论
+               - 操作步骤（命令放代码块）
+               - 验证方法
+               - 注意事项与风险
+               - 标签（如：#linux #ufw #ansible）
+            3. 不要杜撰用户未提供的环境细节；缺失处写【需要确认】。
+            4. 文末追加一行：建议保存路径示例 `~/Documents/gpt/gpt/<主题>-notes.md`（仅建议，不声称已写入）。
+            5. 默认中文。
+        selected: false
+        title: LLM·知识入库整理
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 98
+      id: '2000000000022'
+      position:
+        x: 1000
+        y: 760
+      positionAbsolute:
+        x: 1000
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#2000000000020.text#}}'
+        desc: ''
+        selected: false
+        title: 回复·运维核心
+        type: answer
+        variables:
+        - value_selector:
+          - '2000000000020'
+          - text
+          variable: text
+      height: 103
+      id: '2000000000030'
+      position:
+        x: 1300
+        y: 280
+      positionAbsolute:
+        x: 1300
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#2000000000021.text#}}'
+        desc: ''
+        selected: false
+        title: 回复·平台工程
+        type: answer
+        variables:
+        - value_selector:
+          - '2000000000021'
+          - text
+          variable: text
+      height: 103
+      id: '2000000000031'
+      position:
+        x: 1300
+        y: 520
+      positionAbsolute:
+        x: 1300
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        answer: '{{#2000000000022.text#}}'
+        desc: ''
+        selected: false
+        title: 回复·入库笔记
+        type: answer
+        variables:
+        - value_selector:
+          - '2000000000022'
+          - text
+          variable: text
+      height: 103
+      id: '2000000000032'
+      position:
+        x: 1300
+        y: 760
+      positionAbsolute:
+        x: 1300
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.85
+  rag_pipeline_variables: []

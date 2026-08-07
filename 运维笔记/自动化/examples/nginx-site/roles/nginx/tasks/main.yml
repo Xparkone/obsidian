@@ -1,0 +1,40 @@
+---
+- name: Install nginx (Debian family)
+  ansible.builtin.apt:
+    name: "{{ nginx_package }}"
+    state: present
+    update_cache: true
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Install nginx (RedHat family)
+  ansible.builtin.dnf:
+    name: "{{ nginx_package }}"
+    state: present
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Ensure site root exists
+  ansible.builtin.file:
+    path: "{{ site_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy index page
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: "{{ site_root }}/index.html"
+    mode: "0644"
+
+- name: Deploy site config
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/conf.d/{{ site_name }}.conf"
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Ensure nginx is started and enabled
+  ansible.builtin.service:
+    name: "{{ nginx_service }}"
+    state: started
+    enabled: true

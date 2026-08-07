@@ -1,0 +1,5 @@
+site_name: example.local
+site_root: /var/www/html
+listen_port: 80
+nginx_package: nginx
+nginx_service: nginx

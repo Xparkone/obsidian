@@ -1,0 +1,7 @@
+---
+- name: Deploy simple nginx site
+  hosts: web
+  become: true
+  gather_facts: true
+  roles:
+    - nginx
