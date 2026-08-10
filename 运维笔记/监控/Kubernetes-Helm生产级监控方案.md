@@ -1,53 +1,81 @@
-# Kubernetes + Helm 生产级监控方案
+# Kubernetes + Helm Victoria 全栈生产级监控方案
 
-更新时间：2026-08-10  
-适用范围：通用 Kubernetes 集群，不绑定具体云厂商、服务器或业务系统  
-部署方式：Helm 统一安装和升级  
-目标：建立覆盖指标、日志、告警、外部探测和可选链路追踪的完整可观测体系
+更新时间：2026-08-10
+适用范围：通用 Kubernetes 集群，不绑定具体云厂商、服务器或业务系统
+部署方式：Helm + VictoriaMetrics Operator
+目标：使用 VictoriaMetrics、VictoriaLogs 和 VictoriaTraces 建设统一的指标、日志、告警、探测和链路追踪体系
 
 ## 1. 方案结论
 
-推荐采用以下技术栈：
+推荐以官方 `victoria-metrics-k8s-stack` 为核心，采用下面的组件组合：
 
 | 能力 | 组件 | 作用 |
 | --- | --- | --- |
-| 指标采集与告警 | `kube-prometheus-stack` | Prometheus Operator、Prometheus、Alertmanager、Grafana、node-exporter、kube-state-metrics |
-| 日志采集 | Fluent Bit | 以 DaemonSet 采集容器日志，解析并补充 Kubernetes 元数据 |
-| 日志存储 | Loki | 统一存储和检索日志，与 Grafana 原生集成 |
-| 外部探测 | Prometheus Blackbox Exporter | HTTP、HTTPS、TCP、ICMP 和证书有效期探测 |
-| 链路追踪 | OpenTelemetry Collector + Tempo | 可选，用于微服务调用链、耗时和错误定位 |
-| 展示入口 | Grafana | 指标、日志、追踪、告警统一查询与关联 |
-| 长期指标存储 | Thanos | 可选，用于 Prometheus 高可用、去重和长期对象存储 |
+| 指标采集 | VMAgent | 发现并抓取 Kubernetes、节点和业务指标，远程写入 VictoriaMetrics |
+| 指标存储 | VMSingle / VMCluster | 保存和查询时序指标，支持 PromQL 和 MetricsQL |
+| 规则计算 | VMAlert | 计算指标和日志告警规则，将告警发送给 Alertmanager |
+| 告警管理 | VMAlertmanager | 分组、去重、抑制、静默和通知 |
+| 日志采集 | VLAgent | DaemonSet 采集 Kubernetes Pod 日志，补充元数据并提供磁盘缓冲 |
+| 日志存储 | VLSingle / VLCluster | 保存日志并通过 LogsQL 查询 |
+| 链路追踪 | VTSingle / VTCluster | 可选，保存 OpenTelemetry Trace，通过 Jaeger 兼容接口查询 |
+| 统一展示 | Grafana | 查询 VictoriaMetrics、VictoriaLogs、VictoriaTraces 和 Alertmanager |
+| 集群状态 | kube-state-metrics | 提供 Kubernetes 对象状态指标 |
+| 节点状态 | node-exporter | 提供节点 CPU、内存、磁盘和网络指标 |
+| 外部探测 | Blackbox Exporter + VMProbe | HTTP、TCP、DNS、ICMP 和 TLS 证书探测 |
+| 安全入口 | VMAuth + Ingress | 统一认证、租户路由、访问隔离和 TLS 入口 |
 
-推荐分两档建设：
+推荐分两档部署：
 
-- **标准版**：适合开发、测试、中小规模生产集群。单副本 Prometheus、Alertmanager、Grafana；Loki 单体或简单可扩展模式；所有关键组件使用 PVC。
-- **高可用版**：适合关键生产集群。双副本 Prometheus + Thanos、3 副本 Alertmanager、Loki 分布式、Grafana 外置 PostgreSQL、对象存储、多副本网关和跨节点调度。
+- **标准版**：VMSingle + VLSingle + VMAgent + VLAgent + VMAlert + 单副本 Alertmanager/Grafana。适合开发、测试和中小规模生产集群。
+- **高可用版**：VMCluster + VLCluster + 多副本 VMAgent/VMAlert/Alertmanager + VMAuth + 多副本 Grafana。适合关键生产、多租户或数据量较大的集群。
 
-无论采用哪一档，监控系统都不应完全依赖被监控集群自身。至少应在集群外部署一个存活探针或云监控，用于发现整个 Kubernetes 集群、节点或网络同时失效的情况。
+VictoriaLogs 官方建议：单机版能通过增加 CPU、内存和磁盘满足需求时，优先使用 VLSingle；只有达到单节点垂直扩展上限或有明确高可用要求时，再使用 VLCluster。指标存储也建议先根据规模选择，避免小集群直接引入不必要的分布式复杂度。
 
-## 2. 建设目标
+## 2. 为什么采用 Victoria 方案
 
-### 2.1 必须具备
+### 2.1 主要优势
 
-- Kubernetes 控制面、节点、工作负载、容器、存储和网络指标。
-- 业务应用的请求量、错误率、延迟和资源饱和度指标。
-- 容器标准输出日志和关键系统日志集中检索。
-- 告警分级、聚合、抑制、静默、恢复通知和升级通知。
-- HTTP/TCP 可用性、DNS、TLS 证书过期和关键页面探测。
-- Grafana 统一入口，支持从指标跳转日志、从日志关联调用链。
-- Helm values、告警规则、Dashboard 和数据源全部配置即代码。
-- 持久化、备份、容量告警、升级回滚和恢复演练。
+- 指标、日志和 Trace 可以由同一个 Operator 和 K8s Stack Chart 统一管理。
+- VMAgent 与 VLAgent 都是独立采集层，存储后端维护时可以缓冲并在恢复后补发。
+- VictoriaMetrics 兼容 Prometheus 抓取协议、PromQL 和 remote write，业务改造成本较低。
+- VictoriaMetrics Operator 可以把 `ServiceMonitor`、`PodMonitor`、`PrometheusRule`、`Probe` 转换成对应的 VictoriaMetrics CR。
+- 支持原生 `VMServiceScrape`、`VMPodScrape`、`VMRule`、`VMProbe`、`VMAlertmanagerConfig`。
+- `victoria-metrics-k8s-stack` 自带 Kubernetes Dashboard、采集配置和告警规则。
+- 同时启用指标和日志时，Stack 可以通过内部 VMAuth 为 VMAlert 路由 MetricsQL 与 LogsQL 查询。
+- 启用 VictoriaLogs 后，Stack 可以自动配置 Grafana 日志数据源。
+- VictoriaTraces 使用 Jaeger 兼容查询接口，Grafana 不需要额外 Trace 数据源插件。
 
-### 2.2 可选增强
+### 2.2 需要接受的成本
+
+- VictoriaMetrics CRD 和 Operator 需要单独管理升级生命周期。
+- LogsQL、MetricsQL、VMRule 等需要团队建立使用规范。
+- VictoriaLogs Grafana 数据源需要安装 `victoriametrics-logs-datasource` 插件。
+- 从 Prometheus Operator 迁移时，需要明确 CRD 转换、OwnerReference 和删除同步策略。
+- 集群版包含多个组件，容量、反亲和、复制因子和存储规划要求更高。
+
+## 3. 建设目标
+
+### 3.1 必须具备
+
+- Kubernetes 控制面、节点、工作负载、容器、存储和网络监控。
+- 业务请求量、错误率、延迟、资源饱和度和核心业务成功率。
+- 容器标准输出日志集中采集、脱敏、持久化和检索。
+- 告警分级、聚合、抑制、恢复通知、负责人和处理手册。
+- HTTP/TCP/DNS/TLS 证书有效期和关键入口探测。
+- Grafana 统一展示指标、日志、Trace 和告警。
+- Helm values、VMRule、Dashboard、数据源和探测配置全部进入 Git。
+- 持久化、容量告警、备份、升级回滚和恢复演练。
+
+### 3.2 可选增强
 
 - OpenTelemetry 链路追踪。
-- Thanos 长期指标存储和跨集群查询。
-- 多集群统一 Grafana。
-- 告警值班系统、自动升级和事件工单联动。
-- 基于 SLO 的错误预算和燃烧率告警。
+- 多集群指标、日志和 Trace 汇总。
+- VMAuth 多租户隔离。
+- 基于 SLO 和错误预算的燃烧率告警。
+- 告警值班系统、自动升级通知和工单联动。
+- vmbackupmanager 自动备份和恢复编排。
 
-## 3. 总体架构
+## 4. 总体架构
 
 ```mermaid
 flowchart LR
@@ -55,129 +83,191 @@ flowchart LR
         CP[Kubernetes 控制面]
         Nodes[集群节点]
         Apps[业务应用]
-        Logs[容器与系统日志]
+        PodLogs[Pod 与系统日志]
         Endpoints[公网与内网入口]
-        Traces[应用 Trace]
+        AppTraces[OpenTelemetry Trace]
     end
 
-    subgraph Collectors[采集层]
+    subgraph Collection[采集层]
         KSM[kube-state-metrics]
         NE[node-exporter]
-        SM[ServiceMonitor / PodMonitor]
-        FB[Fluent Bit]
+        Scrapes[VMServiceScrape / VMPodScrape]
+        VMA[VMAgent]
+        VLA[VLAgent DaemonSet]
         BB[Blackbox Exporter]
         OTel[OpenTelemetry Collector]
     end
 
-    subgraph Storage[存储与计算层]
-        Prom[Prometheus]
-        AM[Alertmanager]
-        Loki[Loki]
-        Tempo[Tempo]
-        Thanos[Thanos 可选]
-        Obj[对象存储]
+    subgraph Storage[存储层]
+        VMS[VMSingle / VMCluster]
+        VLS[VLSingle / VLCluster]
+        VTS[VTSingle / VTCluster]
     end
 
-    subgraph Access[访问与通知层]
-        Grafana[Grafana]
+    subgraph Alerting[规则与告警]
+        VMR[VMRule]
+        VMAle[VMAlert]
+        AM[VMAlertmanager]
         Notify[飞书 / 邮件 / Webhook / 值班系统]
+    end
+
+    subgraph Access[访问层]
+        Auth[VMAuth]
+        Grafana[Grafana]
         Ingress[Ingress + TLS + SSO]
     end
 
-    CP --> SM
-    Nodes --> NE
-    Apps --> SM
-    Apps --> Logs
-    Logs --> FB --> Loki
-    Endpoints --> BB
-    Traces --> OTel --> Tempo
-    KSM --> SM --> Prom
-    NE --> Prom
-    BB --> Prom
-    Prom --> AM --> Notify
-    Prom -.长期存储.-> Thanos --> Obj
-    Loki -.生产环境.-> Obj
-    Tempo -.生产环境.-> Obj
-    Prom --> Grafana
-    Loki --> Grafana
-    Tempo --> Grafana
-    Grafana --> Ingress
+    CP --> Scrapes
+    Nodes --> NE --> VMA
+    KSM --> VMA
+    Apps --> Scrapes --> VMA --> VMS
+    PodLogs --> VLA --> VLS
+    Endpoints --> BB --> VMA
+    AppTraces --> OTel --> VTS
+
+    VMR --> VMAle
+    VMS --> VMAle
+    VLS --> VMAle
+    VMAle --> AM --> Notify
+
+    VMS --> Auth
+    VLS --> Auth
+    VTS --> Auth
+    Auth --> Grafana --> Ingress
 ```
 
-## 4. 部署档位
+## 5. 数据流程
 
-### 4.1 标准版
+### 5.1 指标流程
+
+```text
+Kubernetes / node-exporter / kube-state-metrics / 业务 /metrics
+  -> VMServiceScrape、VMPodScrape、VMNodeScrape、VMProbe
+  -> VMAgent 服务发现和抓取
+  -> 本地持久队列
+  -> VMSingle 或 VMCluster vminsert
+  -> MetricsQL / PromQL 查询
+  -> Grafana Dashboard
+```
+
+### 5.2 告警流程
+
+```text
+VMRule
+  -> VMAlert 定期查询 VictoriaMetrics 或 VictoriaLogs
+  -> 告警分组与状态计算
+  -> VMAlertmanager 去重、抑制、静默和路由
+  -> 飞书 / 邮件 / Webhook / 值班系统
+  -> 告警恢复通知
+```
+
+### 5.3 日志流程
+
+```text
+Kubernetes Pod stdout/stderr
+  -> VLAgent Kubernetes Collector
+  -> CRI 解析、Pod 元数据补充、字段过滤和脱敏
+  -> hostPath 持久检查点与磁盘缓冲
+  -> VLSingle 或 VLCluster vlinsert
+  -> LogsQL 查询
+  -> Grafana Explore / Dashboard / VMAlert 日志告警
+```
+
+### 5.4 Trace 流程
+
+```text
+应用 OpenTelemetry SDK
+  -> OTLP gRPC/HTTP
+  -> OpenTelemetry Collector
+  -> 采样、批处理、脱敏和资源属性补充
+  -> VTSingle 或 VTCluster
+  -> Jaeger 兼容查询接口
+  -> Grafana
+```
+
+## 6. 部署档位
+
+### 6.1 标准版
 
 适用条件：
 
 - 3～20 个节点。
 - 指标 active series 少于约 100 万。
-- 日志写入量低于约 100GB/天。
+- 日志量低于约 100GB/天。
 - 可以接受监控组件短时间维护窗口。
+- 没有严格的监控平台多可用区要求。
 
-建议配置：
+建议组件：
 
 | 组件 | 副本 | 初始资源建议 | 初始存储建议 |
 | --- | ---: | --- | --- |
-| Prometheus | 1 | 2～4 CPU，4～8Gi 内存 | 100～300Gi，15～30 天 |
-| Alertmanager | 1 | 100m～500m CPU，256～512Mi 内存 | 2～5Gi |
-| Grafana | 1 | 500m～1 CPU，512Mi～1Gi 内存 | 5～10Gi |
-| Loki | 1 或 simple scalable | 2～4 CPU，4～8Gi 内存 | 依日志量计算，优先对象存储 |
-| Fluent Bit | 每节点 1 个 | 100m～500m CPU，128～512Mi 内存 | 每节点 1～5Gi 磁盘缓冲 |
-| Blackbox Exporter | 1～2 | 100m～500m CPU，128～256Mi 内存 | 无 |
-| Tempo | 1，可选 | 1～2 CPU，2～4Gi 内存 | 优先对象存储 |
+| VictoriaMetrics Operator | 1 | 200m～500m CPU，256～512Mi | 无 |
+| VMAgent | 1～2 | 500m～2 CPU，512Mi～2Gi | 5～20Gi 队列 |
+| VMSingle | 1 | 2～4 CPU，4～8Gi | 100～300Gi，保留 15～30 天 |
+| VMAlert | 1 | 200m～1 CPU，256Mi～1Gi | 无 |
+| VMAlertmanager | 1 | 100m～500m CPU，256～512Mi | 2～5Gi |
+| VLSingle | 1 | 2～4 CPU，4～8Gi | 按日志增长量，建议 100Gi 起 |
+| VLAgent | 每节点 1 个 | 100m～500m CPU，128～512Mi | 每节点 1～10Gi 缓冲 |
+| Grafana | 1 | 500m～1 CPU，512Mi～1Gi | 5～10Gi |
+| Blackbox Exporter | 1～2 | 100m～500m CPU，128～256Mi | 无 |
+| VTSingle | 1，可选 | 1～2 CPU，2～4Gi | 20～100Gi，保留 3～7 天起 |
 
-### 4.2 高可用版
+### 6.2 高可用版
 
 适用条件：
 
-- 关键生产业务。
-- 监控中断会影响故障发现和应急处置。
-- 多可用区、多集群或较长数据保留要求。
+- 关键生产或多租户平台。
+- 监控中断会直接影响故障发现和应急处置。
+- 单机存储容量、写入量或查询压力已经接近上限。
+- 需要组件故障、节点故障时继续采集和查询。
 
-建议配置：
+建议组件：
 
 | 组件 | 高可用设计 |
 | --- | --- |
-| Prometheus | 2 副本，独立 PVC；Thanos Sidecar 上传对象存储；Thanos Query 去重 |
-| Alertmanager | 3 副本组成集群，跨节点调度 |
+| Operator | 独立 Namespace，1～2 副本；Webhook 和 PDB 按版本能力配置 |
+| VMAgent | 至少 2 副本；根据抓取分片策略避免无意重复抓取或明确接受双写 |
+| VMCluster | `vminsert`、`vmselect` 至少 2 副本；`vmstorage` 至少 3 副本；复制因子按故障域设计 |
+| VMAlert | 2 副本；使用相同 external labels，通知端进行去重或按官方 HA 方式配置 |
+| VMAlertmanager | 3 副本组成集群，跨节点或跨可用区调度 |
+| VLAgent | 每节点 DaemonSet，持久磁盘缓冲，可配置多目标写入 |
+| VLCluster | `vlinsert`、`vlselect` 多副本；`vlstorage` 至少 3 副本；复制因子与存储故障域一致 |
+| VMAuth | 至少 2 副本，统一代理指标、日志和 Trace 读写入口 |
 | Grafana | 2 个及以上副本，使用外部 PostgreSQL，不使用共享 SQLite |
-| Loki | distributed 或 simple scalable，多副本读写组件，对象存储保存日志块 |
-| Fluent Bit | 每节点 DaemonSet，启用磁盘缓冲和重试上限告警 |
-| Blackbox Exporter | 至少 2 副本，并在集群外增加独立探针 |
-| Tempo | distributed 或可扩展模式，对象存储保存 Trace |
-| Ingress | 至少 2 副本，TLS、SSO、访问控制和限流 |
-| 存储 | 使用支持快照和跨节点挂载的 CSI；对象存储开启版本控制和生命周期策略 |
+| VTCluster | 可选；insert、select 多副本，storage 至少 3 副本 |
+| Ingress | 至少 2 副本，配置 TLS、SSO、限流和访问控制 |
 
-## 5. Namespace 与 Helm release 规划
+高可用不是简单把所有 `replicaCount` 调成 2。必须同时处理：
 
-推荐统一使用 `observability` Namespace：
+- 数据复制因子。
+- Pod 反亲和和 topology spread。
+- StorageClass 故障域。
+- VMAgent 重复抓取与重复写入。
+- VMAlert 重复通知。
+- Alertmanager 集群通信。
+- VMAuth 路由和租户隔离。
+
+## 7. Namespace 与 Helm release 规划
+
+推荐拆成两个 Namespace：
+
+| Namespace | 内容 |
+| --- | --- |
+| `vm-operator` | VictoriaMetrics Operator 和 CRD 生命周期相关组件 |
+| `observability` | VMAgent、VMSingle/VMCluster、VMAlert、Alertmanager、VictoriaLogs、Grafana 等 |
+
+推荐 release：
 
 | Helm release | Chart | 说明 |
 | --- | --- | --- |
-| `kube-prometheus-stack` | `prometheus-community/kube-prometheus-stack` | 指标、告警、Grafana 和 Kubernetes exporter |
-| `blackbox-exporter` | `prometheus-community/prometheus-blackbox-exporter` | HTTP/TCP/DNS/ICMP 探测 |
-| `loki` | `grafana/loki` | 日志存储 |
-| `fluent-bit` | `fluent/fluent-bit` | 日志采集 |
-| `tempo` | `grafana/tempo` 或 `grafana/tempo-distributed` | 可选链路追踪存储 |
-| `opentelemetry-collector` | `open-telemetry/opentelemetry-collector` | 可选 OTLP 接收、处理和转发 |
-| `thanos` | 选定并经过验证的 Thanos Chart | 可选长期指标存储与查询 |
+| `vm-operator` | `vm/victoria-metrics-operator` | 独立安装 Operator，便于管理 CR 和 Namespace 删除顺序 |
+| `vm-stack` | `vm/victoria-metrics-k8s-stack` | Kubernetes 指标、日志、Trace、规则、Dashboard 和 Victoria CR |
+| `blackbox-exporter` | `prometheus-community/prometheus-blackbox-exporter` | 外部探测 |
+| `otel-collector` | `open-telemetry/opentelemetry-collector` | 可选 OTLP 接收和处理 |
 
-生产环境必须锁定 Chart 版本，不能直接使用仓库最新版本。建议在 Git 中维护版本清单：
+`victoria-metrics-k8s-stack` 默认可以把 Operator 作为依赖安装。生产环境建议将 Operator 单独部署，并在 Stack values 中关闭其 Operator 依赖。这样删除业务 Stack 或整个 `observability` Namespace 时，不会因为 Operator 先被删除导致受管 CR 清理顺序失控。
 
-```yaml
-# chart-versions.yaml
-kubePrometheusStack: "<经过验证的版本>"
-blackboxExporter: "<经过验证的版本>"
-loki: "<经过验证的版本>"
-fluentBit: "<经过验证的版本>"
-tempo: "<经过验证的版本>"
-otelCollector: "<经过验证的版本>"
-```
-
-## 6. 配置仓库结构
-
-建议单独建立 Git 仓库或纳入 GitOps 仓库：
+## 8. Git 仓库结构
 
 ```text
 observability/
@@ -185,22 +275,23 @@ observability/
 ├── chart-versions.yaml
 ├── environments/
 │   ├── dev/
-│   │   ├── kube-prometheus-stack.values.yaml
-│   │   ├── loki.values.yaml
-│   │   ├── fluent-bit.values.yaml
-│   │   └── blackbox-exporter.values.yaml
+│   │   ├── operator.values.yaml
+│   │   ├── vm-stack.values.yaml
+│   │   ├── blackbox.values.yaml
+│   │   └── otel-collector.values.yaml
 │   └── prod/
-│       ├── kube-prometheus-stack.values.yaml
-│       ├── loki.values.yaml
-│       ├── fluent-bit.values.yaml
-│       ├── blackbox-exporter.values.yaml
-│       ├── tempo.values.yaml
+│       ├── operator.values.yaml
+│       ├── vm-stack.values.yaml
+│       ├── blackbox.values.yaml
 │       └── otel-collector.values.yaml
 ├── manifests/
-│   ├── ingress/
-│   ├── monitors/
-│   ├── rules/
+│   ├── vmservicescrapes/
+│   ├── vmpodscrapes/
+│   ├── vmprobes/
+│   ├── vmrules/
+│   ├── alertmanager/
 │   ├── dashboards/
+│   ├── ingress/
 │   └── network-policies/
 ├── secrets.example/
 └── scripts/
@@ -210,49 +301,98 @@ observability/
     └── verify.sh
 ```
 
-仓库中只保存 Secret 名称和字段引用，不保存密码、Webhook、Cookie、Token、私钥或对象存储访问密钥。
+生产环境必须锁定 Chart 版本：
 
-## 7. Helm 仓库初始化
+```yaml
+# chart-versions.yaml
+victoriaMetricsOperator: "<经过测试的版本>"
+victoriaMetricsK8sStack: "<经过测试的版本>"
+blackboxExporter: "<经过测试的版本>"
+opentelemetryCollector: "<经过测试的版本>"
+```
+
+禁止在 Git 中保存：
+
+- Grafana 管理员密码。
+- Alertmanager Webhook、邮件密码和 Token。
+- VMAuth 用户密码。
+- 对象存储密钥。
+- TLS 私钥。
+- Kubernetes ServiceAccount Token。
+
+## 9. Helm 仓库初始化
 
 ```bash
+helm repo add vm https://victoriametrics.github.io/helm-charts/
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo add fluent https://fluent.github.io/helm-charts
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
 helm repo update
 
+kubectl create namespace vm-operator
 kubectl create namespace observability
 ```
 
-`kubectl create namespace` 应只在 Namespace 不存在时执行。正式环境更推荐把 Namespace 也纳入 GitOps 管理。
+正式环境中，Namespace、ResourceQuota、LimitRange、NetworkPolicy 和 Secret 引用也应纳入 GitOps，而不是长期依赖手工创建。
 
-## 8. 指标系统设计
+## 10. CRD 与 Operator 管理
 
-### 8.1 Prometheus 采集范围
+### 10.1 Operator 独立安装
 
-默认采集：
+```bash
+helm upgrade --install vm-operator vm/victoria-metrics-operator \
+  --namespace vm-operator \
+  --create-namespace \
+  --version <locked-version> \
+  -f environments/prod/operator.values.yaml \
+  --atomic \
+  --timeout 15m
+```
 
-- API Server、etcd、scheduler、controller-manager。
-- kubelet、cAdvisor、CoreDNS、kube-proxy。
-- Node CPU、内存、磁盘、文件系统、网络。
-- Deployment、StatefulSet、DaemonSet、Job、Pod、PVC 状态。
-- Prometheus、Alertmanager、Grafana、Operator 自身指标。
-
-业务应用统一通过 `ServiceMonitor` 或 `PodMonitor` 接入，不建议依赖旧式 `prometheus.io/scrape` annotation 作为长期标准。
-
-### 8.2 Prometheus values 基线
-
-以下是结构示例，字段必须以实际锁定的 Chart 版本为准，并通过 `helm template` 验证：
+Stack values 中关闭内置 Operator：
 
 ```yaml
-prometheus:
-  prometheusSpec:
-    replicas: 1
-    retention: 30d
-    retentionSize: 240GB
-    scrapeInterval: 30s
-    evaluationInterval: 30s
-    walCompression: true
+victoria-metrics-operator:
+  enabled: false
+```
+
+具体字段名必须以锁定 Chart 版本的 values 为准。
+
+### 10.2 CRD 升级
+
+Helm 默认不会自动升级已经存在的 CRD。升级 VictoriaMetrics K8s Stack 前必须执行：
+
+```bash
+helm show crds vm/victoria-metrics-k8s-stack \
+  --version <target-version> \
+  | kubectl diff -f -
+
+helm show crds vm/victoria-metrics-k8s-stack \
+  --version <target-version> \
+  | kubectl apply -f - --server-side
+```
+
+执行前必须：
+
+- 阅读目标 Chart 和 Operator 版本升级说明。
+- 备份现有 CR 和 values。
+- 在测试集群验证 CRD schema 变化。
+- 检查废弃字段和转换行为。
+- 确认 GitOps 控制器不会回滚 CRD。
+
+## 11. 标准版 Stack values 基线
+
+下面是结构示例，不是可直接照抄的最终 values。VictoriaMetrics Chart 更新较快，部署时必须基于锁定版本执行 `helm show values`、`helm lint` 和 `helm template`。
+
+```yaml
+nameOverride: vmks
+
+victoria-metrics-operator:
+  enabled: false
+
+vmsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "30d"
     resources:
       requests:
         cpu: "2"
@@ -260,39 +400,96 @@ prometheus:
       limits:
         cpu: "4"
         memory: 8Gi
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          storageClassName: "<storage-class>"
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 300Gi
-    serviceMonitorSelectorNilUsesHelmValues: false
-    podMonitorSelectorNilUsesHelmValues: false
-    ruleSelectorNilUsesHelmValues: false
+    storage:
+      storageClassName: "<storage-class>"
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 300Gi
 
-alertmanager:
-  alertmanagerSpec:
-    replicas: 1
+vmcluster:
+  enabled: false
+
+vmagent:
+  enabled: true
+  spec:
+    scrapeInterval: 30s
+    externalLabels:
+      cluster: "<cluster-name>"
+      environment: prod
     resources:
       requests:
-        cpu: 100m
-        memory: 256Mi
-      limits:
         cpu: 500m
         memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+
+vmalert:
+  enabled: true
+  spec:
+    evaluationInterval: 30s
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+
+alertmanager:
+  enabled: true
+  spec:
+    replicaCount: 1
     storage:
       volumeClaimTemplate:
         spec:
           storageClassName: "<storage-class>"
-          accessModes: ["ReadWriteOnce"]
+          accessModes:
+            - ReadWriteOnce
           resources:
             requests:
               storage: 5Gi
 
+vlsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "30d"
+    resources:
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+    storage:
+      storageClassName: "<storage-class>"
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 300Gi
+
+vlcluster:
+  enabled: false
+
+vlagent:
+  enabled: true
+  spec:
+    k8sCollector:
+      enabled: true
+
+vtsingle:
+  enabled: false
+
+vtcluster:
+  enabled: false
+
 grafana:
-  replicas: 1
+  enabled: true
+  plugins:
+    - victoriametrics-logs-datasource
   persistence:
     enabled: true
     storageClassName: "<storage-class>"
@@ -312,39 +509,94 @@ grafana:
       - secretName: grafana-tls
         hosts:
           - grafana.example.com
-
-prometheus-node-exporter:
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 300m
-      memory: 256Mi
-
-kube-state-metrics:
-  resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
 ```
 
-高可用版将 Prometheus `replicas` 调整为 2，并启用 Thanos Sidecar。Grafana 不应直接轮询两个 Prometheus 副本，而应查询具备副本去重能力的 Thanos Query。
+需要重点核对：
 
-### 8.3 业务 ServiceMonitor 模板
+- `retentionPeriod` 在目标组件和版本中的格式。
+- `storage` 与 `volumeClaimTemplate` 的实际字段层级。
+- VMAlertmanager 的副本和存储字段。
+- VLAgent 磁盘缓冲目录及 hostPath 配置。
+- Grafana 插件是否能从当前网络和镜像环境安装。
+- 默认数据源是否自动指向正确的 VMSingle/VLSingle/VTSingle。
+
+## 12. 高可用版设计
+
+### 12.1 VMCluster
+
+推荐起点：
+
+- `vminsert`：2～3 副本。
+- `vmselect`：2～3 副本。
+- `vmstorage`：至少 3 副本。
+- replication factor：根据允许丢失的 storage 节点数量设计。
+- 每个 vmstorage 使用独立 PVC。
+- vmstorage 跨节点、跨可用区调度。
+- VMAuth 为写入端和查询端提供统一入口。
+
+容量规划必须明确：
+
+- 每秒写入样本数。
+- active series。
+- 查询并发和查询时间范围。
+- 保留期。
+- 数据复制带来的额外磁盘占用。
+- 节点故障后的剩余容量。
+
+### 12.2 VLCluster
+
+推荐起点：
+
+- `vlinsert`：2～3 副本。
+- `vlselect`：2～3 副本。
+- `vlstorage`：至少 3 副本。
+- 每个 vlstorage 使用独立 PVC。
+- 配置复制因子和跨故障域调度。
+- VMAuth 统一日志写入和查询入口。
+- 对大查询配置限流、并发限制和超时。
+
+不要仅因为“生产环境”就直接使用 VLCluster。先验证 VLSingle 是否可以通过更大的 CPU、内存、NVMe 或 PVC 满足数据量和查询延迟。VLCluster 适合明确需要横向扩展、节点容错和多租户的环境。
+
+### 12.3 VMAlert 与 Alertmanager
+
+- VMAlert 可以配置多副本，但需要处理重复评估和重复通知。
+- Alertmanager 推荐 3 副本组成集群。
+- Alertmanager Pod 跨节点调度。
+- 告警规则、路由和模板全部保存在 Git。
+- Watchdog 告警发送到集群外的告警自检服务。
+- 通知渠道至少有两种，例如值班系统 + 飞书。
+
+### 12.4 Grafana
+
+- 2 个及以上副本。
+- 使用外部 PostgreSQL 保存用户、组织、权限和运行状态。
+- Dashboard 和数据源仍通过 provisioning 管理。
+- 使用 SSO/OIDC 和最小权限。
+- Grafana 前面使用多副本 Ingress。
+
+## 13. 指标监控设计
+
+### 13.1 默认采集范围
+
+- Kubernetes API Server、etcd、scheduler、controller-manager。
+- kubelet、cAdvisor、CoreDNS、kube-proxy。
+- 节点 CPU、内存、磁盘、文件系统和网络。
+- Deployment、StatefulSet、DaemonSet、Job、Pod、PVC 状态。
+- VMAgent、VMSingle/VMCluster、VMAlert、Alertmanager、Operator 自身指标。
+- VLSingle/VLCluster、VLAgent 自身指标。
+- VTSingle/VTCluster 自身指标。
+
+### 13.2 VMServiceScrape 模板
 
 ```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
 metadata:
   name: example-api
   namespace: observability
   labels:
-    release: kube-prometheus-stack
     team: example
+    environment: prod
 spec:
   namespaceSelector:
     matchNames:
@@ -359,40 +611,88 @@ spec:
       scrapeTimeout: 10s
 ```
 
-Prometheus 的 selector 必须与 `ServiceMonitor` 标签策略保持一致。建议统一要求：
+统一要求：
 
-- `release: kube-prometheus-stack`
-- `team: <owner>`
-- `environment: dev|test|prod`
+- 每个采集对象必须有 `team`、`service`、`environment`、`cluster`。
+- `/metrics` 不能要求把明文密码写入 CR。
+- 需要认证时引用 Secret 或 bearer token 文件。
+- 对业务 route 使用模板路径，不能把用户 ID 和订单号作为 label。
 
-### 8.4 指标命名和基数控制
+### 13.3 Prometheus CRD 兼容
 
-- 指标名使用 `<系统>_<模块>_<含义>_<单位>`。
-- Counter 以 `_total` 结尾；耗时优先使用 Histogram。
-- 不允许把 `user_id`、订单号、URL 完整路径、请求 ID 等高基数字段作为 label。
-- HTTP route 使用模板路由，如 `/users/:id`，不能使用实际 URL。
-- 对高频、低价值指标通过 `metricRelabelings` 丢弃。
-- 对 `scrape_samples_post_metric_relabeling`、active series 和 head memory 建立容量告警。
+VictoriaMetrics Operator 默认可以转换：
 
-## 9. 日志系统设计
+- `ServiceMonitor` → `VMServiceScrape`
+- `PodMonitor` → `VMPodScrape`
+- `PrometheusRule` → `VMRule`
+- `Probe` → `VMProbe`
+- `AlertmanagerConfig` → `VMAlertmanagerConfig`
 
-### 9.1 日志数据流
+迁移时必须决定：
+
+1. 长期继续维护 Prometheus CRD，由 Operator 自动转换。
+2. 完成迁移后统一改为 Victoria 原生 CRD。
+
+建议最终统一使用 Victoria 原生 CRD，减少双 CRD 体系带来的理解和删除同步问题。过渡期可以开启转换，但要配置 OwnerReference 或建立明确的删除流程。默认转换行为可能不会在源对象删除后自动删除已转换对象，必须在上线前验证目标版本行为。
+
+### 13.4 指标基数控制
+
+- 禁止 `user_id`、订单号、完整 URL、请求 ID 进入 label。
+- HTTP path 使用路由模板，例如 `/users/:id`。
+- Counter 以 `_total` 结尾。
+- 延迟优先使用 Histogram。
+- 使用 relabeling 丢弃高基数和低价值指标。
+- 监控 active series、抓取样本数、远程写入队列和拒绝样本数。
+- 为每个团队设置指标基数和抓取量预算。
+
+## 14. 日志监控设计
+
+### 14.1 VLAgent Kubernetes Collector
+
+VLAgent 以 DaemonSet 运行，自动发现和采集当前节点上所有 Pod 日志。推荐使用 Stack 内置 `vlagent.spec.k8sCollector`，或者单独使用 `victoria-logs-collector` Chart。
+
+VLAgent 的关键能力：
+
+- 自动发现 Kubernetes Pod 日志。
+- 补充 Pod、Namespace、Container 和 Node 元数据。
+- 使用本地磁盘保存读取 checkpoint。
+- VictoriaLogs 暂时不可用时进行磁盘缓冲。
+- 连接恢复后补发缓冲日志。
+- 可配置多个 remote write 目标。
+- 可在采集前过滤 namespace、Pod、容器和敏感字段。
+
+### 14.2 缓冲和可靠性
+
+每个节点应提供独立 hostPath：
 
 ```text
-容器 stdout/stderr
-  -> Fluent Bit tail input
-  -> CRI 多行合并
-  -> Kubernetes metadata filter
-  -> 字段清洗与敏感信息过滤
-  -> 内存队列 + filesystem buffer
-  -> Loki Gateway
-  -> Loki 存储
-  -> Grafana 查询
+/var/lib/vlagent
 ```
 
-### 9.2 应用日志规范
+用于保存：
 
-生产应用建议输出单行 JSON：
+- 日志读取 checkpoint。
+- remote write 临时数据。
+- 后端不可用期间的磁盘缓冲。
+
+建议：
+
+- 开发环境：每节点 1～2Gi。
+- 普通生产：每节点 5～10Gi。
+- 高日志量节点：根据峰值写入和后端最长维护时间计算。
+
+缓冲达到上限后通常会淘汰旧数据，因此必须告警：
+
+- 磁盘缓冲使用率。
+- remote write 重试。
+- 丢弃日志。
+- 无效 CRI 日志。
+- 字段过多或日志行过大。
+- 读取 checkpoint 异常。
+
+### 14.3 日志字段规范
+
+生产应用输出单行 JSON：
 
 ```json
 {
@@ -410,85 +710,62 @@ Prometheus 的 selector 必须与 `ServiceMonitor` 标签策略保持一致。�
 }
 ```
 
-不得记录密码、Token、Cookie、完整认证头、身份证号、银行卡号和其他敏感字段。确需记录用户标识时，应脱敏或哈希，并评估 label 基数。
+推荐 stream fields：
 
-### 9.3 Loki 部署策略
+- `cluster`
+- `environment`
+- `kubernetes.pod_namespace`
+- `service`
+- `level`
 
-标准版：
+不要把下面字段作为 stream field：
 
-- 小规模可使用 single binary。
-- 中等规模使用 simple scalable。
-- 测试环境可使用 PVC；生产环境优先 S3 兼容对象存储。
+- `pod_name`，除非确实需要并已评估滚动发布影响。
+- `trace_id`。
+- `request_id`。
+- 用户 ID、订单号和完整 URL。
 
-高可用版：
+这些字段可以保留为普通日志字段供 LogsQL 查询。
 
-- 使用 distributed 或经过验证的可扩展模式。
-- Gateway、read、write、backend 等关键组件至少 2～3 副本。
-- 使用对象存储，配置 compactor 和 retention。
-- 对 ingestion rate、discarded samples、查询延迟、对象存储错误建立告警。
+### 14.4 过滤与脱敏
 
-建议保留期：
+VLAgent 在发送前丢弃敏感字段：
+
+```yaml
+collector:
+  ignoreFields:
+    - password
+    - token
+    - authorization
+    - cookie
+    - request.payload*
+```
+
+字段名称需要依据业务实际日志格式扩展。应用侧仍应承担第一层脱敏责任，不能只依赖采集端。
+
+可以通过 annotation 排除日志：
+
+```yaml
+metadata:
+  annotations:
+    victoriametrics.com/vlagent/exclude: "true"
+```
+
+同时在 Collector 配置中使用对应 `excludeFilter`。需要注意，VLAgent 对 Pod、Node 和 Namespace 元数据的运行时变化可能需要重启后才能反映，标签变更流程要包含滚动重启 Collector 的验证。
+
+### 14.5 日志保留建议
 
 | 日志类型 | 建议保留 |
 | --- | ---: |
-| 开发测试日志 | 3～7 天 |
-| 普通生产应用日志 | 15～30 天 |
-| 审计和安全日志 | 90～180 天，按合规要求确定 |
+| 开发测试 | 3～7 天 |
+| 普通生产应用 | 15～30 天 |
+| 网关和访问日志 | 30～90 天 |
+| 审计和安全日志 | 90～180 天，按合规要求 |
 | Debug 日志 | 默认关闭，临时开启后 1～3 天 |
 
-### 9.4 Fluent Bit 关键要求
+## 15. Trace 设计
 
-- DaemonSet 部署，容忍控制面和特殊节点污点。
-- 挂载 `/var/log/containers`、`/var/log/pods` 和容器运行时日志目录。
-- 启用 filesystem buffering，不只依赖内存。
-- 配置 backoff、重试、队列水位和丢弃计数告警。
-- 使用 multiline parser 处理 Java、Go panic、Python traceback 等多行日志。
-- 默认只使用低基数字段作为 Loki labels：`cluster`、`namespace`、`app`、`container`、`level`。
-- `pod` 可作为查询字段而非长期索引标签，避免滚动发布造成 label 数量增长。
-- 对 Secret、Token、Authorization、Cookie 等字段在采集侧过滤或脱敏。
-
-## 10. 外部探测
-
-Blackbox Exporter 用于验证“用户是否真的能访问服务”，不能只看 Pod 是否 Running。
-
-建议探测：
-
-- 首页和关键 API 的 HTTP 状态、总耗时和 DNS/TLS/连接各阶段耗时。
-- TCP 端口可达性。
-- DNS 解析结果。
-- TLS 证书剩余有效期。
-- 集群内 Service 和公网域名分别探测。
-
-示例 `Probe`：
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: Probe
-metadata:
-  name: example-public-api
-  namespace: observability
-  labels:
-    release: kube-prometheus-stack
-spec:
-  jobName: example-public-api
-  interval: 30s
-  module: http_2xx
-  prober:
-    url: blackbox-exporter-prometheus-blackbox-exporter.observability.svc:9115
-  targets:
-    staticConfig:
-      static:
-        - https://api.example.com/healthz
-      labels:
-        environment: prod
-        team: example
-```
-
-至少一个核心入口应由集群外部探针监控。否则整个集群宕机时，集群内 Blackbox Exporter 和 Alertmanager也会同时失效。
-
-## 11. 链路追踪
-
-链路追踪是可选项，适用于微服务数量较多、跨服务调用复杂或仅靠日志难以定位延迟的系统。
+VictoriaTraces 是可选组件。微服务调用复杂、跨服务延迟难以定位时启用。
 
 推荐流程：
 
@@ -496,9 +773,9 @@ spec:
 应用 OpenTelemetry SDK
   -> OTLP gRPC/HTTP
   -> OpenTelemetry Collector
-  -> 采样、脱敏、资源属性补充
-  -> Tempo
-  -> Grafana Explore
+  -> 批处理、脱敏、重试和采样
+  -> VTSingle / VTCluster
+  -> Grafana Jaeger datasource
 ```
 
 统一资源属性：
@@ -506,29 +783,68 @@ spec:
 - `service.name`
 - `service.version`
 - `deployment.environment`
+- `k8s.cluster.name`
 - `k8s.namespace.name`
 - `k8s.pod.name`
-- `cloud.region`
 
-采样建议：
+采样策略：
 
-- 开发测试环境可提高采样率。
-- 生产环境采用 head sampling + tail sampling。
-- 错误请求和高延迟请求尽量保留。
+- 错误 Trace 尽量保留。
+- 高延迟 Trace 尽量保留。
 - 正常高频请求按比例采样。
-- Trace 和日志都写入 `trace_id`，Grafana 中建立关联跳转。
+- 开发测试环境可提高采样率。
+- 生产环境优先使用 tail sampling。
+- 日志同时记录 `trace_id` 和 `span_id`。
 
-## 12. 告警体系
+标准版可启用：
 
-### 12.1 告警等级
+```yaml
+vtsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "7d"
+    storage:
+      resources:
+        requests:
+          storage: 50Gi
+```
+
+具体保留期格式和 storage 字段必须以锁定版本为准。
+
+## 16. 外部探测
+
+Pod `Running` 不代表用户可以访问服务。必须通过 Blackbox Exporter 和 VMProbe 探测：
+
+- HTTP/HTTPS 状态码。
+- DNS 解析时间。
+- TCP 建连时间。
+- TLS 握手时间。
+- 总请求耗时。
+- 响应内容关键字。
+- TLS 证书剩余天数。
+
+探测目标至少包括：
+
+- Grafana 登录页。
+- Kubernetes API 健康接口。
+- 核心业务公网入口。
+- 核心业务内网 Service。
+- DNS 服务。
+- 关键数据库或中间件 TCP 端口。
+
+至少一个关键入口应由 Kubernetes 集群外的探针监控。否则整个集群、网络或 Alertmanager 同时故障时，集群内监控无法发送告警。
+
+## 17. 告警体系
+
+### 17.1 告警等级
 
 | 等级 | 定义 | 通知方式 | 响应目标 |
 | --- | --- | --- | --- |
-| `critical` | 服务不可用、数据风险、核心 SLO 快速消耗 | 电话/值班系统 + 飞书 + 邮件 | 5～15 分钟 |
+| `critical` | 服务不可用、数据风险、核心 SLO 快速消耗 | 值班系统 + 飞书 + 邮件 | 5～15 分钟 |
 | `warning` | 容量趋紧、性能下降、冗余丢失 | 飞书 + 邮件 | 30 分钟～4 小时 |
-| `info` | 计划变更、非紧急异常、趋势提醒 | 看板或日报 | 工作时间处理 |
+| `info` | 趋势提醒或计划变更 | 看板或日报 | 工作时间处理 |
 
-告警 label 至少包括：
+每条告警至少包含：
 
 - `severity`
 - `team`
@@ -536,58 +852,21 @@ spec:
 - `environment`
 - `cluster`
 - `category`
-
-告警 annotation 至少包括：
-
 - `summary`
 - `description`
 - `runbook_url`
 - `dashboard_url`
 
-### 12.2 必备告警
-
-集群与节点：
-
-- Node NotReady、节点不可达。
-- CPU 持续高负载、内存可用量过低、文件系统剩余空间不足。
-- inode 不足、磁盘 I/O 延迟异常、网络错误增长。
-- Kubernetes 证书即将过期。
-
-工作负载：
-
-- Deployment 副本不足。
-- Pod CrashLoopBackOff、频繁重启、OOMKilled。
-- Job 失败或超时。
-- HPA 达到上限仍无法满足负载。
-- PVC Pending、容量不足或存储错误。
-
-业务：
-
-- 请求错误率。
-- P95/P99 延迟。
-- 请求量异常下降或突增。
-- 核心业务成功率。
-- 队列积压、数据库连接池耗尽、依赖服务失败。
-
-监控系统自身：
-
-- Prometheus target down、规则计算失败、配置 reload 失败。
-- Prometheus 磁盘、内存、WAL 和 active series 异常。
-- Alertmanager 通知失败和集群成员异常。
-- Fluent Bit 重试、错误、丢弃和缓冲区积压。
-- Loki 写入失败、查询错误、对象存储错误和 compactor 异常。
-- Grafana 数据源不可用。
-
-### 12.3 PrometheusRule 示例
+### 17.2 VMRule 示例
 
 ```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
 metadata:
   name: example-api-rules
   namespace: observability
   labels:
-    release: kube-prometheus-stack
+    team: example
 spec:
   groups:
     - name: example-api.availability
@@ -611,11 +890,29 @@ spec:
             runbook_url: https://runbooks.example.com/example-api/high-error-rate
 ```
 
-生产告警应处理分母为零、低流量误报和缺失数据，必要时使用 recording rule 统一计算。
+生产规则需要处理：
 
-### 12.4 Alertmanager 路由
+- 分母为零。
+- 低流量误报。
+- 指标缺失。
+- 集群和环境标签。
+- 维护窗口。
+- 同一根因引发的下游告警抑制。
 
-推荐路由原则：
+### 17.3 日志告警
+
+VMAlert 可以针对 VictoriaLogs 执行 LogsQL 规则。适合：
+
+- 单位时间内 ERROR 日志突增。
+- 登录失败或权限拒绝异常增长。
+- 数据库连接失败。
+- 消息消费失败和重试耗尽。
+- 特定安全事件。
+- 应用 panic、fatal 和 OOM 相关日志。
+
+日志告警不能代替指标告警。高频核心场景应由应用直接暴露 Counter 或 Histogram，日志告警用于补充无法快速改造的事件。
+
+### 17.4 Alertmanager 路由
 
 ```text
 critical -> 值班系统 + 飞书告警群 + 邮件
@@ -623,19 +920,46 @@ warning  -> 飞书告警群 + 邮件
 info     -> 低优先级群或日报
 
 按 cluster、environment、team、service 分组
-同一故障产生的下游告警通过 inhibit_rules 抑制
-Watchdog 单独发送到告警链路自检服务
+节点或集群级故障抑制对应的 Pod 和业务下游告警
+Watchdog 单独发送到集群外告警链路自检服务
 ```
 
-Webhook、邮箱密码和 API Token 必须从 Kubernetes Secret 或外部 Secret 注入，不得写入 values 文件。
+Webhook、Token、邮箱密码通过 Kubernetes Secret 或外部 Secret 注入，不得直接写入 Helm values。
 
-建议配置 Dead Man's Snitch/Watchdog：持续发送一条固定告警。如果通知平台长时间收不到，说明 Prometheus、Alertmanager 或通知通道本身发生故障。
+### 17.5 必备告警
 
-## 13. SLO 与错误预算
+集群与节点：
 
-关键服务不应只配置资源告警，还应围绕用户体验定义 SLO。
+- Node NotReady、节点不可达。
+- CPU 持续高负载、内存不足、文件系统空间不足。
+- inode 不足、磁盘 I/O 延迟、网络错误。
+- Kubernetes 证书即将过期。
 
-示例：
+工作负载：
+
+- Deployment 副本不足。
+- Pod CrashLoopBackOff、频繁重启、OOMKilled。
+- Job 失败或超时。
+- HPA 达到上限。
+- PVC Pending 或容量不足。
+
+Victoria 指标系统：
+
+- VMAgent 抓取失败、远程写入失败和队列积压。
+- VMSingle/VMCluster 磁盘不足、写入拒绝、查询错误和组件不可用。
+- VMAlert 规则执行失败、查询错误和通知失败。
+- Alertmanager 集群成员异常和通知失败。
+- Operator reconcile 失败和 CR 状态异常。
+
+Victoria 日志系统：
+
+- VLAgent remote write 重试、缓冲增长、日志丢弃和解析失败。
+- VLSingle/VLCluster 磁盘不足、写入失败、查询错误和 storage 节点不可用。
+- LogsQL 告警规则执行失败。
+
+## 18. SLO 与错误预算
+
+关键服务应定义：
 
 | SLI | SLO 示例 |
 | --- | --- |
@@ -644,304 +968,380 @@ Webhook、邮箱密码和 API Token 必须从 Kubernetes Secret 或外部 Secret
 | 正确性 | 核心业务成功率不低于 99.95% |
 | 数据新鲜度 | 数据延迟不超过 5 分钟 |
 
-建议使用多窗口、多燃烧率告警：
+推荐使用多窗口、多燃烧率告警：
 
 - 5 分钟 + 1 小时：快速燃烧，`critical`。
 - 30 分钟 + 6 小时：中速燃烧，`warning`。
 - 2 小时 + 24 小时：慢速燃烧，用于趋势处理。
 
-这样比固定 CPU 阈值更接近业务真实影响，也能减少无效告警。
+VMRule 可使用 MetricsQL/PromQL 计算 SLI、错误预算和燃烧率。
 
-## 14. Grafana 设计
+## 19. Grafana 设计
 
-### 14.1 数据源
+### 19.1 数据源
 
-所有数据源通过 provisioning 管理：
+通过 Stack 自动 provisioning：
 
-- Prometheus 或 Thanos Query。
-- Loki。
-- Tempo。
+- VictoriaMetrics。
+- VictoriaLogs。
+- VictoriaTraces。
 - Alertmanager。
 
-禁止只在 Grafana 页面中手工添加生产数据源。页面手工变更无法可靠审计和重建。
+启用 VictoriaLogs 时安装：
 
-### 14.2 Dashboard 分层
+```yaml
+grafana:
+  plugins:
+    - victoriametrics-logs-datasource
+```
 
-1. **全局总览**：集群健康、告警、节点、资源使用率、业务 SLO。
-2. **Kubernetes**：Namespace、Deployment、StatefulSet、Pod、PVC。
-3. **节点**：CPU、内存、磁盘、文件系统、网络。
-4. **业务服务**：RED 指标，即请求量、错误率、延迟。
-5. **资源系统**：USE 指标，即利用率、饱和度、错误。
-6. **日志**：按环境、namespace、应用、级别查询。
-7. **监控自监控**：Prometheus、Alertmanager、Loki、Fluent Bit、Grafana。
+不允许只在 Grafana 页面手工增加生产数据源。手工配置无法可靠审计、复现和恢复。
 
-Dashboard 使用 ConfigMap sidecar 或 Grafana provisioning 纳入 Git。每个业务 Dashboard 标注 owner、数据源、变量和更新时间。
+### 19.2 Dashboard 分层
 
-## 15. 安全设计
+1. 全局总览：集群健康、告警、SLO 和容量。
+2. Kubernetes：Namespace、Deployment、StatefulSet、Pod、PVC。
+3. 节点：CPU、内存、磁盘、文件系统和网络。
+4. 业务服务：请求量、错误率和延迟。
+5. VictoriaMetrics：VMAgent、VMSingle/VMCluster、VMAlert。
+6. VictoriaLogs：VLAgent、VLSingle/VLCluster、日志增长和查询。
+7. VictoriaTraces：写入量、采样率、查询和存储。
+8. 日志检索：按集群、环境、namespace、service、level 查询。
 
-- Grafana、Prometheus、Alertmanager、Loki、Tempo 默认使用 `ClusterIP`，不直接使用 NodePort 或 LoadBalancer 暴露管理端口。
-- 仅通过 Ingress 暴露 Grafana；管理接口优先通过 VPN、堡垒机或内网访问。
-- Ingress 启用 TLS、SSO/OIDC、MFA、访问日志、限流和 IP 白名单。
-- Grafana 禁用匿名管理员访问，最小化组织管理员数量。
-- 使用 RBAC 限制 Prometheus Operator、Fluent Bit 和 Grafana ServiceAccount 权限。
-- 使用 NetworkPolicy 限制采集器、存储和展示组件之间的访问。
+Dashboard 必须有 owner、数据源、变量、说明和更新时间，并通过 ConfigMap 或 provisioning 纳入 Git。
+
+## 20. VMAuth 与访问安全
+
+### 20.1 服务暴露原则
+
+- VMSingle、VMCluster、VLSingle、VLCluster、VTSingle、VTCluster、VMAlert、Alertmanager 默认使用 `ClusterIP`。
+- 不使用 NodePort 直接暴露存储和查询接口。
+- Grafana 通过 Ingress 暴露。
+- 运维接口优先通过 VPN、堡垒机或内网访问。
+- 多租户和统一入口通过 VMAuth。
+
+### 20.2 VMAuth 职责
+
+- 指标写入路由到 VMSingle 或 vminsert。
+- 指标查询路由到 VMSingle 或 vmselect。
+- 日志写入路由到 VLSingle 或 vlinsert。
+- 日志查询路由到 VLSingle 或 vlselect。
+- Trace 写入和查询路由到 VictoriaTraces。
+- 按用户、租户、路径和方法限制访问。
+- 为 Grafana、Agent 和外部调用方使用不同账号。
+
+### 20.3 Kubernetes 安全要求
+
 - Secret 使用 External Secrets、Sealed Secrets 或云密钥服务管理。
-- 镜像固定 tag 和 digest，使用私有镜像仓库、漏洞扫描和签名校验。
-- Pod 启用非 root、只读根文件系统、禁止权限提升，并删除不需要的 Linux capabilities。
-- 日志采集前脱敏，避免凭据和个人敏感信息进入集中日志系统。
+- ServiceAccount 使用最小 RBAC。
+- 使用 NetworkPolicy 限制采集、存储、查询和展示组件访问。
+- Pod 使用非 root、只读根文件系统和禁止权限提升。
+- 删除不需要的 Linux capabilities。
+- 镜像固定 tag 和 digest，并经过漏洞扫描。
+- Ingress 启用 TLS、SSO/OIDC、MFA、限流和访问日志。
+- 日志采集前过滤密码、Token、Cookie 和认证头。
 
-## 16. 存储与容量规划
+## 21. 容量规划
 
-### 16.1 Prometheus
+### 21.1 VictoriaMetrics
 
-Prometheus 容量不能只按节点数估算，应依据：
+容量依据：
 
 ```text
 每日样本数 = active_series × 86400 / scrape_interval
-预计空间 = 每日样本数 × 单样本平均字节数 × 保留天数 × 安全系数
+预计空间 = 每日样本数 × 实际平均每样本字节数 × 保留天数 × 安全系数
 ```
 
-建议上线后观察 7～14 天：
+不能长期依赖理论值。上线后观察 7～14 天：
 
-- `prometheus_tsdb_head_series`
-- `prometheus_tsdb_head_samples_appended_total`
-- `prometheus_tsdb_storage_blocks_bytes`
-- PVC 实际增长量
+- active series。
+- 每秒写入数据点。
+- 每日磁盘增长。
+- VMAgent pending data。
+- 查询并发与 P95/P99 延迟。
+- merge、index 和 cache 指标。
 
-`retentionSize` 应小于 PVC 容量，至少预留 15%～20% 给 WAL、临时块和压缩过程。
+PVC 保留至少 20% 空间用于后台合并、索引和突发流量。
 
-### 16.2 Loki
+### 21.2 VictoriaLogs
 
 ```text
-每日原始日志量 = 平均写入字节/秒 × 86400
-存储需求 = 每日原始日志量 × 压缩系数 × 保留天数 × 副本/冗余系数
+每日日志量 = 平均写入字节/秒 × 86400
+存储需求 = 每日压缩后增长 × 保留天数 × 复制因子 × 安全系数
 ```
 
-保留期必须与对象存储生命周期、Loki retention 和合规要求一致。不能只设置对象存储自动删除而不配置 Loki compactor。
+观察：
 
-### 16.3 Tempo
+- 每日实际磁盘增长。
+- 原始日志与压缩后大小比例。
+- stream fields 数量。
+- 写入峰值。
+- 查询时间范围和并发。
+- VLAgent 每节点缓冲增长。
 
-Trace 容量取决于请求量、平均 span 数和采样率。应先小比例采样，观察一周后再调整。错误和慢请求优先保留，避免对所有请求 100% 采样。
+### 21.3 VictoriaTraces
 
-## 17. 备份与恢复
+Trace 容量取决于：
+
+- 每秒请求数。
+- 每请求 span 数量。
+- 单个 span 大小。
+- 采样率。
+- 保留天数。
+
+先以较低采样率上线，观察一周后再调整。不要默认对全部请求进行 100% 采样。
+
+## 22. 备份与恢复
 
 需要备份：
 
-- Helm values 和 Kubernetes manifests：保存在 Git。
-- Grafana Dashboard、数据源和告警配置：使用 provisioning 保存在 Git。
-- Grafana 数据库：单副本 SQLite 定期快照；高可用版备份 PostgreSQL。
-- Prometheus：短期数据可通过 CSI 快照恢复；长期数据交给 Thanos 对象存储。
-- Loki、Tempo：对象存储开启版本控制、生命周期和跨区域备份策略。
-- Alertmanager：配置在 Git，运行状态卷按需要做 CSI 快照。
+- Helm values 和所有 CR：Git。
+- VMRule、Dashboard、数据源和 Alertmanager 配置：Git。
+- Secret：由外部 Secret 系统保存，不导出明文到普通备份。
+- VMSingle/VMCluster：使用 vmbackup 或 vmbackupmanager 备份到对象存储。
+- VLSingle/VLCluster：根据目标版本支持的备份方式、存储快照和恢复流程设计。
+- Grafana：单副本备份 SQLite；高可用版备份 PostgreSQL。
+- PVC：使用 CSI VolumeSnapshot，验证存储一致性要求。
 
-恢复演练至少每季度执行一次，验证：
+恢复演练至少每季度执行一次：
 
-1. 新 Namespace 中可以从 Git 和 Secret 系统重建监控栈。
-2. Grafana Dashboard 和数据源自动恢复。
-3. 告警通知链路可以发送测试告警。
-4. 对象存储中的历史数据可以查询。
-5. PVC 恢复后组件能正常启动。
+1. 在新 Namespace 安装 Operator 和 Stack。
+2. 恢复 Secret 引用、VMRule、Dashboard 和数据源。
+3. 恢复 VictoriaMetrics 数据并验证历史查询。
+4. 恢复 VictoriaLogs 数据并验证 LogsQL 查询。
+5. 发送测试告警并验证恢复通知。
+6. 记录 RTO、RPO、失败步骤和改进项。
 
-## 18. Helm 部署顺序
+## 23. Helm 部署流程
 
-### 18.1 变更前检查
+### 23.1 环境检查
 
 ```bash
 kubectl version
 helm version
+kubectl get nodes -o wide
 kubectl get storageclass
 kubectl get ingressclass
-kubectl get nodes -o wide
 kubectl top nodes
 ```
 
 确认：
 
-- Kubernetes 与目标 Chart 版本兼容。
-- CSI、StorageClass 和 VolumeSnapshot 可用。
-- Ingress Controller、DNS 和证书签发能力可用。
-- 对象存储、Secret 和通知接收端已经准备好。
+- Kubernetes 与目标 Chart、Operator 版本兼容。
+- StorageClass 和 CSI 快照可用。
+- Ingress、DNS 和 TLS 证书能力可用。
+- 目标节点资源满足 request 和故障冗余要求。
+- Secret、VMAuth 用户和通知接收端已准备好。
 
-### 18.2 安装顺序
+### 23.2 安装顺序
 
 ```text
-1. Namespace、RBAC、Secret、NetworkPolicy
-2. kube-prometheus-stack
-3. Blackbox Exporter
-4. Loki
-5. Fluent Bit
-6. Tempo 与 OpenTelemetry Collector（可选）
-7. ServiceMonitor、Probe、PrometheusRule
-8. Grafana 数据源和 Dashboard
-9. Ingress、TLS、SSO
-10. 测试告警、日志、Trace 和恢复流程
+1. Namespace、ResourceQuota、LimitRange、NetworkPolicy
+2. Secret 和证书引用
+3. VictoriaMetrics CRD
+4. VictoriaMetrics Operator
+5. victoria-metrics-k8s-stack
+6. Blackbox Exporter
+7. OpenTelemetry Collector（可选）
+8. VMServiceScrape、VMPodScrape、VMProbe、VMRule
+9. Grafana Dashboard、Ingress、TLS、SSO
+10. 指标、日志、Trace、告警和恢复验收
 ```
 
-### 18.3 标准 Helm 流程
-
-每个 release 都执行 lint、渲染、差异审查，再升级：
+### 23.3 Stack 安装
 
 ```bash
-helm lint <chart> -f <values-file>
+helm show values vm/victoria-metrics-k8s-stack \
+  --version <locked-version> \
+  > /tmp/vm-stack-default-values.yaml
 
-helm template <release> <chart> \
+helm lint vm/victoria-metrics-k8s-stack \
+  --version <locked-version> \
+  -f environments/prod/vm-stack.values.yaml
+
+helm template vm-stack vm/victoria-metrics-k8s-stack \
   --namespace observability \
   --version <locked-version> \
-  -f <values-file> > /tmp/<release>-rendered.yaml
+  -f environments/prod/vm-stack.values.yaml \
+  > /tmp/vm-stack-rendered.yaml
 
-helm upgrade --install <release> <chart> \
+helm upgrade --install vm-stack vm/victoria-metrics-k8s-stack \
   --namespace observability \
   --create-namespace \
   --version <locked-version> \
-  -f <values-file> \
+  -f environments/prod/vm-stack.values.yaml \
   --atomic \
-  --timeout 15m \
+  --timeout 20m \
   --history-max 10
 ```
 
-生产环境建议增加 Helm diff 插件或 GitOps 控制器，审查将被创建、修改和删除的资源。
+生产环境建议安装 Helm diff 插件或使用 GitOps 控制器审查资源变化。
 
-### 18.4 回滚
+### 23.4 回滚
 
 ```bash
-helm history <release> -n observability
-helm rollback <release> <revision> -n observability --wait --timeout 15m
+helm history vm-stack -n observability
+helm rollback vm-stack <revision> -n observability --wait --timeout 20m
 ```
 
-涉及 CRD、PVC、数据库 schema 或对象存储格式的升级不能只依赖 Helm rollback。必须阅读对应版本升级说明并准备数据恢复方案。
+CRD、PVC、数据格式或 Operator schema 变化不能仅依赖 Helm rollback。必须保留升级前 CRD、CR、values、数据备份和恢复步骤。
 
-## 19. 发布与升级策略
+## 24. 发布与升级策略
 
+- 固定 Chart 和镜像版本。
+- 先升级测试集群，再升级生产。
+- CRD 先 diff、备份、server-side apply，再升级 Operator 和 Stack。
 - 每次只升级一个 release。
-- 先在测试集群验证，再升级生产。
-- Chart 大版本升级单独安排维护窗口。
-- 升级前备份 values、Grafana 数据库和关键 PVC。
-- 先升级 CRD，再升级 Operator 时必须遵循 Chart 官方说明。
-- 检查 PodDisruptionBudget、反亲和和滚动更新策略。
-- 升级后至少观察一个完整告警评估周期和一个日志块写入周期。
-- 禁止在没有 `helm template` 和 diff 的情况下直接执行 `helm upgrade`。
+- 大版本升级单独安排维护窗口。
+- 升级前备份 CR、values、Grafana 数据库和 Victoria 数据。
+- 检查 release notes 中废弃字段和迁移要求。
+- 升级后观察完整抓取周期、规则周期、日志补发和告警链路。
+- 禁止不经过 `helm lint`、`helm template` 和 diff 直接升级。
 
-## 20. 验收标准
+## 25. 验收标准
 
-### 20.1 指标
+### 25.1 指标
 
-- Kubernetes、节点和业务 target 全部 `up`。
-- Prometheus 重启后历史指标仍然存在。
-- Prometheus PVC 使用率、内存、WAL、规则计算无异常。
-- 业务 RED 指标和核心 SLO 可在 Grafana 查询。
+- Kubernetes、节点、Victoria 组件和业务采集目标全部正常。
+- VMAgent 没有持续 remote write 错误和队列积压。
+- VMSingle/VMCluster 重启后保留期内指标存在。
+- MetricsQL/PromQL 查询和 Grafana Dashboard 正常。
+- active series 和每日磁盘增长符合预算。
 
-### 20.2 日志
+### 25.2 日志
 
-- 新产生的容器日志在约定延迟内可查询。
-- 多行错误日志不会被拆散。
-- 可按 cluster、namespace、service、level、trace_id 查询。
-- 临时中断 Loki 后，Fluent Bit 使用磁盘缓冲并在恢复后补发。
-- 日志中不包含测试用密码、Token 和认证头。
+- 新产生的 Pod 日志在约定延迟内可查询。
+- 多行错误日志能够完整展示。
+- 可按 cluster、environment、namespace、service、level 和 trace_id 查询。
+- 暂停 VictoriaLogs 后 VLAgent 进入磁盘缓冲，恢复后自动补发。
+- VLAgent 重启后 checkpoint 保留，不重复采集大量旧日志。
+- 日志中不包含测试密码、Token、Cookie 和认证头。
 
-### 20.3 告警
+### 25.3 Trace
 
-- 测试告警可以从 Prometheus 到达 Alertmanager 和实际通知端。
-- 告警恢复后有恢复通知。
-- 同一故障不会产生大量重复通知。
-- `critical` 和 `warning` 能路由到不同接收端。
-- Watchdog 告警持续被外部自检服务接收。
+- 应用 Trace 可以通过 OTLP 写入。
+- Grafana 可以按 service、operation 和 trace_id 查询。
+- 日志 trace_id 可以跳转 Trace。
+- 错误和高延迟 Trace 保留策略符合预期。
 
-### 20.4 可用性和安全
+### 25.4 告警
+
+- VMAlert 可以执行 MetricsQL 和 LogsQL 规则。
+- 测试告警到达 Alertmanager 和实际通知端。
+- 告警恢复后收到恢复通知。
+- 同一根因不会产生大量重复通知。
+- `critical` 和 `warning` 正确路由。
+- Watchdog 持续被集群外自检服务接收。
+
+### 25.5 安全
 
 - Grafana 只能通过 HTTPS 和身份认证访问。
-- Prometheus、Alertmanager、Loki、Tempo 管理端口不直接暴露公网。
-- 非授权 Namespace 不能访问敏感监控接口。
-- Secret 不存在于 Git、Helm values、日志和 Dashboard 中。
-- 集群外探针能发现整个集群或入口不可用。
+- VictoriaMetrics、VictoriaLogs、VictoriaTraces 管理端口不直接暴露公网。
+- VMAuth 使用不同账号区分 Agent、Grafana 和外部用户。
+- 非授权 Namespace 无法访问存储接口。
+- Secret 不存在于 Git、values、日志和 Dashboard。
 
-### 20.5 恢复
+### 25.6 恢复
 
-- 删除并重建 Grafana Pod 后配置和 Dashboard 保留。
-- 删除并重建 Prometheus Pod 后保留期内数据存在。
-- 可以从 Git 在空 Namespace 中重建全部配置。
-- 备份恢复演练有记录、有负责人、有恢复时间结果。
+- 删除并重建 Agent Pod 后采集恢复。
+- 删除并重建 Storage Pod 后数据仍然存在。
+- 可以从 Git 在空 Namespace 重建全部配置。
+- 可以从备份恢复指标和关键日志。
+- 恢复演练有 RTO、RPO 和结果记录。
 
-## 21. 运维制度
+## 26. 运维制度
 
 ### 每日
 
-- 查看 critical、warning 告警和未恢复告警。
-- 查看监控组件自身错误、采集失败和通知失败。
+- 查看 critical、warning 和未恢复告警。
+- 检查 VMAgent/VLAgent 写入错误、队列和缓冲。
+- 检查 Victoria storage 磁盘空间和组件状态。
 
 ### 每周
 
 - 复盘误报、漏报和重复告警。
-- 查看 Prometheus active series、Loki 写入量和 PVC 增长趋势。
-- 检查证书、对象存储、备份和外部探针状态。
+- 查看 active series、日志日增量、Trace 写入量和查询延迟。
+- 检查备份、证书和外部探针。
 
 ### 每月
 
 - 更新容量预测。
-- 清理无 owner 的 Dashboard、规则和高基数指标。
-- 检查 Chart、镜像和安全漏洞，但不直接追新版本。
-- 随机抽查一条告警对应的 runbook 是否有效。
+- 清理无 owner 的 Dashboard、VMRule 和高基数指标。
+- 评估 Chart、镜像和安全更新，不直接追新版本。
+- 检查每条 critical 告警的 runbook。
 
 ### 每季度
 
-- 执行恢复演练。
-- 执行告警链路演练。
-- 评审 SLO、保留期、访问权限和成本。
+- 执行 VictoriaMetrics 和 VictoriaLogs 恢复演练。
+- 执行告警链路故障演练。
+- 评审 SLO、保留期、权限和成本。
 
-## 22. 实施阶段与交付物
+## 27. 实施阶段
 
-### 阶段一：基础监控
-
-交付：
-
-- `kube-prometheus-stack` Helm values。
-- Prometheus、Alertmanager、Grafana PVC。
-- Kubernetes 和节点 Dashboard。
-- 基础集群告警和一个实际通知接收端。
-
-验收：节点、Pod、PVC、控制面指标可见；测试告警能够发送和恢复。
-
-### 阶段二：日志和外部探测
+### 阶段一：指标和基础告警
 
 交付：
 
-- Loki 与 Fluent Bit Helm values。
-- Fluent Bit 磁盘缓冲、日志脱敏和多行解析。
-- Blackbox Exporter 和核心入口 Probe。
-- Grafana 日志数据源与日志 Dashboard。
+- Operator 和 `victoria-metrics-k8s-stack` Helm values。
+- VMAgent、VMSingle、VMAlert、Alertmanager、Grafana。
+- Kubernetes 与节点 Dashboard。
+- 实际飞书、邮件或值班系统通知。
 
-验收：日志可查询；后端短时中断不丢日志；入口故障可以告警。
+验收：采集目标正常；测试告警可以发送和恢复。
+
+### 阶段二：VictoriaLogs
+
+交付：
+
+- VLSingle 或 VLCluster。
+- VLAgent Kubernetes Collector。
+- 每节点持久缓冲。
+- 日志字段、过滤、脱敏和保留规范。
+- Grafana VictoriaLogs 数据源与日志 Dashboard。
+
+验收：日志可查询；后端短时中断可以补发；敏感字段不进入存储。
 
 ### 阶段三：业务监控和 SLO
 
 交付：
 
 - 业务 `/metrics` 规范。
-- ServiceMonitor、PrometheusRule、Dashboard。
+- VMServiceScrape、VMRule、VMProbe 和业务 Dashboard。
 - 业务 SLI/SLO、错误预算和燃烧率告警。
 - 每条 critical 告警对应的 runbook。
 
-验收：可以从告警定位到 Dashboard、日志和负责人。
+验收：可以从告警定位到 Dashboard、日志、Trace 和负责人。
 
-### 阶段四：高可用和长期存储
+### 阶段四：Trace 和高可用
 
 交付：
 
-- 双副本 Prometheus、Thanos、对象存储。
-- 3 副本 Alertmanager。
-- Loki 高可用部署。
+- OpenTelemetry Collector。
+- VTSingle 或 VTCluster。
+- VMCluster、VLCluster、VMAuth 和多副本 Alertmanager。
 - Grafana 外部 PostgreSQL。
-- 跨集群查询、备份和恢复演练。
+- 备份、恢复和故障演练。
 
-验收：单 Pod、单节点或单可用区故障不影响核心监控和告警能力。
+验收：单 Pod 或单节点故障不影响核心采集、查询和告警能力。
 
-## 23. 最终落地原则
+## 28. 官方参考
 
-1. 先打通告警，再扩展 Dashboard；没有通知出口的监控只是数据展示。
-2. 先控制指标和日志基数，再扩大采集范围；无限采集会快速增加成本并降低稳定性。
-3. 所有生产配置必须进入 Git，所有敏感信息必须进入 Secret 系统。
-4. 所有管理端口默认内网访问，统一通过 Ingress、TLS 和身份认证开放。
-5. 监控系统必须监控自身，并由集群外探针监控整个集群。
-6. 每条 critical 告警必须有 owner、影响说明、Dashboard 和 runbook。
-7. 容量以实际增长数据调整，不长期依赖初始估算。
-8. Helm 升级必须经过 lint、render、diff、备份、验证和回滚准备。
+- VictoriaMetrics K8s Stack：<https://docs.victoriametrics.com/helm/victoria-metrics-k8s-stack/>
+- VictoriaMetrics Operator：<https://docs.victoriametrics.com/operator/>
+- Prometheus CRD 转换：<https://docs.victoriametrics.com/operator/integrations/prometheus/>
+- VictoriaLogs VLAgent：<https://docs.victoriametrics.com/victorialogs/vlagent/>
+- VictoriaLogs Collector Chart：<https://docs.victoriametrics.com/helm/victoria-logs-collector/>
+- VictoriaLogs Cluster：<https://docs.victoriametrics.com/victorialogs/cluster/>
 
+## 29. 最终落地原则
+
+1. 中小集群优先 VMSingle + VLSingle，达到明确扩展或高可用需求后再使用 Cluster。
+2. Operator 与 Stack 分开部署，CRD 升级独立审查。
+3. 指标、日志、Trace 使用统一 cluster 和 environment 标识。
+4. Agent 必须有持久缓冲，存储维护不能直接造成数据丢失。
+5. 所有生产配置进入 Git，所有凭据进入 Secret 系统。
+6. 存储和查询端默认 ClusterIP，通过 VMAuth、Ingress、TLS 和身份认证开放。
+7. 每条 critical 告警必须有 owner、Dashboard、影响说明和 runbook。
+8. 至少一个集群外探针监控整个 Kubernetes 入口和告警链路。
+9. 容量依据真实 active series、日志增长和 Trace 采样数据持续调整。
+10. Helm 升级必须经过 CRD diff、lint、render、diff、备份、验证和回滚准备。

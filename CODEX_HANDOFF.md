@@ -1,19 +1,20 @@
 # Codex 工作交接
 
-更新时间：2026-08-10 18:11 CST
+更新时间：2026-08-10 19:16 CST
 当前主机：本地 macOS；本阶段未使用远程服务器
 项目路径：`/Users/lijiaxuan/Documents/hermes`
 当前分支：`main`
 
 ## 当前目标
 
-编写一套不绑定具体服务器的 Kubernetes + Helm 生产级监控方案，覆盖指标、日志、告警、外部探测、可选链路追踪、高可用、安全、备份和验收。
+编写一套不绑定具体服务器的 Kubernetes + Helm Victoria 全栈生产级监控方案，覆盖指标、日志、告警、外部探测、可选链路追踪、高可用、安全、备份和验收。
 
 ## 已确认事实
 
 - 用户明确要求使用 Kubernetes + Helm，且本方案不使用前一阶段检查的具体服务器参数。
-- 通用方案采用 `kube-prometheus-stack + Loki + Fluent Bit + Blackbox Exporter` 作为主线，Tempo、OpenTelemetry、Thanos 作为按需增强。
+- 通用方案采用 `victoria-metrics-k8s-stack` 作为主线，使用 VMAgent、VMSingle/VMCluster、VMAlert、VictoriaLogs、VLAgent、Grafana 和 Blackbox Exporter，VictoriaTraces 与 OpenTelemetry 作为按需增强。
 - 方案同时提供标准版和高可用版，不把单机容量参数作为通用默认值。
+- VictoriaMetrics 官方 K8s Stack 当前可统一部署指标、日志和 Trace，并自动配置相关 Grafana 数据源。
 
 以下是前一阶段仍然有效的历史记录：
 
@@ -28,6 +29,8 @@
 
 - 通用方案需要同时覆盖组件选择、Helm 生命周期、业务接入规范、告警治理和恢复能力，仅安装几个 Chart 不能视为完整监控体系。
 - 中小集群和关键生产集群的副本、存储与长期保留需求差异较大，因此采用两档架构更合理。
+- 中小集群优先使用 VMSingle + VLSingle；存在明确横向扩展或高可用需求后再使用 VMCluster + VLCluster。
+- 生产环境将 VictoriaMetrics Operator 与 K8s Stack 分开部署，更便于管理 CRD、受管 CR 和 Namespace 删除顺序。
 
 以下是前一阶段仍然有效的历史判断：
 
@@ -50,7 +53,9 @@
 
 - 编写通用 Kubernetes + Helm 生产级监控方案。
 - 提供标准版与高可用版架构、组件职责、容量起点和数据流。
-- 提供 Prometheus values、ServiceMonitor、Probe、PrometheusRule 等配置模板。
+- 将原 Prometheus + Loki 主线完整改写为 Victoria 全栈方案。
+- 提供 Victoria Stack values、VMServiceScrape、VMRule 等配置模板。
+- 补充 VMAgent/VLAgent 持久缓冲、VMAuth、VictoriaLogs、VictoriaTraces 和 Prometheus CRD 转换策略。
 - 补充日志、追踪、SLO、告警路由、安全、备份、升级回滚和验收标准。
 - 本阶段未修改或查询任何远程服务器。
 
@@ -68,7 +73,7 @@
 
 ## 验证结果
 
-- 通用方案文档共 947 行，Markdown 标题结构正常。
+- Victoria 全栈方案文档共 1348 行，Markdown 标题结构正常。
 - 通用方案未写入密码、Token、Webhook 或其他凭据。
 - `git diff --check` 通过。
 
@@ -85,9 +90,9 @@
 
 ## 下一步
 
-1. 收集目标集群规模、Kubernetes 版本、StorageClass、Ingress、域名、对象存储和通知渠道。
-2. 选择标准版或高可用版，并锁定 Chart 版本。
-3. 根据目标环境拆分正式 Helm values、Secret 引用、规则和 Dashboard 文件。
+1. 收集目标集群规模、Kubernetes 版本、StorageClass、Ingress、域名和通知渠道。
+2. 选择 VMSingle + VLSingle 标准版或 VMCluster + VLCluster 高可用版，并锁定 Chart 版本。
+3. 根据目标环境拆分 Operator、Stack、Secret 引用、VMRule 和 Dashboard 文件。
 4. 在测试集群执行 lint、template、diff、安装和故障演练。
 5. 通过验收后再推广到生产集群。
 
@@ -96,6 +101,8 @@
 - `helm lint <chart> -f <values-file>`
 - `helm template <release> <chart> --namespace observability --version <locked-version> -f <values-file>`
 - `helm upgrade --install <release> <chart> --namespace observability --version <locked-version> -f <values-file> --atomic --timeout 15m`
+- `helm show crds vm/victoria-metrics-k8s-stack --version <target-version> | kubectl diff -f -`
+- `helm show crds vm/victoria-metrics-k8s-stack --version <target-version> | kubectl apply -f - --server-side`
 - `helm history <release> -n observability`
 - `helm rollback <release> <revision> -n observability --wait --timeout 15m`
 
@@ -112,6 +119,7 @@
 
 - 通用方案中的容量是初始建议，必须依据 active series、日志日增量、Trace 采样率和实际磁盘增长调整。
 - Chart 字段会随版本变化，部署前必须依据锁定版本执行 `helm lint`、`helm template` 和 diff。
+- Helm 不会自动升级已有 VictoriaMetrics CRD，Stack 升级前必须单独执行 CRD diff、备份和 server-side apply。
 - 生产管理端口默认使用 ClusterIP，只通过 Ingress、TLS 和身份认证开放。
 - 不要把 Secret 写入 Git、values、日志、Dashboard 或交接文档。
 
