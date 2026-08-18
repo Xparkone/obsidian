@@ -1247,7 +1247,10 @@ argocd admin settings rbac can \
   team-a-platform \
   sync \
   applications \
-  'team-a/demo-api-prod'
+  'team-a/demo-api-prod' \
+  --namespace argocd
+
+argocd admin settings rbac validate --namespace argocd
 ```
 
 ### 14.6 使用 CLI 执行 SSO 登录
@@ -1320,6 +1323,9 @@ kind: ConfigMap
 metadata:
   name: argocd-cm
   namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
 data:
   admin.enabled: "false"
 ```
@@ -1620,11 +1626,14 @@ kubectl -n argocd describe application <APP>
 - [Declarative Setup](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/)
 - [Application Specification](https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/)
 - [CLI Environment Variables](https://argo-cd.readthedocs.io/en/stable/user-guide/environment-variables/)
+- [CLI Login Command](https://argo-cd.readthedocs.io/en/stable/user-guide/commands/argocd_login/)
 - [Automated Sync Policy](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
 - [Sync Options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
 - [ApplicationSet](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/)
 - [Ingress](https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/)
 - [TLS](https://argo-cd.readthedocs.io/en/stable/operator-manual/tls/)
+- [User Management and SSO](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/)
+- [Keycloak Integration](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/keycloak/)
 - [RBAC](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
 - [Metrics](https://argo-cd.readthedocs.io/en/stable/operator-manual/metrics/)
 - [Disaster Recovery](https://argo-cd.readthedocs.io/en/stable/operator-manual/disaster_recovery/)
