@@ -378,13 +378,124 @@ spec:
                   name: http
 ```
 
-如果控制器不能在同一域名下正确代理 gRPC，可为 CLI 使用单独的 gRPC Ingress/域名，或登录时尝试：
+如果控制器不能在同一域名下正确代理原生 gRPC，可为 CLI 使用单独的 gRPC Ingress/域名，或让 CLI 改用 gRPC-Web：
 
 ```bash
 argocd login argocd.example.com --grpc-web
 ```
 
 不要在公网环境使用 `--insecure` 跳过客户端证书校验。`server.insecure: "true"` 只表示集群内 Ingress 到 Argo CD 的后端使用明文 HTTP，两者含义不同。
+
+### 6.3 `--grpc-web` 参数用法
+
+Argo CD CLI 默认使用基于 HTTP/2 的原生 gRPC 与 `argocd-server` 通信。某些 Ingress、七层负载均衡器、WAF 或企业代理不能完整转发原生 gRPC，此时可能出现 `404`、`502`、连接被关闭、HTTP/2 协商失败或 `rpc error: code = Unavailable`。`--grpc-web` 会让 CLI 改用对 HTTP/1.1 代理更友好的 gRPC-Web 协议。
+
+它只改变 CLI 到 Argo CD API Server 的通信协议，不会改变 Application 的同步方式，也不等于禁用 TLS。
+
+登录时使用：
+
+```bash
+argocd login argocd.example.com --grpc-web
+```
+
+使用用户名登录：
+
+```bash
+argocd login argocd.example.com \
+  --username admin \
+  --grpc-web
+```
+
+使用 SSO 登录：
+
+```bash
+argocd login argocd.example.com \
+  --sso \
+  --grpc-web
+```
+
+`--grpc-web` 是全局参数，可以附加到其他 CLI 命令：
+
+```bash
+argocd app list --grpc-web
+argocd app get demo-api-prod --grpc-web
+argocd app sync demo-api-prod --grpc-web
+argocd repo list --grpc-web
+argocd cluster list --grpc-web
+```
+
+如果当前访问入口始终需要 gRPC-Web，可以通过 `ARGOCD_OPTS` 避免每条命令重复填写：
+
+```bash
+export ARGOCD_SERVER=argocd.example.com
+export ARGOCD_OPTS='--grpc-web'
+
+argocd login "$ARGOCD_SERVER"
+argocd app list
+argocd app sync demo-api-prod
+```
+
+在 CI 中通常配合环境变量使用：
+
+```bash
+export ARGOCD_SERVER=argocd.example.com
+export ARGOCD_AUTH_TOKEN='<ARGOCD_TOKEN>'
+export ARGOCD_OPTS='--grpc-web'
+
+argocd app get demo-api-prod
+argocd app sync demo-api-prod
+argocd app wait demo-api-prod --sync --health --timeout 600
+```
+
+真实 Token 应由 CI 密钥变量注入，不得明文写进流水线仓库或日志。
+
+如果 Argo CD 通过子路径发布，例如 `https://example.com/argo-cd`，服务端和 CLI 必须使用一致的根路径。服务端示例：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  server.basehref: "/argo-cd"
+  server.rootpath: "/argo-cd"
+```
+
+CLI 使用 `--grpc-web-root-path`：
+
+```bash
+argocd login example.com \
+  --grpc-web \
+  --grpc-web-root-path /argo-cd
+```
+
+也可以全局配置：
+
+```bash
+export ARGOCD_SERVER=example.com
+export ARGOCD_OPTS='--grpc-web --grpc-web-root-path /argo-cd'
+```
+
+相关参数不要混淆：
+
+| 参数 | 作用 | 常见场景 |
+|---|---|---|
+| `--grpc-web` | 使用 gRPC-Web 代替原生 gRPC | 中间代理不支持端到端 HTTP/2 gRPC |
+| `--grpc-web-root-path /argo-cd` | 指定 gRPC-Web 的非根 URL 路径 | Argo CD 发布在域名子路径下 |
+| `--insecure` | 跳过服务端证书和域名校验 | 仅限临时测试自签名证书，不建议用于生产 |
+| `--plaintext` | CLI 到入口不使用 TLS | 仅用于明确为 HTTP 的受控入口 |
+| `--port-forward` | 通过 Kubernetes API 临时转发到 `argocd-server` | API 入口未暴露或排除 Ingress 故障 |
+
+判断是否需要该参数：
+
+1. UI 能正常打开，但 CLI 使用默认方式连接失败。
+2. 加上 `--grpc-web` 后 CLI 登录和 `argocd app list` 正常。
+3. 通过端口转发使用原生 gRPC 正常，只有经过 Ingress/负载均衡器时失败。
+
+满足这些现象时，问题通常是代理协议转发，而不是 Application 或目标集群。仍应检查 Ingress 的 TLS 终止、后端协议、路径重写和超时设置。官方说明见[Ingress 配置](https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/)和[CLI 环境变量](https://argo-cd.readthedocs.io/en/stable/user-guide/environment-variables/)。
 
 ## 7. 仓库接入
 
@@ -926,6 +1037,185 @@ argocd app delete demo-api-prod --cascade
 
 Argo CD 只有一个内置超级用户 `admin`，没有完整的本地用户目录。生产环境推荐接入企业 OIDC/SSO，完成验证后禁用内置 admin。
 
+### 14.1 `--sso` 的工作方式
+
+`argocd login --sso` 只是让 CLI 发起浏览器登录流程，前提是 Argo CD 服务端已经接入身份提供商。典型过程如下：
+
+```text
+argocd CLI 启动本地回调端口 8085
+           │
+           ▼
+浏览器打开 Argo CD 登录地址
+           │
+           ▼
+Argo CD / 身份提供商完成 OIDC 登录
+           │
+           ▼
+浏览器回调 http://localhost:8085/auth/callback
+           │
+           ▼
+CLI 获得登录会话并保存 Argo CD context
+```
+
+Argo CD 支持两类 SSO 接入方式：
+
+| 方式 | Argo CD 配置 | 身份提供商回调 | 适用场景 |
+|---|---|---|---|
+| 直接连接现有 OIDC | `oidc.config` | `/auth/callback` | Keycloak、Okta、Microsoft Entra ID、Auth0 等已经支持 OIDC |
+| 通过内置 Dex | `dex.config` | `/api/dex/callback` | LDAP、SAML、GitHub connector 或需要 Dex 转换 claims |
+
+不要把两种回调地址混用。下面以“Keycloak + OIDC + PKCE”为完整示例，因为它同时支持 Web UI 和 `argocd login --sso`。
+
+### 14.2 Keycloak 创建 OIDC 客户端
+
+在目标 Realm 中创建客户端：
+
+```text
+Client type: OpenID Connect
+Client ID: argocd
+Client authentication: Off
+Standard flow: On
+PKCE method: S256
+```
+
+这里使用不保存 client secret 的公开客户端和 PKCE。根据官方 Keycloak 集成说明，需要 CLI 登录时应选择 PKCE 方式。
+
+以 Argo CD 地址 `https://argocd.example.com` 为例，Keycloak 客户端至少配置：
+
+```text
+Root URL: https://argocd.example.com
+Home URL: https://argocd.example.com/applications
+Web origins: https://argocd.example.com
+
+Valid redirect URIs:
+https://argocd.example.com/auth/callback
+https://argocd.example.com/pkce/verify
+http://localhost:8085/auth/callback
+
+Valid post logout redirect URIs:
+https://argocd.example.com/applications
+```
+
+说明：
+
+- `/auth/callback` 用于 Argo CD 的 OIDC 回调。
+- `/pkce/verify` 用于 PKCE Web UI 流程。
+- `http://localhost:8085/auth/callback` 用于 CLI；`8085` 是 `--sso-port` 的默认端口。
+- 生产环境不要使用 `https://argocd.example.com/*` 这类过宽回调地址。
+- 如果 Argo CD 发布在 `/argo-cd` 子路径，应把 Web 回调改成 `https://example.com/argo-cd/auth/callback` 和 `https://example.com/argo-cd/pkce/verify`；CLI 本地回调不变。
+
+### 14.3 配置 Keycloak 的 `groups` claim
+
+如果要按 Keycloak 组授权，需要让 ID Token 中包含 `groups`：
+
+1. 创建名为 `groups` 的 Client Scope。
+2. 添加 `Group Membership` Mapper。
+3. 将 `Token Claim Name` 设置为 `groups`。
+4. 建议关闭 `Full group path`，使 claim 为 `ArgoCDAdmins`，而不是 `/ArgoCDAdmins`。
+5. 将该 Client Scope 添加到 `argocd` 客户端的 Default 或 Optional scopes。
+6. 如果设为 Optional，Argo CD 的 `requestedScopes` 必须包含 `groups`。
+
+可先创建测试组，例如：
+
+```text
+ArgoCDAdmins
+team-a-platform
+```
+
+将测试用户加入对应组。最终 RBAC 中的组名必须与 ID Token 的 `groups` claim 完全一致，包括大小写和可能存在的前导 `/`。
+
+### 14.4 配置 Argo CD OIDC
+
+把下面内容合并到已有 `argocd-cm`，不要覆盖其中仍然有效的其他配置：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  url: https://argocd.example.com
+  oidc.config: |
+    name: Keycloak
+    issuer: https://keycloak.example.com/realms/platform
+    clientID: argocd
+    enablePKCEAuthentication: true
+    refreshTokenThreshold: 2m
+    requestedScopes:
+      - openid
+      - profile
+      - email
+      - groups
+      - offline_access
+```
+
+参数说明：
+
+| 参数 | 说明 |
+|---|---|
+| `url` | 用户实际访问的 Argo CD 外部地址，必须与 TLS 域名和回调地址一致 |
+| `issuer` | OIDC Issuer，Keycloak 17+ 通常为 `https://<host>/realms/<realm>` |
+| `clientID` | Keycloak 中创建的客户端 ID |
+| `enablePKCEAuthentication` | 开启 PKCE；Keycloak 侧也必须配置 `S256` |
+| `refreshTokenThreshold` | 在 Token 到期前刷新，必须短于身份提供商的 Token 生命周期 |
+| `requestedScopes` | 请求用户信息、组和刷新能力；实际支持范围取决于身份提供商 |
+
+先验证 Keycloak 的 OIDC Discovery 地址可从 `argocd-server` 所在网络访问：
+
+```text
+https://keycloak.example.com/realms/platform/.well-known/openid-configuration
+```
+
+如果使用传统 confidential client 而不是 PKCE 公开客户端，Secret 不应直接写入 ConfigMap。将它保存在 `argocd-secret` 或其他带 Argo CD 标签的 Secret 中：
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-oidc-secret
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+type: Opaque
+stringData:
+  clientSecret: <OIDC_CLIENT_SECRET>
+```
+
+然后在 `oidc.config` 中引用：
+
+```yaml
+data:
+  oidc.config: |
+    name: ExampleOIDC
+    issuer: https://idp.example.com
+    clientID: argocd
+    clientSecret: $argocd-oidc-secret:clientSecret
+    requestedScopes: ["openid", "profile", "email", "groups"]
+```
+
+示例中的 `<OIDC_CLIENT_SECRET>` 不能明文提交到 Git。生产环境应由 External Secrets、Sealed Secrets 或其他密钥系统生成该 Secret。直接连接 Keycloak 的 PKCE 示例不需要 client secret。
+
+应用配置：
+
+```bash
+kubectl apply -f argocd-cm.yaml
+kubectl -n argocd get configmap argocd-cm -o yaml
+kubectl -n argocd logs deployment/argocd-server --since=10m
+```
+
+Argo CD 通常会监听配置变化。如果登录页没有出现 Keycloak、登录循环或持续返回 `401`，在确认配置无误后重启 API Server：
+
+```bash
+kubectl -n argocd rollout restart deployment/argocd-server
+kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+```
+
+### 14.5 配置 SSO 组权限
+
 最小权限 RBAC 示例：
 
 ```yaml
@@ -939,6 +1229,7 @@ metadata:
 data:
   policy.default: role:authenticated
   policy.matchMode: glob
+  scopes: '[groups, email]'
   policy.csv: |
     p, role:authenticated, applications, get, */*, allow
     p, role:team-a-deployer, applications, get, team-a/*, allow
@@ -946,6 +1237,8 @@ data:
     p, role:team-a-deployer, logs, get, team-a/*, allow
     g, team-a-platform, role:team-a-deployer
 ```
+
+在这个例子中，Keycloak 组 `team-a-platform` 会映射到 `role:team-a-deployer`。不要在 SSO 刚接入时直接把普通业务组映射为 `role:admin`。
 
 验证策略：
 
@@ -957,6 +1250,109 @@ argocd admin settings rbac can \
   'team-a/demo-api-prod'
 ```
 
+### 14.6 使用 CLI 执行 SSO 登录
+
+Argo CD 直接暴露且原生 gRPC 可用：
+
+```bash
+argocd login argocd.example.com --sso
+```
+
+经过只适合 gRPC-Web 的 Ingress 或代理：
+
+```bash
+argocd login argocd.example.com \
+  --sso \
+  --grpc-web
+```
+
+命令会在本机监听 `127.0.0.1:8085` 并打开浏览器。完成 Keycloak 登录后，浏览器回调到 CLI，终端显示登录成功。验证当前身份和权限：
+
+```bash
+argocd account get-user-info --grpc-web
+argocd app list --grpc-web
+```
+
+本机 `8085` 已占用时可改端口，但必须把相同回调地址加入 Keycloak：
+
+```bash
+argocd login argocd.example.com \
+  --sso \
+  --sso-port 18085 \
+  --grpc-web
+```
+
+对应回调地址：
+
+```text
+http://localhost:18085/auth/callback
+```
+
+不自动打开浏览器：
+
+```bash
+argocd login argocd.example.com \
+  --sso \
+  --sso-launch-browser=false \
+  --grpc-web
+```
+
+命令会输出登录 URL。浏览器必须能够访问执行 CLI 的本地回调端口；如果 CLI 在远程服务器而浏览器在个人电脑，需要安全的 SSH 本地端口转发，或直接在有浏览器的本机执行 CLI。
+
+如果还使用 URL 子路径：
+
+```bash
+argocd login example.com \
+  --sso \
+  --grpc-web \
+  --grpc-web-root-path /argo-cd
+```
+
+`--sso` 负责身份认证，`--grpc-web` 负责 CLI 通信协议，两者互不替代。完整 gRPC-Web 说明见 [6.3 `--grpc-web` 参数用法](#63---grpc-web-参数用法)。
+
+### 14.7 验证后禁用内置 admin
+
+必须先用至少两个 SSO 管理员账号验证登录和权限，再禁用 admin：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  admin.enabled: "false"
+```
+
+保留经过审计的恢复方案，确保身份提供商故障或 RBAC 配置错误时仍能安全恢复管理权限。
+
+### 14.8 常见 SSO 故障
+
+| 现象 | 常见原因 | 检查方向 |
+|---|---|---|
+| 登录页没有 SSO 按钮 | `oidc.config` 解析失败或 `url` 缺失 | `argocd-cm`、server 日志 |
+| Keycloak 报 `invalid_redirect_uri` | 回调地址未登记或路径/协议不一致 | `/auth/callback`、`/pkce/verify`、CLI localhost 回调 |
+| CLI 一直等待回调 | 8085 被占用、浏览器不在 CLI 所在机器 | `--sso-port`、本地防火墙、SSH 端口转发 |
+| `Missing parameter: code_challenge_method` | Keycloak 与 Argo CD 的 PKCE 配置不一致 | 两端均启用 PKCE，方法为 `S256` |
+| 登录成功但没有权限 | `groups` claim 缺失或 RBAC 组名不匹配 | Token claims、`scopes`、`policy.csv` |
+| 登录循环或 `401` | issuer、时间同步、Cookie、代理头或旧会话异常 | OIDC Discovery、NTP、私密窗口、server 日志 |
+| `x509: certificate signed by unknown authority` | Argo CD 不信任身份提供商证书 | 配置受信任根 CA，不要长期跳过校验 |
+
+排查命令：
+
+```bash
+kubectl -n argocd get configmap argocd-cm -o yaml
+kubectl -n argocd get configmap argocd-rbac-cm -o yaml
+kubectl -n argocd logs deployment/argocd-server --since=30m
+
+argocd login argocd.example.com \
+  --sso \
+  --grpc-web \
+  --loglevel debug
+```
+
+调试日志可能包含用户标识、URL 或会话相关信息，分享前应脱敏。
+
 安全要点：
 
 - `policy.default` 只授予所有已认证用户都应该拥有的最低权限。
@@ -965,7 +1361,7 @@ argocd admin settings rbac can \
 - 同时用 AppProject 限制仓库和目标位置，避免只依赖用户 RBAC。
 - SSO 稳定后禁用 admin，并保留经过审计的紧急恢复流程。
 
-官方完整语法见[RBAC 配置](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)。
+官方完整语法见[用户管理](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/)、[Keycloak 集成](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/keycloak/)和[RBAC 配置](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)。
 
 ## 15. 安全配置
 
@@ -1179,7 +1575,7 @@ kubectl -n argocd port-forward svc/argocd-server 8080:443
 argocd login localhost:8080 --insecure
 ```
 
-端口转发可用而 Ingress 不可用，通常说明问题位于 Ingress、负载均衡、DNS 或 TLS 配置，而非 Argo CD 核心组件。
+如果只有 `--grpc-web` 可用，检查代理是否支持原生 HTTP/2 gRPC；如果使用子路径，还应确认 `--grpc-web-root-path` 与服务端 `server.rootpath` 一致。端口转发可用而 Ingress 不可用，通常说明问题位于 Ingress、负载均衡、DNS 或 TLS 配置，而非 Argo CD 核心组件。完整参数说明见 [6.3 `--grpc-web` 参数用法](#63---grpc-web-参数用法)。
 
 ### 18.7 Application 删除卡在 `Terminating`
 
@@ -1223,6 +1619,7 @@ kubectl -n argocd describe application <APP>
 - [Installation](https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/)
 - [Declarative Setup](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/)
 - [Application Specification](https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/)
+- [CLI Environment Variables](https://argo-cd.readthedocs.io/en/stable/user-guide/environment-variables/)
 - [Automated Sync Policy](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
 - [Sync Options](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
 - [ApplicationSet](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/)
