@@ -2,7 +2,7 @@
 
 > 适用范围：在 Kubernetes 中安装、配置并使用 Argo CD 管理应用持续交付。
 >
-> 文档核对日期：2026-08-18。示例以 Argo CD 3.x 为基线；执行生产变更前，应再核对目标版本的升级说明。
+> 文档核对日期：2026-08-19。示例以 Argo CD 3.x 为基线；执行生产变更前，应再核对目标版本的升级说明。
 >
 > 官方文档：[Argo CD 文档](https://argo-cd.readthedocs.io/en/stable/)、[GitHub Releases](https://github.com/argoproj/argo-cd/releases)。
 
@@ -1066,7 +1066,268 @@ Argo CD 支持两类 SSO 接入方式：
 
 不要把两种回调地址混用。下面以“Keycloak + OIDC + PKCE”为完整示例，因为它同时支持 Web UI 和 `argocd login --sso`。
 
-### 14.2 Keycloak 创建 OIDC 客户端
+### 14.2 部署 Keycloak
+
+Keycloak 的部署方式应按用途选择：
+
+| 场景 | 推荐方式 | 数据库 | 说明 |
+|---|---|---|---|
+| 本机学习、临时联调 | 官方容器 `start-dev` | 内置开发数据库 | 启动快，不能用于生产 |
+| Kubernetes 生产环境 | 官方 Keycloak Operator | 外部 PostgreSQL | 推荐，便于升级、滚动发布和声明式管理 |
+| 虚拟机或容器平台生产环境 | 自建优化镜像并执行 `start --optimized` | 外部 PostgreSQL | 需要自行负责高可用、TLS、监控和升级 |
+
+本文核对时公开的稳定补丁版本为 `26.7.1`。部署前应从 [Keycloak Releases](https://github.com/keycloak/keycloak/releases)重新确认受支持版本，并固定镜像和 Operator 版本，不使用 `latest`。
+
+#### 14.2.1 Docker 本地验证
+
+```bash
+docker run --name keycloak-dev --rm \
+  -p 127.0.0.1:8080:8080 \
+  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+  -e KC_BOOTSTRAP_ADMIN_PASSWORD='<TEMP_PASSWORD>' \
+  quay.io/keycloak/keycloak:26.7.1 \
+  start-dev
+```
+
+访问：
+
+```text
+http://127.0.0.1:8080
+http://127.0.0.1:8080/admin/
+```
+
+`start-dev` 使用不适合生产的默认配置。它只用于学习 Realm、Client、Group、Role 以及与 Argo CD 的 OIDC 联调。临时密码不要使用真实生产密码，也不要把密码写进脚本或 Git。
+
+停止容器：
+
+```bash
+docker stop keycloak-dev
+```
+
+由于示例使用 `--rm`，容器停止后开发数据会丢失。
+
+#### 14.2.2 Kubernetes 生产部署架构
+
+推荐结构：
+
+```text
+用户
+ │ HTTPS
+ ▼
+LoadBalancer / Ingress
+ │ TLS 终止并覆盖 X-Forwarded-* 请求头
+ ▼
+Keycloak Service
+ │
+ ├── Keycloak Pod 1
+ ├── Keycloak Pod 2
+ │
+ ▼
+外部高可用 PostgreSQL
+```
+
+准备条件：
+
+- 具有安装 CRD、ClusterRole 和 Operator 的集群管理权限。
+- 已有外部 PostgreSQL；Keycloak Operator 不创建和备份数据库。
+- 已准备 `sso.example.com` DNS、受信任 TLS 证书和 Ingress Controller。
+- Keycloak 命名空间能访问 PostgreSQL，Ingress 能访问 Keycloak Service。
+- PostgreSQL 已创建独立数据库和最小权限账号，并具备备份、PITR 和监控。
+
+#### 14.2.3 安装 Keycloak Operator
+
+以下安装为 namespace-scoped，Operator 只监听 `keycloak` 命名空间：
+
+```bash
+kubectl create namespace keycloak
+
+kubectl apply -k \
+  'github.com/keycloak/keycloak-k8s-resources/kubernetes?ref=26.7.1'
+
+kubectl -n keycloak get deployment,pod
+kubectl get crd | grep keycloak
+```
+
+生产环境应把远程 Kustomize 引用保存到平台配置仓库，并在升级前检查 diff。使用 OLM 时应设置手动批准升级，避免 Operator 自动升级时连带升级 Keycloak 和数据库结构。
+
+#### 14.2.4 准备数据库和 TLS Secret
+
+数据库凭据示例：
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-db-secret
+  namespace: keycloak
+type: Opaque
+stringData:
+  username: <KEYCLOAK_DB_USERNAME>
+  password: <KEYCLOAK_DB_PASSWORD>
+```
+
+这个 Secret 应由 External Secrets、Sealed Secrets 或其他密钥系统生成，不要将真实密码明文提交到 Git。
+
+TLS Secret 必须与 `Keycloak` CR 位于同一命名空间：
+
+```bash
+kubectl -n keycloak create secret tls keycloak-tls \
+  --cert=sso.example.com.crt \
+  --key=sso.example.com.key
+```
+
+更推荐使用 cert-manager 或企业证书平台自动创建和轮换 `keycloak-tls`。证书必须包含 `sso.example.com` 的 SAN。
+
+#### 14.2.5 创建 Keycloak 实例
+
+下面示例使用两个 Keycloak 实例、外部 PostgreSQL、ingress-nginx 边缘 TLS 终止和 `X-Forwarded-*` 请求头：
+
+```yaml
+apiVersion: k8s.keycloak.org/v2beta1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  instances: 2
+
+  db:
+    vendor: postgres
+    host: postgresql-rw.database.svc.cluster.local
+    port: 5432
+    database: keycloak
+    schema: public
+    usernameSecret:
+      name: keycloak-db-secret
+      key: username
+    passwordSecret:
+      name: keycloak-db-secret
+      key: password
+
+  http:
+    httpEnabled: true
+
+  ingress:
+    enabled: true
+    className: nginx
+    tlsSecret: keycloak-tls
+
+  hostname:
+    hostname: sso.example.com
+
+  proxy:
+    headers: xforwarded
+
+  networkPolicy:
+    enabled: true
+    http:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+
+  additionalOptions:
+    - name: metrics-enabled
+      value: "true"
+```
+
+需要替换：
+
+- `postgresql-rw.database.svc.cluster.local`：实际 PostgreSQL 地址。
+- `ingress-nginx`：Ingress Controller 所在命名空间。
+- CPU、内存和副本数：根据并发、Realm、Client 和会话量压测确定。
+- 如果 Ingress 使用 RFC 7239 `Forwarded`，把 `proxy.headers` 改为 `forwarded`。
+
+这个例子采用 edge TLS：外部 HTTPS 在 Ingress 终止，Ingress 到 Keycloak 使用 HTTP，因此设置 `httpEnabled: true`。Ingress 必须覆盖而不是追加客户端提交的 `X-Forwarded-*` 请求头，并通过 NetworkPolicy 防止其他 Pod 绕过 Ingress 伪造这些请求头。
+
+如果使用 TLS passthrough，不应配置 `proxy.headers`，而应让 Keycloak 自己提供 TLS；如果要求 Ingress 到 Keycloak 之间也加密，应采用 re-encrypt 并分别配置前端和后端证书。完整差异见 [Keycloak 反向代理文档](https://www.keycloak.org/server/reverseproxy)。
+
+应用并观察状态：
+
+```bash
+kubectl apply -f keycloak.yaml
+
+kubectl -n keycloak get keycloak/keycloak
+kubectl -n keycloak get pod,service,ingress
+kubectl -n keycloak describe keycloak keycloak
+kubectl -n keycloak logs deployment/keycloak-operator --since=30m
+```
+
+查看 Operator 报告的条件：
+
+```bash
+kubectl -n keycloak get keycloak/keycloak \
+  -o go-template='{{range .status.conditions}}{{.type}}={{.status}} {{.message}}{{"\n"}}{{end}}'
+```
+
+当 `Ready=True` 且 DNS 已指向 Ingress 后，访问：
+
+```text
+https://sso.example.com
+https://sso.example.com/admin/
+```
+
+#### 14.2.6 获取初始管理员
+
+未显式配置 `spec.bootstrapAdmin` 时，Operator 会创建 `<CR名称>-initial-admin` Secret。本例为：
+
+```bash
+kubectl -n keycloak get secret keycloak-initial-admin \
+  -o jsonpath='{.data.username}' | base64 --decode
+
+kubectl -n keycloak get secret keycloak-initial-admin \
+  -o jsonpath='{.data.password}' | base64 --decode
+```
+
+初始账号是临时管理入口。首次登录后应：
+
+1. 创建实名管理账号和管理员组。
+2. 启用 MFA。
+3. 验证至少两个管理员账号可用。
+4. 限制管理控制台来源。
+5. 按安全流程处理初始凭据，不要记录到工单、Git 或普通日志。
+
+#### 14.2.7 健康检查和监控
+
+Keycloak 的业务端口默认是 `8443`，启用 HTTP 时是 `8080`；管理接口默认使用 `9000`，提供健康检查和指标。管理端口不应暴露给公网。
+
+临时检查健康状态：
+
+```bash
+kubectl -n keycloak port-forward service/keycloak-service 9000:9000
+curl -fsS http://127.0.0.1:9000/health/ready
+curl -fsS http://127.0.0.1:9000/health/live
+curl -fsS http://127.0.0.1:9000/metrics | head
+```
+
+启用 `metrics-enabled` 后，如果集群已安装 Prometheus Operator 的 `ServiceMonitor` CRD，Keycloak Operator 可以生成对应 ServiceMonitor。生产告警至少覆盖：
+
+- Keycloak 实例不可用、登录错误率和响应延迟。
+- PostgreSQL 连接、连接池耗尽、慢查询、存储和复制延迟。
+- Pod 重启、OOM、CPU throttling 和 JVM GC。
+- TLS 证书、数据库凭据和管理账号状态。
+
+#### 14.2.8 生产检查清单
+
+- [ ] 使用固定且受支持的 Keycloak/Operator 版本，升级使用手动审批。
+- [ ] 至少两个 Keycloak 实例分散到不同节点或可用区。
+- [ ] PostgreSQL 独立部署且具备高可用、备份、PITR 和恢复演练。
+- [ ] 外部只开放 HTTPS，不暴露管理端口 `9000` 和数据库端口。
+- [ ] `hostname`、证书 SAN、Ingress Host 和 Argo CD `issuer` 完全一致。
+- [ ] Ingress 覆盖可信代理头，NetworkPolicy 限制只能从指定入口访问。
+- [ ] 初始管理员已替换，正式管理员启用 MFA，并保留应急恢复流程。
+- [ ] 资源、拓扑分散、PodDisruptionBudget 和升级窗口经过验证。
+- [ ] 健康检查、Prometheus 指标、日志和告警已接入。
+- [ ] Realm、Client、Group、Role 的变更和数据库恢复流程有审计记录。
+
+### 14.3 Keycloak 创建 OIDC 客户端
 
 在目标 Realm 中创建客户端：
 
@@ -1104,7 +1365,7 @@ https://argocd.example.com/applications
 - 生产环境不要使用 `https://argocd.example.com/*` 这类过宽回调地址。
 - 如果 Argo CD 发布在 `/argo-cd` 子路径，应把 Web 回调改成 `https://example.com/argo-cd/auth/callback` 和 `https://example.com/argo-cd/pkce/verify`；CLI 本地回调不变。
 
-### 14.3 配置 Keycloak 的 `groups` claim
+### 14.4 配置 Keycloak 的 `groups` claim
 
 如果要按 Keycloak 组授权，需要让 ID Token 中包含 `groups`：
 
@@ -1124,7 +1385,7 @@ team-a-platform
 
 将测试用户加入对应组。最终 RBAC 中的组名必须与 ID Token 的 `groups` claim 完全一致，包括大小写和可能存在的前导 `/`。
 
-### 14.4 配置 Argo CD OIDC
+### 14.5 配置 Argo CD OIDC
 
 把下面内容合并到已有 `argocd-cm`，不要覆盖其中仍然有效的其他配置：
 
@@ -1214,7 +1475,7 @@ kubectl -n argocd rollout restart deployment/argocd-server
 kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
 ```
 
-### 14.5 配置 SSO 组权限
+### 14.6 配置 SSO 组权限
 
 最小权限 RBAC 示例：
 
@@ -1253,7 +1514,7 @@ argocd admin settings rbac can \
 argocd admin settings rbac validate --namespace argocd
 ```
 
-### 14.6 使用 CLI 执行 SSO 登录
+### 14.7 使用 CLI 执行 SSO 登录
 
 Argo CD 直接暴露且原生 gRPC 可用：
 
@@ -1313,7 +1574,7 @@ argocd login example.com \
 
 `--sso` 负责身份认证，`--grpc-web` 负责 CLI 通信协议，两者互不替代。完整 gRPC-Web 说明见 [6.3 `--grpc-web` 参数用法](#63---grpc-web-参数用法)。
 
-### 14.7 验证后禁用内置 admin
+### 14.8 验证后禁用内置 admin
 
 必须先用至少两个 SSO 管理员账号验证登录和权限，再禁用 admin：
 
@@ -1332,7 +1593,7 @@ data:
 
 保留经过审计的恢复方案，确保身份提供商故障或 RBAC 配置错误时仍能安全恢复管理权限。
 
-### 14.8 常见 SSO 故障
+### 14.9 常见 SSO 故障
 
 | 现象 | 常见原因 | 检查方向 |
 |---|---|---|
@@ -1635,6 +1896,11 @@ kubectl -n argocd describe application <APP>
 - [User Management and SSO](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/)
 - [Keycloak Integration](https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/keycloak/)
 - [RBAC](https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/)
+- [Keycloak Container](https://www.keycloak.org/server/containers)
+- [Keycloak Operator Installation](https://www.keycloak.org/operator/installation)
+- [Keycloak Operator Basic Deployment](https://www.keycloak.org/operator/basic-deployment)
+- [Keycloak Reverse Proxy](https://www.keycloak.org/server/reverseproxy)
+- [Keycloak Releases](https://github.com/keycloak/keycloak/releases)
 - [Metrics](https://argo-cd.readthedocs.io/en/stable/operator-manual/metrics/)
 - [Disaster Recovery](https://argo-cd.readthedocs.io/en/stable/operator-manual/disaster_recovery/)
 - [Upgrading](https://argo-cd.readthedocs.io/en/stable/operator-manual/upgrading/overview/)
