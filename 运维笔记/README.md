@@ -55,6 +55,7 @@
 - [CircleCI-配置语法.md](CI-CD/CircleCI-配置语法.md)
 - [Docker镜像构建流程.md](CI-CD/Docker镜像构建流程.md)
 - [Kaniko-容器镜像构建工具.md](CI-CD/Kaniko-容器镜像构建工具.md)
+- [Skopeo-容器镜像检查复制与同步指南.md](CI-CD/Skopeo-容器镜像检查复制与同步指南.md)
 - [海外弹性GitLab-Runner构建方案.md](CI-CD/海外弹性GitLab-Runner构建方案.md)
 - [gitlab-ci-argocd/](CI-CD/gitlab-ci-argocd/) — GitLab CI + ArgoCD 示例工程
 - [examples/gitlab-compose/](CI-CD/examples/gitlab-compose/) — GitLab Docker Compose 示例
