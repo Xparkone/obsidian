@@ -13,7 +13,7 @@
 | [网络](网络/) | DNS、VPN、Nginx、代理、抓包、域名 |
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
 | [监控](监控/) | Prometheus / Grafana / Loki / VictoriaLogs / DeepFlow |
-| [自动化](自动化/) | Ansible、知识库工作流与示例 |
+| [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
 | [中间件](中间件/) | 消息队列等 |
 | [安全](安全/) | RBAC、UFW、高防与 WAF |
 | [脚本与工具](脚本与工具/) | kubectl 快捷脚本（k / kf） |
@@ -107,6 +107,7 @@
 
 ### 自动化
 
+- [Rundeck-Runbook自动化平台详解.md](自动化/Rundeck-Runbook自动化平台详解.md)
 - [ansible-README.md](自动化/ansible-README.md)
 - [ansible-usage-guide.md](自动化/ansible-usage-guide.md)
 - [ops-kb-workflow-guide.md](自动化/ops-kb-workflow-guide.md)
