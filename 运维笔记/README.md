@@ -12,7 +12,7 @@
 | [云服务](云服务/) | 公有云 / 私有云 / 虚拟化 / GPU 硬件 / ParallelCluster |
 | [网络](网络/) | DNS、VPN、Nginx、代理、抓包、域名 |
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
-| [监控](监控/) | Prometheus / Grafana / Loki / VictoriaLogs / DeepFlow |
+| [监控](监控/) | Prometheus / Grafana / Jaeger / Tempo / Loki / VictoriaLogs / DeepFlow |
 | [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
 | [中间件](中间件/) | 消息队列等 |
 | [安全](安全/) | RBAC、UFW、高防与 WAF |
@@ -101,6 +101,8 @@
 ### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [Jaeger-分布式追踪从入门到生产实践.md](监控/Jaeger-分布式追踪从入门到生产实践.md)
+- [Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md](监控/Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md)
 - [日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md](监控/日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md)
 - [VictoriaLogs-Grafana-Alloy部署运维文档.md](监控/VictoriaLogs-Grafana-Alloy部署运维文档.md)
 - [deepflow-deployment-and-usage.md](监控/deepflow-deployment-and-usage.md)
