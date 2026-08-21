@@ -8,6 +8,7 @@
 |------|------|
 | [容器编排](容器编排/) | Docker / K8s / K3s / Helm / Istio / Argo |
 | [CI-CD](CI-CD/) | 流水线语法、GitLab、镜像构建、示例工程 |
+| [基础设施即代码](基础设施即代码/) | Terraform、IaC、State、Module 与基础设施自动化 |
 | [云服务](云服务/) | 公有云 / 私有云 / 虚拟化 / GPU 硬件 / ParallelCluster |
 | [网络](网络/) | DNS、VPN、Nginx、代理、抓包、域名 |
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
@@ -59,6 +60,10 @@
 - [海外弹性GitLab-Runner构建方案.md](CI-CD/海外弹性GitLab-Runner构建方案.md)
 - [gitlab-ci-argocd/](CI-CD/gitlab-ci-argocd/) — GitLab CI + ArgoCD 示例工程
 - [examples/gitlab-compose/](CI-CD/examples/gitlab-compose/) — GitLab Docker Compose 示例
+
+### 基础设施即代码
+
+- [Terraform-入门到实战.md](基础设施即代码/Terraform-入门到实战.md)
 
 ### 云服务
 
