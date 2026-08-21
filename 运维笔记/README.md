@@ -14,7 +14,7 @@
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
 | [监控](监控/) | Prometheus / Grafana / Jaeger / Tempo / Loki / VictoriaLogs / DeepFlow |
 | [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
-| [中间件](中间件/) | 消息队列等 |
+| [中间件](中间件/) | Nacos 注册配置中心、消息队列等 |
 | [安全](安全/) | RBAC、UFW、高防与 WAF |
 | [脚本与工具](脚本与工具/) | kubectl 快捷脚本（k / kf） |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
@@ -118,6 +118,7 @@
 
 ### 中间件 / 安全
 
+- [Nacos-注册中心与配置中心从入门到生产实践.md](中间件/Nacos-注册中心与配置中心从入门到生产实践.md)
 - [消息队列对比.md](中间件/消息队列对比.md)
 - [RBAC详解.md](安全/RBAC详解.md)
 - [ufw-usage-guide.md](安全/ufw-usage-guide.md)
