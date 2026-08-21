@@ -527,7 +527,606 @@ server {
 
 ---
 
-## 13. Project
+## 13. 从零开始使用 Rundeck
+
+这一节给出一条可以照着操作的主线：
+
+~~~text
+登录 Rundeck
+  → 创建 Project
+  → 导入 Linux Node
+  → 配置 SSH Key 和执行器
+  → 测试远程命令
+  → 创建参数化 Job
+  → 执行并查看日志
+  → 配置定时、通知和权限
+  → 通过 API 或 rd 调用
+~~~
+
+下面以一个实验环境为例：
+
+| 项目 | 示例值 |
+|---|---|
+| Rundeck 地址 | `http://rundeck.example.com:4440` |
+| Project | `linux-operations` |
+| 目标主机 | `192.168.1.20` |
+| SSH 用户 | `ops` |
+| Node 名称 | `web-01` |
+| Rundeck Key Storage 路径 | `keys/linux-operations/ssh` |
+
+页面入口会随 Rundeck 版本和语言设置略有变化。文中同时给出功能名称；找不到完全相同的文字时，进入对应 Project 后，从 `Project Settings`、`Nodes`、`Jobs` 或 `Commands` 中查找。
+
+### 13.1 使用前检查
+
+Rundeck 服务器需要能够连接目标主机：
+
+~~~bash
+nc -vz 192.168.1.20 22
+~~~
+
+目标 Linux 主机需要准备一个专用账号。不要直接使用 root 作为默认执行用户：
+
+~~~bash
+sudo useradd --create-home --shell /bin/bash ops
+sudo install -d -m 700 -o ops -g ops /home/ops/.ssh
+~~~
+
+如果 Job 需要执行少量特权命令，应配置精确的 `sudoers` 白名单。例如只允许重启和查看 nginx：
+
+~~~sudoers
+ops ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx
+ops ALL=(root) NOPASSWD: /usr/bin/systemctl status nginx
+ops ALL=(root) NOPASSWD: /usr/bin/systemctl is-active nginx
+~~~
+
+修改后验证语法：
+
+~~~bash
+sudo visudo -c
+~~~
+
+生产环境还应提前确认：
+
+- Rundeck 到目标端口的防火墙和安全组是否放行；
+- 目标主机的 `sshd` 是否允许公钥认证；
+- Rundeck 的外部 URL、时区和数据库是否正确；
+- 执行账号是否只拥有实际需要的权限；
+- 任务输出中是否可能出现密码、Token 或个人信息。
+
+### 13.2 登录与修改初始账号
+
+打开 Rundeck 地址并登录。实验安装可能存在默认账号：
+
+~~~text
+用户名：admin
+密码：admin
+~~~
+
+该默认值只适合本地实验。对外提供服务前必须更换密码，生产环境应接入 LDAP、OIDC 或其他统一身份认证，并限制管理后台的访问来源。
+
+登录后通常会看到 Project 列表。Rundeck 的日常操作几乎都在某个 Project 内完成。
+
+### 13.3 创建第一个 Project
+
+操作路径通常为：
+
+~~~text
+Projects / Project Menu
+  → New Project / Create a New Project
+~~~
+
+填写：
+
+| 字段 | 示例 | 说明 |
+|---|---|---|
+| Project Name | `linux-operations` | 建议使用稳定的英文标识 |
+| Label | `Linux 运维` | 可读名称，部分版本提供 |
+| Description | `Linux 主机巡检和服务操作` | 说明用途和责任团队 |
+
+创建后进入 Project。先不要急着创建大量 Job，应先把 Node、凭据和执行器配置正确。
+
+### 13.4 生成并分发 SSH 公钥
+
+建议为 Rundeck 单独生成密钥，不要复用员工个人 SSH 私钥：
+
+~~~bash
+ssh-keygen -t ed25519 -f rundeck_ops_ed25519 -C 'rundeck-linux-operations'
+~~~
+
+生产环境可以为私钥设置密码，但需要同时配置 Rundeck 对应的密码凭据。公钥写入目标主机：
+
+~~~bash
+ssh-copy-id -i rundeck_ops_ed25519.pub ops@192.168.1.20
+~~~
+
+或者把公钥内容加入：
+
+~~~text
+/home/ops/.ssh/authorized_keys
+~~~
+
+在把私钥上传 Rundeck 前，先直接验证：
+
+~~~bash
+ssh -i rundeck_ops_ed25519 ops@192.168.1.20 'hostname; id'
+~~~
+
+预期结果应显示目标主机名和 `ops` 用户。验证失败时先解决 SSH 问题，不要在 Rundeck 中反复重试。
+
+### 13.5 把私钥保存到 Key Storage
+
+进入：
+
+~~~text
+System Menu（右上角齿轮）
+  → Key Storage
+  → Add or Upload Key
+~~~
+
+部分欢迎项目或定制界面也会在 `Project Settings` 中显示 Key Storage 入口，最终进入的是同一类凭据存储功能。
+
+选择私钥类型并上传 `rundeck_ops_ed25519`，保存到：
+
+~~~text
+keys/linux-operations/ssh
+~~~
+
+注意：
+
+- 上传的是私钥，不是 `.pub` 公钥；
+- 文档、Git 仓库和 Job 参数中都不要保存私钥内容；
+- Key Storage 路径本身不是秘密，但读取权限仍应通过 ACL 限制；
+- 定期轮换密钥，旧公钥应从目标主机移除；
+- 不要在命令步骤中使用 `cat` 输出私钥。
+
+### 13.6 添加 Linux Node
+
+进入：
+
+~~~text
+Project Settings
+  → Edit Nodes / Node Sources
+  → Add a Source
+~~~
+
+实验环境可选择文件型 Resource Model Source，创建 `resources.yaml`：
+
+~~~yaml
+web-01:
+  nodename: web-01
+  hostname: 192.168.1.20
+  username: ops
+  osFamily: unix
+  osName: Linux
+  description: Test web server
+  tags: web,test
+  ssh-key-storage-path: keys/linux-operations/ssh
+~~~
+
+不同 SSH 插件对密钥属性名的支持可能不同。更稳妥的做法是在 Project 的 SSH Node Executor 中设置默认 Key Storage Path，只在个别 Node 需要不同密钥时覆盖。
+
+RPM/DEB 安装中可使用 Rundeck 服务账号可读写的路径，例如：
+
+~~~text
+/var/lib/rundeck/resources/linux-operations.yaml
+~~~
+
+如果 Rundeck 运行在容器中，Node 文件必须位于持久化卷内，并且容器内路径要与 Node Source 配置一致。不要只在宿主机创建文件却忘记挂载进容器。
+
+主机数量较多时，不建议手工维护 YAML，可改用：
+
+- Ansible Inventory；
+- CMDB API；
+- 云厂商实例插件；
+- Kubernetes Node 或工作负载插件；
+- 返回 Rundeck Resource Model 格式的内部服务。
+
+### 13.7 配置 SSH Node Executor
+
+进入：
+
+~~~text
+Project Settings
+  → Edit Configuration
+  → Default Node Executor
+~~~
+
+选择 SSH 类执行器，常见配置为：
+
+| 配置 | 示例 |
+|---|---|
+| SSH User | `${node.username}` 或 `ops` |
+| Authentication | Private Key |
+| SSH Key Storage Path | `keys/linux-operations/ssh` |
+| SSH Port | `22` |
+| Connection Timeout | `10000` 毫秒 |
+| Command Timeout | 按任务类型设置 |
+
+如果 Workflow 中包含脚本上传，还要配置 `File Copier`，通常使用与 Node Executor 相匹配的 SCP 或 SFTP 插件。
+
+不要为了省事全局关闭 SSH Host Key 校验。生产环境应维护可信 `known_hosts`，防止 Rundeck 把命令发给被冒充的主机。
+
+### 13.8 验证 Node 和远程执行
+
+打开 `Nodes` 页面，搜索：
+
+~~~text
+name: web-01
+~~~
+
+或按标签筛选：
+
+~~~text
+tags: test+web
+~~~
+
+确认页面能看到：
+
+- Node 名称；
+- IP 或主机名；
+- SSH 用户；
+- 标签；
+- 操作系统属性。
+
+实验阶段可进入 `Commands`，选择 `web-01` 后依次执行只读命令：
+
+~~~bash
+hostname
+id
+uptime
+df -h
+~~~
+
+`Commands` 允许临时输入任意命令，权限很大。生产环境中通常只向管理员开放，普通使用者通过受控 Job 执行固定流程。
+
+如果失败，按顺序检查：
+
+1. Node Filter 是否选中了 Node；
+2. Rundeck 到目标主机的 22 端口是否连通；
+3. `hostname` 和 `username` 是否正确；
+4. Key Storage 路径是否存在且 ACL 允许读取；
+5. 公钥是否在目标用户的 `authorized_keys`；
+6. 私钥格式和权限是否被 SSH 插件支持；
+7. SSH Host Key 是否发生变化；
+8. Rundeck 服务日志中是否有更具体的认证错误。
+
+### 13.9 创建第一个巡检 Job
+
+进入：
+
+~~~text
+Jobs
+  → Create a New Job / New Job
+~~~
+
+填写基本信息：
+
+| 字段 | 示例 |
+|---|---|
+| Job Name | `检查主机状态` |
+| Group | `diagnosis/linux` |
+| Description | `查看主机名、负载、磁盘和内存，不修改系统` |
+
+在 Workflow 中依次添加 Command Step：
+
+~~~bash
+hostname
+uptime
+df -h
+free -m
+~~~
+
+在 Nodes 配置中启用“Dispatch to Nodes”，Node Filter 填：
+
+~~~text
+tags: test+web
+~~~
+
+初次测试建议：
+
+- Thread Count 设为 `1`；
+- Keep going 关闭，即某个关键步骤失败后停止；
+- 不启用 Schedule；
+- 暂不允许并发执行；
+- Node Filter 先锁定测试标签，不要直接选择所有生产机。
+
+保存 Job 后，Rundeck 会生成 Job UUID。脚本、API 和依赖关系应使用 UUID，Job 名称主要用于人阅读。
+
+### 13.10 执行 Job 并查看结果
+
+打开 Job，先检查右侧或执行确认页中的目标 Node 列表，确认没有误选主机，再点击 `Run Job Now`。
+
+执行页面通常包含：
+
+- Execution ID；
+- 当前状态；
+- 各个 Workflow Step；
+- 每个 Node 的输出；
+- 开始时间、结束时间和执行人；
+- 重试、中止或重新执行入口。
+
+常见状态：
+
+| 状态 | 含义 |
+|---|---|
+| Running | 正在执行 |
+| Succeeded | 所有必要步骤成功 |
+| Failed | 至少一个必要步骤失败 |
+| Aborted | 被用户或系统中止 |
+| Timed Out | 超过执行超时 |
+
+查看日志时应同时确认“命令退出码”和“业务结果”。命令返回 `0` 不一定代表服务健康，例如重启命令成功后，服务仍可能启动失败，因此还需要单独的健康检查步骤。
+
+### 13.11 给 Job 增加参数
+
+编辑 Job，在 `Options` 中新增：
+
+| Option | 示例配置 |
+|---|---|
+| `service` | Allowed Values：`nginx,httpd`；Required：是 |
+| `action` | Allowed Values：`status,restart`；默认：`status` |
+| `environment` | Allowed Values：`test,prod` |
+| `reason` | Required：是，用于审计 |
+
+在命令中引用参数：
+
+~~~bash
+sudo /usr/local/sbin/rundeck-service-action \
+  "${option.service}" \
+  "${option.action}"
+~~~
+
+不要直接把自由输入拼入 Shell：
+
+~~~bash
+# 危险示例：用户可能注入额外 Shell 语句
+sudo systemctl ${option.action} ${option.service}
+~~~
+
+更安全的包装脚本：
+
+~~~bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+service_name="${1:-}"
+action_name="${2:-}"
+
+case "$service_name" in
+  nginx|httpd) ;;
+  *) echo "unsupported service" >&2; exit 2 ;;
+esac
+
+case "$action_name" in
+  status|restart) ;;
+  *) echo "unsupported action" >&2; exit 2 ;;
+esac
+
+exec sudo /usr/bin/systemctl "$action_name" "$service_name"
+~~~
+
+把脚本部署为 `/usr/local/sbin/rundeck-service-action`，并让 `sudoers` 只允许该入口。Rundeck 的 Allowed Values 是第一层校验，目标主机上的包装脚本是第二层校验。
+
+密码、Token 等值应使用 Secure Option 或 Key Storage。Secure Option 只能减少界面暴露，仍要避免命令回显、`set -x`、进程参数和外部脚本把秘密写入日志。
+
+### 13.12 创建一个安全的服务重启 Job
+
+推荐 Workflow：
+
+~~~text
+1. 执行前检查：systemctl is-active <service>
+2. 重启服务：调用白名单包装脚本
+3. 等待服务启动：最多重试 6 次
+4. 健康检查：检查端口或 HTTP 接口
+5. 输出最终状态
+6. 失败时执行通知或回滚 Handler
+~~~
+
+例如 nginx 健康检查步骤：
+
+~~~bash
+set -euo pipefail
+
+for attempt in 1 2 3 4 5 6; do
+  if curl --fail --silent --show-error \
+      --max-time 3 http://127.0.0.1/healthz >/dev/null; then
+    echo "health check passed"
+    exit 0
+  fi
+  echo "health check attempt ${attempt} failed"
+  sleep 5
+done
+
+echo "service did not become healthy" >&2
+exit 1
+~~~
+
+生产 Job 还应设置：
+
+- Execution Timeout，防止无限挂起；
+- 同一 Job 的并发策略；
+- Node 级 Thread Count，控制批量并发；
+- Error Handler 或失败通知；
+- Log Filter，遮蔽敏感输出；
+- 执行原因和变更单号；
+- 执行前确认或审批入口。
+
+### 13.13 配置定时执行
+
+编辑 Job，打开 `Schedule`：
+
+1. 选择简单时间表或 Cron；
+2. 明确时区；
+3. 设置小时、分钟、星期等条件；
+4. 保存后检查下一次运行时间；
+5. 先在测试环境观察一次完整执行。
+
+示例：每天 02:30 执行巡检。若使用 Cron，具体字段格式以当前 Rundeck 页面提示为准，不要直接假设它与 Linux 五字段 Cron 完全相同。
+
+需要避免：
+
+- 上一次还未结束，下一次又开始；
+- 多个 Job 同时打满数据库或目标主机；
+- 维护窗口和业务高峰重叠；
+- Rundeck 与使用者理解的时区不一致；
+- Schedule 已禁用但外部系统仍通过 API 调用。
+
+### 13.14 配置通知
+
+在 Job 的 `Notifications` 中，可以按事件配置邮件、Webhook 或插件通知。常见事件：
+
+- Start：任务开始；
+- Success：任务成功；
+- Failure：任务失败；
+- Average Duration Exceeded：超过历史平均时间；
+- Retryable Failure 或其他插件事件。
+
+Webhook 接收端应校验来源和认证信息。通知内容中不要包含 Secure Option、完整环境变量、私钥、数据库密码或未经脱敏的任务日志。
+
+### 13.15 通过 API 执行 Job
+
+先在 Rundeck 中创建受限 API Token。Token 应属于专用服务账号，并只授权必要的 Project 和 Job。
+
+不要把 Token 直接写进脚本，使用环境变量：
+
+~~~bash
+export RUNDECK_URL='https://rundeck.example.com'
+export RUNDECK_TOKEN='从安全凭据系统注入'
+export RUNDECK_API_VERSION='58'
+export JOB_ID='替换为实际 Job UUID'
+~~~
+
+执行 Job：
+
+~~~bash
+curl --fail-with-body \
+  --request POST \
+  --header "X-Rundeck-Auth-Token: ${RUNDECK_TOKEN}" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "options": {
+      "service": "nginx",
+      "action": "status",
+      "environment": "test",
+      "reason": "API connectivity test"
+    }
+  }' \
+  "${RUNDECK_URL}/api/${RUNDECK_API_VERSION}/job/${JOB_ID}/run"
+~~~
+
+响应中会返回 Execution ID。查询执行结果：
+
+~~~bash
+export EXECUTION_ID='替换为返回的执行 ID'
+
+curl --fail-with-body \
+  --header "X-Rundeck-Auth-Token: ${RUNDECK_TOKEN}" \
+  "${RUNDECK_URL}/api/${RUNDECK_API_VERSION}/execution/${EXECUTION_ID}"
+~~~
+
+API 版本应以当前服务的 `/api` 响应和官方文档为准。文中的 `58` 对应本文核对时的 Rundeck 6.1 文档，升级后需要重新确认。
+
+### 13.16 使用 rd 命令行客户端
+
+配置环境变量：
+
+~~~bash
+export RD_URL='https://rundeck.example.com'
+export RD_TOKEN='从安全凭据系统注入'
+export RD_PROJECT='linux-operations'
+~~~
+
+常见命令：
+
+~~~bash
+# 查看系统信息
+rd system info
+
+# 列出 Project
+rd projects list
+
+# 列出当前 Project 的 Job
+rd jobs list
+
+# 按 Job UUID 执行并传入参数
+rd run -i "$JOB_ID" \
+  -- -service nginx \
+     -action status \
+     -environment test \
+     -reason 'CLI connectivity test'
+
+# 查看执行列表
+rd executions list
+~~~
+
+不同 `rd` 版本的参数可能略有差异，使用下面的命令确认当前语法：
+
+~~~bash
+rd --version
+rd help
+rd run --help
+~~~
+
+### 13.17 导出 Job 并纳入 Git
+
+Job 在页面中验证通过后，应导出 YAML 或 XML 保存到 Git。推荐流程：
+
+~~~text
+页面创建和小范围验证
+  → 导出 Job 定义
+  → 删除环境专属秘密
+  → 提交 Git 并评审
+  → 测试 Project 导入验证
+  → 再发布到生产 Project
+~~~
+
+导出的定义可以记录：
+
+- Job UUID 和名称；
+- Workflow Step；
+- Option；
+- Node Filter；
+- Schedule；
+- Timeout 和并发策略；
+- 通知配置。
+
+不要提交：
+
+- API Token；
+- SSH 私钥；
+- 密码；
+- Secure Option 的真实值；
+- 仅适用于单台生产主机的临时信息。
+
+### 13.18 一套建议的练习顺序
+
+按以下顺序练习，可以逐步建立对 Rundeck 的完整认识：
+
+1. 创建一个只包含 `localhost` 的实验 Project；
+2. 创建输出 `hostname` 和 `date` 的 Job；
+3. 接入一台测试 Linux Node；
+4. 使用 Node Filter 按标签执行巡检；
+5. 添加 Allowed Values Option；
+6. 增加超时、错误处理和健康检查；
+7. 配置每天一次的测试 Schedule；
+8. 用 API Token 调用固定 Job；
+9. 创建只允许运行 Job、不能编辑 Job 的测试用户；
+10. 导出 Job 到 Git，再导入一个新的测试 Project；
+11. 最后才尝试生产变更、审批和批量并发。
+
+完成这一组练习后，至少要能够回答：
+
+- Rundeck 用哪个身份连接目标 Node；
+- 私钥保存在什么 Key Storage 路径；
+- 哪条 ACL 允许某个用户运行 Job；
+- Job 实际会选中哪些 Node；
+- 参数如何校验，能否被用于命令注入；
+- 失败后如何通知、重试或回滚；
+- 如何根据 Execution ID 找到完整审计记录。
+
+---
+
+## 14. Project
 
 Project 是核心隔离和组织单位。常见拆分方式：
 
@@ -562,9 +1161,9 @@ database-operations
 
 ---
 
-## 14. Node 与 Resource Model
+## 15. Node 与 Resource Model
 
-### 14.1 Node 是什么
+### 15.1 Node 是什么
 
 Node 是可被 Job 选择的目标。常用属性：
 
@@ -578,7 +1177,7 @@ web-01:
   description: Production web node 01
 ~~~
 
-### 14.2 Resource Model Source
+### 15.2 Resource Model Source
 
 Node 可以来自：
 
@@ -599,7 +1198,7 @@ Node 可以来自：
 - 凭据；
 -故障时的旧数据。
 
-### 14.3 Node Filter
+### 15.3 Node Filter
 
 示例：
 
@@ -612,7 +1211,7 @@ hostname: 10.20.*
 
 执行前应在 UI 预览实际匹配的 Node。涉及删除、重启、扩容等操作时，应设置最大匹配数量或额外确认。
 
-### 14.4 Node Executor 与 File Copier
+### 15.4 Node Executor 与 File Copier
 
 Node Executor 决定怎样执行命令：
 
@@ -628,9 +1227,9 @@ File Copier 决定脚本和文件怎样传到远端。SSH Executor 和 Copier �
 
 ---
 
-## 15. Job 与 Workflow
+## 16. Job 与 Workflow
 
-### 15.1 Job 组成
+### 16.1 Job 组成
 
 Job 通常包含：
 
@@ -647,7 +1246,7 @@ Job 通常包含：
 -并发策略；
 - Log Level。
 
-### 15.2 Workflow Step
+### 16.2 Workflow Step
 
 常见 Step：
 
@@ -660,7 +1259,7 @@ Job 通常包含：
 - Kubernetes Step；
 - 插件 Step。
 
-### 15.3 Node Step 与 Workflow Step
+### 16.3 Node Step 与 Workflow Step
 
 ~~~text
 Node Step
@@ -677,7 +1276,7 @@ Workflow Step
 - 等待 30 秒：Workflow Step；
 - 汇总结果：Workflow Step。
 
-### 15.4 Workflow Strategy
+### 16.4 Workflow Strategy
 
 常见策略：
 
@@ -693,7 +1292,7 @@ step-first:
 
 滚动重启通常需要控制并发，避免所有实例同时停止。
 
-### 15.5 Keep Going
+### 16.5 Keep Going
 
 `keepgoing=false` 遇到失败停止后续处理；`true` 允许继续其他 Node 或步骤。
 
@@ -705,7 +1304,7 @@ step-first:
 
 ---
 
-## 16. Job Option
+## 17. Job Option
 
 Option 将 Job 变成受约束的自助表单。
 
@@ -719,7 +1318,7 @@ change_ticket: CHG-123456
 reason: required text
 ~~~
 
-### 16.1 输入约束
+### 17.1 输入约束
 
 应设置：
 
@@ -739,7 +1338,7 @@ sh -c "systemctl restart @option.service@"
 
 即使有 Regex，也应在脚本中使用安全参数传递和白名单。
 
-### 16.2 Secure Option
+### 17.2 Secure Option
 
 Secure Option 可隐藏显示，但仍需理解：
 
@@ -751,7 +1350,7 @@ Secure Option 可隐藏显示，但仍需理解：
 
 秘密优先从 Key Storage 获取，不应让普通用户每次复制生产密码。
 
-### 16.3 运行上下文变量
+### 17.3 运行上下文变量
 
 常见引用：
 
@@ -768,7 +1367,7 @@ Secure Option 可隐藏显示，但仍需理解：
 
 ---
 
-## 17. 一个安全的服务重启 Runbook
+## 18. 一个安全的服务重启 Runbook
 
 不要只写一条 `systemctl restart`。完整流程应包含：
 
@@ -816,9 +1415,9 @@ Job 应传递单独参数，而不是拼成一段任意 Shell。
 
 ---
 
-## 18. Schedule、Webhook 与触发方式
+## 19. Schedule、Webhook 与触发方式
 
-### 18.1 触发来源
+### 19.1 触发来源
 
 - Web UI；
 - Schedule；
@@ -829,7 +1428,7 @@ Job 应传递单独参数，而不是拼成一段任意 Shell。
 - 告警系统；
 - ITSM。
 
-### 18.2 Schedule
+### 19.2 Schedule
 
 计划任务需要考虑：
 
@@ -844,7 +1443,7 @@ Job 应传递单独参数，而不是拼成一段任意 Shell。
 
 所有 Job 应明确使用的时区，不要默认认为容器时区与业务时区一致。
 
-### 18.3 Webhook
+### 19.3 Webhook
 
 Webhook 入口必须：
 
@@ -856,7 +1455,7 @@ Webhook 入口必须：
 - 映射固定 Job；
 - 不允许外部直接提供任意命令。
 
-### 18.4 告警自动修复
+### 19.4 告警自动修复
 
 至少增加：
 
@@ -871,7 +1470,7 @@ Webhook 入口必须：
 
 ---
 
-## 19. Key Storage
+## 20. Key Storage
 
 Key Storage 用于保存或引用：
 
@@ -905,7 +1504,7 @@ Docker 镜像默认可以配置 Key Storage 加密转换器。加密配置应从
 
 ---
 
-## 20. 身份认证
+## 21. 身份认证
 
 可选方式包括：
 
@@ -917,7 +1516,7 @@ Docker 镜像默认可以配置 Key Storage 加密转换器。加密配置应从
 - 反向代理预认证；
 - API Token。
 
-### 20.1 本地账号
+### 21.1 本地账号
 
 适合实验或紧急 Break-glass，不适合作为大规模人员生命周期管理方案。
 
@@ -930,7 +1529,7 @@ Docker 镜像默认可以配置 Key Storage 加密转换器。加密配置应从
 - 定期验证 Break-glass；
 - 记录登录和操作。
 
-### 20.2 SSO/LDAP
+### 21.2 SSO/LDAP
 
 身份系统提供用户和 Group，Rundeck ACL 把 Group 映射为权限。
 
@@ -946,11 +1545,11 @@ Docker 镜像默认可以配置 Key Storage 加密转换器。加密配置应从
 
 ---
 
-## 21. ACL 权限模型
+## 22. ACL 权限模型
 
 Rundeck 权限经常需要同时配置两个 Context。
 
-### 21.1 Application Context
+### 22.1 Application Context
 
 控制：
 
@@ -962,7 +1561,7 @@ Rundeck 权限经常需要同时配置两个 Context。
 - Key Storage；
 -执行开关。
 
-### 21.2 Project Context
+### 22.2 Project Context
 
 控制 Project 内：
 
@@ -974,7 +1573,7 @@ Rundeck 权限经常需要同时配置两个 Context。
 -删除 Execution；
 - Project 资源权限。
 
-### 21.3 只读用户示例
+### 22.3 只读用户示例
 
 ~~~yaml
 description: Allow project visibility
@@ -1006,7 +1605,7 @@ by:
   group: platform_readonly
 ~~~
 
-### 21.4 只能执行特定 Job
+### 22.4 只能执行特定 Job
 
 ~~~yaml
 description: Project visibility
@@ -1038,7 +1637,7 @@ by:
 
 实际 Action 名和 Node 权限组合应使用目标版本 ACL Editor 或官方文档验证。错误 ACL 可能过度授权。
 
-### 21.5 权限设计原则
+### 22.5 权限设计原则
 
 - 拒绝默认；
 - Group 授权，不直接按个人；
@@ -1051,7 +1650,7 @@ by:
 
 ---
 
-## 22. Job as Code 与 SCM
+## 23. Job as Code 与 SCM
 
 Job 可以导出为 YAML 或 XML，并纳入版本控制。
 
@@ -1081,7 +1680,7 @@ Job YAML 的字段随版本和插件变化。最可靠做法是：
 
 不要手工复制陌生版本的大段 Job YAML 后直接导入生产。
 
-### 22.1 Job 设计准则
+### 23.1 Job 设计准则
 
 - 固定 UUID；
 - 清晰的 Group；
@@ -1097,11 +1696,11 @@ Job YAML 的字段随版本和插件变化。最可靠做法是：
 
 ---
 
-## 23. REST API
+## 24. REST API
 
 Rundeck 6.1 当前文档 API 版本为 58。
 
-### 23.1 基础变量
+### 24.1 基础变量
 
 ~~~bash
 export RD_BASE_URL='https://rundeck.example.com'
@@ -1112,7 +1711,7 @@ export RD_TOKEN
 
 Token 不应写入 Shell Profile、脚本或 Git。
 
-### 23.2 系统信息
+### 24.2 系统信息
 
 ~~~bash
 curl --fail-with-body --silent --show-error \
@@ -1121,7 +1720,7 @@ curl --fail-with-body --silent --show-error \
   "$RD_BASE_URL/api/$RD_API_VERSION/system/info"
 ~~~
 
-### 23.3 Project 列表
+### 24.3 Project 列表
 
 ~~~bash
 curl --fail-with-body --silent --show-error \
@@ -1130,7 +1729,7 @@ curl --fail-with-body --silent --show-error \
   "$RD_BASE_URL/api/$RD_API_VERSION/projects"
 ~~~
 
-### 23.4 执行 Job
+### 24.4 执行 Job
 
 ~~~bash
 curl --fail-with-body --silent --show-error \
@@ -1142,7 +1741,7 @@ curl --fail-with-body --silent --show-error \
   "$RD_BASE_URL/api/$RD_API_VERSION/job/JOB_UUID/run"
 ~~~
 
-### 23.5 查询 Execution
+### 24.5 查询 Execution
 
 ~~~bash
 curl --fail-with-body --silent --show-error \
@@ -1157,7 +1756,7 @@ curl --fail-with-body --silent --show-error \
 unset RD_TOKEN
 ~~~
 
-### 23.6 Token 安全
+### 24.6 Token 安全
 
 - 使用短过期时间；
 - 只授予所需 Role；
@@ -1171,7 +1770,7 @@ unset RD_TOKEN
 
 ---
 
-## 24. rd CLI
+## 25. rd CLI
 
 常用环境变量：
 
@@ -1204,15 +1803,15 @@ CLI 版本和 Server API 版本需要兼容。自动化脚本应检查退出码�
 
 ---
 
-## 25. Ansible 集成
+## 26. Ansible 集成
 
-### 25.1 三种方式
+### 26.1 三种方式
 
 1. Rundeck 执行 `ansible-playbook` 命令；
 2. 使用 Ansible 插件作为 Workflow Step；
 3. 使用 Ansible Inventory 作为 Node Source。
 
-### 25.2 命令方式
+### 26.2 命令方式
 
 ~~~bash
 ansible-playbook \
@@ -1224,7 +1823,7 @@ ansible-playbook \
 
 输入必须经过白名单。不要让用户直接输入任意 `--extra-vars`、Inventory 路径或 Playbook 路径。
 
-### 25.3 权限边界
+### 26.3 权限边界
 
 - Rundeck 负责谁能触发、传什么参数和审计；
 - Ansible 负责目标状态和主机配置；
@@ -1236,7 +1835,7 @@ ansible-playbook \
 
 ---
 
-## 26. Kubernetes 集成
+## 27. Kubernetes 集成
 
 常见方式：
 
@@ -1246,7 +1845,7 @@ ansible-playbook \
 - 执行 Helm；
 - 调用 Kubernetes API。
 
-### 26.1 推荐边界
+### 27.1 推荐边界
 
 Rundeck 适合：
 
@@ -1264,13 +1863,13 @@ Rundeck 适合：
 -绕过 GitOps 长期修改对象；
 -使用 cluster-admin ServiceAccount。
 
-### 26.2 ServiceAccount
+### 27.2 ServiceAccount
 
 为每个用途创建专用 ServiceAccount 和 Role，不共享管理员 Kubeconfig。Token 应短期化，Kubeconfig 不写入 Job 定义。
 
 ---
 
-## 27. 通知与事件集成
+## 28. 通知与事件集成
 
 通知时机通常包括：
 
@@ -1304,9 +1903,9 @@ Rundeck 适合：
 
 ---
 
-## 28. 日志、历史与审计
+## 29. 日志、历史与审计
 
-### 28.1 三类日志
+### 29.1 三类日志
 
 | 类型 | 内容 |
 |---|---|
@@ -1314,7 +1913,7 @@ Rundeck 适合：
 | Execution Log | Job 每次执行输出 |
 | Audit Log | 用户、API 和权限相关操作 |
 
-### 28.2 日志安全
+### 29.2 日志安全
 
 - 脚本使用 `set +x` 处理秘密；
 - 不打印环境变量全集；
@@ -1324,7 +1923,7 @@ Rundeck 适合：
 - SIEM 收集审计日志；
 -日志 URL 不公开。
 
-### 28.3 日志存储
+### 29.3 日志存储
 
 单实例可以使用文件系统；多实例或长期保留应考虑 S3 兼容对象存储或商业版支持方案。
 
@@ -1332,9 +1931,9 @@ Rundeck 适合：
 
 ---
 
-## 29. 数据库、备份与恢复
+## 30. 数据库、备份与恢复
 
-### 29.1 数据库
+### 30.1 数据库
 
 生产优先使用受支持版本的 PostgreSQL、MySQL/MariaDB、SQL Server 或 Oracle。具体版本以当前系统要求页为准。
 
@@ -1347,7 +1946,7 @@ Rundeck 适合：
 - ACL/API 配置；
 -系统状态。
 
-### 29.2 需要备份
+### 30.2 需要备份
 
 - 外部数据库；
 - `/etc/rundeck` 或容器配置；
@@ -1361,7 +1960,7 @@ Rundeck 适合：
 -反向代理配置；
 - License，若使用商业版。
 
-### 29.3 恢复顺序
+### 30.3 恢复顺序
 
 1. 恢复相同兼容版本；
 2. 恢复数据库；
@@ -1376,7 +1975,7 @@ Rundeck 适合：
 
 不要在恢复环境中意外连接生产 Node 并自动执行到期 Schedule。
 
-### 29.4 恢复演练
+### 30.4 恢复演练
 
 只备份不演练无法证明可恢复。至少验证：
 
@@ -1390,7 +1989,7 @@ Rundeck 适合：
 
 ---
 
-## 30. 升级策略
+## 31. 升级策略
 
 升级前：
 
@@ -1419,7 +2018,7 @@ Rundeck 6 移除了旧 XML API 兼容开关，仍依赖旧 XML API 的集成必�
 
 ---
 
-## 31. 性能与容量
+## 32. 性能与容量
 
 影响因素：
 
@@ -1449,9 +2048,9 @@ Rundeck 6 移除了旧 XML API 兼容开关，仍依赖旧 XML API 的集成必�
 
 ---
 
-## 32. 常见故障排查
+## 33. 常见故障排查
 
-### 32.1 登录后跳转到 localhost
+### 33.1 登录后跳转到 localhost
 
 检查：
 
@@ -1462,15 +2061,15 @@ X-Forwarded-Proto
 Host Header
 ~~~
 
-### 32.2 Project 看不到
+### 33.2 Project 看不到
 
 确认 Application Context 有对目标 Project 的 `read`，再检查用户 Group 映射。
 
-### 32.3 能看到 Job 但不能执行
+### 33.3 能看到 Job 但不能执行
 
 检查 Project Context 中 Job `run`、Node `read/run` 和相关 Resource 权限。
 
-### 32.4 SSH 失败
+### 33.4 SSH 失败
 
 在 Rundeck 运行身份下验证：
 
@@ -1489,7 +2088,7 @@ sudo -u rundeck ssh -vvv ops@target.example.com
 -跳板机；
 -算法兼容。
 
-### 32.5 Job 一直 Running
+### 33.5 Job 一直 Running
 
 检查：
 
@@ -1503,7 +2102,7 @@ sudo -u rundeck ssh -vvv ops@target.example.com
 
 所有生产 Job 应设置合理 Timeout。
 
-### 32.6 Schedule 没执行
+### 33.6 Schedule 没执行
 
 检查：
 
@@ -1515,7 +2114,7 @@ sudo -u rundeck ssh -vvv ops@target.example.com
 -多实例配置；
 -上次 Execution 是否阻止并发。
 
-### 32.7 API 401
+### 33.7 API 401
 
 - Token 是否过期；
 - Header 是否正确；
@@ -1524,11 +2123,11 @@ sudo -u rundeck ssh -vvv ops@target.example.com
 -API 版本是否支持；
 -Token Role 是否正确。
 
-### 32.8 API 403
+### 33.8 API 403
 
 身份已认证但 ACL 不允许。检查 Token Role、Application Context 和 Project Context。
 
-### 32.9 数据库连接失败
+### 33.9 数据库连接失败
 
 检查：
 
@@ -1539,7 +2138,7 @@ nc -vz postgres.example.com 5432
 
 再确认 JDBC URL、驱动、账号、TLS、`pg_hba.conf` 和数据库连接数。
 
-### 32.10 插件加载失败
+### 33.10 插件加载失败
 
 检查：
 
@@ -1554,7 +2153,7 @@ nc -vz postgres.example.com 5432
 
 ---
 
-## 33. Rundeck 与其他工具对比
+## 34. Rundeck 与其他工具对比
 
 | 工具 | 核心定位 | 与 Rundeck 的关系 |
 |---|---|---|
@@ -1571,7 +2170,7 @@ nc -vz postgres.example.com 5432
 
 ---
 
-## 34. 生产落地路线
+## 35. 生产落地路线
 
 ### 阶段一：只读诊断
 
@@ -1610,9 +2209,9 @@ nc -vz postgres.example.com 5432
 
 ---
 
-## 35. 上线检查清单
+## 36. 上线检查清单
 
-### 35.1 平台
+### 36.1 平台
 
 - [ ] 使用受支持的 Rundeck、Java 和数据库版本；
 - [ ] 生产未使用 H2；
@@ -1621,7 +2220,7 @@ nc -vz postgres.example.com 5432
 - [ ] 镜像或软件包固定版本；
 - [ ] 插件来源可信。
 
-### 35.2 身份和权限
+### 36.2 身份和权限
 
 - [ ] 默认密码已移除；
 - [ ] SSO/LDAP Group 映射已验证；
@@ -1630,7 +2229,7 @@ nc -vz postgres.example.com 5432
 - [ ] API Token 最小权限和短期有效；
 - [ ] Break-glass 账号已演练。
 
-### 35.3 Job
+### 36.3 Job
 
 - [ ] Option 有白名单和校验；
 - [ ] 没有 Shell 注入；
@@ -1640,7 +2239,7 @@ nc -vz postgres.example.com 5432
 - [ ] 破坏性操作需要审批；
 - [ ] Job 定义进入版本控制。
 
-### 35.4 凭据
+### 36.4 凭据
 
 - [ ] Secret 不在 Job、Git 和日志；
 - [ ] Key Storage 已加密；
@@ -1649,7 +2248,7 @@ nc -vz postgres.example.com 5432
 - [ ] 密钥可轮换；
 - [ ] 外部 Secret Plugin 已测试。
 
-### 35.5 运维
+### 36.5 运维
 
 - [ ] 日志和审计已接入；
 - [ ] Schedule 时区正确；
@@ -1660,7 +2259,7 @@ nc -vz postgres.example.com 5432
 
 ---
 
-## 36. 命令与 API 速查
+## 37. 命令与 API 速查
 
 ### 服务
 
@@ -1704,12 +2303,15 @@ sudo -u rundeck ssh -vvv user@node.example.com
 
 ---
 
-## 37. 官方资料
+## 38. 官方资料
 
 - [Rundeck / Runbook Automation 文档](https://docs.rundeck.com/docs/)
 - [Rundeck 官方 GitHub](https://github.com/rundeck/rundeck)
 - [Rundeck Releases](https://github.com/rundeck/rundeck/releases)
 - [Rundeck Introduction](https://docs.rundeck.com/docs/about/introduction.html)
+- [新 Project 入门流程](https://docs.rundeck.com/docs/learning/getting-started/projects-overview.html)
+- [通过 SSH 接入 Linux/Unix Node](https://docs.rundeck.com/docs/learning/howto/ssh-on-linux-nodes.html)
+- [创建 Rundeck Job](https://docs.rundeck.com/docs/learning/getting-started/jobs/creating-a-job.html)
 - [Administration Guide](https://docs.rundeck.com/docs/administration/)
 - [System Requirements](https://docs.rundeck.com/docs/administration/install/system-requirements.html)
 - [User Guide](https://docs.rundeck.com/docs/manual/)
@@ -1720,6 +2322,7 @@ sudo -u rundeck ssh -vvv user@node.example.com
 - [ACL Authorization](https://docs.rundeck.com/docs/administration/security/authorization.html)
 - [API Reference](https://docs.rundeck.com/docs/api/)
 - [rd CLI](https://docs.rundeck.com/docs/rd-cli/)
+- [rd CLI 操作示例](https://docs.rundeck.com/docs/learning/howto/learn-rd-cli.html)
 - [Community 与商业版比较](https://www.rundeck.com/community-vs-enterprise)
 
 涉及版本、插件、商业能力和 API 字段时，应以目标 Rundeck 实例对应版本的官方文档和实际导出结果为准。
