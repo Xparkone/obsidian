@@ -101,6 +101,7 @@
 ### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [Grafana-Node-Exporter-宿主机监控仪表盘.json](监控/Grafana-Node-Exporter-宿主机监控仪表盘.json)
 - [Jaeger-分布式追踪从入门到生产实践.md](监控/Jaeger-分布式追踪从入门到生产实践.md)
 - [Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md](监控/Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md)
 - [日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md](监控/日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md)
