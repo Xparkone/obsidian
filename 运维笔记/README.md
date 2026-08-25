@@ -101,8 +101,14 @@
 ### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [Grafana-Kubernetes与宿主机通用仪表盘模板说明.md](监控/Grafana-Kubernetes与宿主机通用仪表盘模板说明.md)
 - [Grafana-Node-Exporter-宿主机监控仪表盘.json](监控/Grafana-Node-Exporter-宿主机监控仪表盘.json)
+- [Grafana-Node-Exporter-宿主机性能深挖仪表盘.json](监控/Grafana-Node-Exporter-宿主机性能深挖仪表盘.json)
 - [Grafana-Kubernetes-集群整体监控仪表盘.json](监控/Grafana-Kubernetes-集群整体监控仪表盘.json)
+- [Grafana-Kubernetes-工作负载与Pod详细监控.json](监控/Grafana-Kubernetes-工作负载与Pod详细监控.json)
+- [Grafana-Kubernetes-节点容量与调度监控.json](监控/Grafana-Kubernetes-节点容量与调度监控.json)
+- [Grafana-Kubernetes-网络与存储详细监控.json](监控/Grafana-Kubernetes-网络与存储详细监控.json)
+- [Grafana-Kubernetes-控制面健康监控.json](监控/Grafana-Kubernetes-控制面健康监控.json)
 - [Jaeger-分布式追踪从入门到生产实践.md](监控/Jaeger-分布式追踪从入门到生产实践.md)
 - [Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md](监控/Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md)
 - [日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md](监控/日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md)

@@ -474,7 +474,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max(100 * (1 - node_filesystem_avail_bytes{job=~\"$job\",instance=~\"$instance\",mountpoint=~\"$mountpoint\",fstype!~\"tmpfs|overlay|squashfs|nsfs|tracefs|fuse.lxcfs\"} / node_filesystem_size_bytes{job=~\"$job\",instance=~\"$instance\",mountpoint=~\"$mountpoint\",fstype!~\"tmpfs|overlay|squashfs|nsfs|tracefs|fuse.lxcfs\"}) by (instance)",
+          "expr": "max by (instance) (100 * (1 - node_filesystem_avail_bytes{job=~\"$job\",instance=~\"$instance\",mountpoint=~\"$mountpoint\",fstype!~\"tmpfs|overlay|squashfs|nsfs|tracefs|fuse.lxcfs\"} / node_filesystem_size_bytes{job=~\"$job\",instance=~\"$instance\",mountpoint=~\"$mountpoint\",fstype!~\"tmpfs|overlay|squashfs|nsfs|tracefs|fuse.lxcfs\"}))",
           "instant": true,
           "legendFormat": "{{instance}}",
           "range": false,
