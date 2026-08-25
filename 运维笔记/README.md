@@ -19,7 +19,7 @@
 | [脚本与工具](脚本与工具/) | kubectl 快捷脚本（k / kf） |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
 | [ai](ai/) | LLM / MCP / Skill / Hermes |
-| [go](go/) · [python](python/) | 语言入门、对比与示例代码 |
+| [go](go/) · [python](python/) · [javascript](javascript/) | 语言入门、运行环境、包管理和开发工具 |
 
 ---
 
@@ -151,3 +151,4 @@
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
 - [todo-api/](go/todo-api/) — Go Todo API 示例
 - [Python入门介绍.md](python/Python入门介绍.md) · [Python-列表-元组-字典详解.md](python/Python-列表-元组-字典详解.md)
+- [Node.js、npm、Vite 入门指南](javascript/Node.js-npm-Vite-入门指南.md)
