@@ -1,7 +1,7 @@
 # 日志平台双方案设计：Loki + Promtail + Grafana 与 VictoriaLogs
 
-> 文档版本：1.0  
-> 更新日期：2026-08-04  
+> 文档版本：1.1
+> 更新日期：2026-08-25
 > 适用读者：平台工程师、运维工程师、SRE、架构师  
 > 适用环境：Kubernetes、Linux 主机、容器平台  
 > 文档目标：给出两套可落地、可对比、可演进的集中式日志平台方案
@@ -132,6 +132,8 @@ flowchart TB
     grafana["Grafana"]
     compactor["Compactor<br/>压缩、保留与删除"]
     ruler["Ruler<br/>LogQL 告警"]
+    alertmanager["Alertmanager<br/>分组、抑制、路由"]
+    receiver["飞书 / 钉钉 / 邮件 / Webhook"]
 
     collector -->|"Loki Push API"| gateway
     gateway --> distributor --> ingester
@@ -140,6 +142,7 @@ flowchart TB
     querier --> object
     compactor --> object
     ruler --> frontend
+    ruler --> alertmanager --> receiver
 ```
 
 ### 5.3 部署分级
@@ -257,6 +260,17 @@ scrape_configs:
 
 ### 5.6 查询与告警
 
+Promtail/Alloy 只负责采集和转发，不负责评估告警规则。Loki 方案可以在两种告警模式中选择一种：
+
+| 模式 | 规则存储和评估位置 | 适用场景 |
+| --- | --- | --- |
+| Grafana-managed alert | Grafana 保存和评估 | 快速上手、多数据源组合、需要在 UI 中管理 |
+| Loki Ruler | Loki Ruler 保存和评估 | 规则文件纳入 Git、按租户管理、与 Alertmanager 集成 |
+
+两种模式可以共存，但同一条业务规则只能由一处评估，否则会产生重复通知。原始日志行不能直接作为告警条件；LogQL 必须先用 `count_over_time`、`rate` 或聚合函数转换为标量或时序结果。
+
+#### 5.6.1 查询与规则表达式
+
 ```logql
 {env="prod", namespace="payment", app="order-api"} |= "timeout"
 ```
@@ -267,10 +281,67 @@ sum by (app) (
 ) > 20
 ```
 
-告警建议分两类：
+上述规则表示：任意 `app` 在最近 5 分钟产生超过 20 条 `level=error` 日志时满足阈值。使用前必须在 Explore 中确认 `env`、`app`、`level` 实际存在，并检查 `level` 是 Loki Label 还是 JSON 字段。
+
+#### 5.6.2 Grafana-managed alert 配置
+
+1. 进入 `Alerting -> Alert rules -> New alert rule`，选择 Loki 数据源。
+2. Query A 填入不带 `> 20` 的 LogQL 聚合查询。
+3. Expression B 选择 `Reduce -> Last`，Expression C 选择 `Threshold -> B is above 20`。
+4. 评估周期设为 1 分钟，`pending period` 设为 5 分钟，避免瞬时波动立即通知。
+5. 至少添加 `severity`、`team`、`service`、`environment` 标签，再通过 Notification Policy 路由到对应接收组。
+6. `No data` 不要统一设为 Normal：“错误日志数”可设为 Normal，“合成日志消失”应设为 Alerting。查询 Error 建议单独路由为平台故障告警。
+
+#### 5.6.3 Loki Ruler 配置
+
+Ruler 的最小配置基线如下，字段名需按实际 Loki/Helm Chart 版本校验：
+
+```yaml
+ruler:
+  alertmanager_url: http://alertmanager.monitoring.svc:9093
+  enable_alertmanager_v2: true
+  enable_api: true
+  rule_path: /var/loki/rules-temp
+  storage:
+    type: s3
+    s3:
+      bucketnames: loki-ruler-prod
+```
+
+规则文件示例：
+
+```yaml
+groups:
+  - name: loki-business-alerts
+    interval: 1m
+    limit: 100
+    rules:
+      - alert: HighErrorLogCount
+        expr: |
+          sum by (app) (
+            count_over_time(
+              {env="prod"} | json | level="error" [5m]
+            )
+          ) > 20
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          environment: prod
+        annotations:
+          summary: "{{ $labels.app }} 错误日志持续增加"
+          description: "最近 5 分钟错误日志数为 {{ $value }}"
+          runbook_url: "https://runbooks.example.com/logging/high-error-log-count"
+```
+
+`limit` 用于限制单个规则组产生的 Alert 数量，防止错误的高基数分组引发告警风暴。超出限制时规则评估会记录错误，相关 Alert 状态也可能被清理，因此还必须监控 Ruler 规则健康状态。多租户环境必须确认规则归属的 Loki Tenant；不能让普通客户端任意指定 `X-Scope-OrgID`。
+
+#### 5.6.4 告警分类
 
 - **业务日志告警**：错误突增、关键错误码、审计事件。
 - **平台健康告警**：写入拒绝、丢弃行数、WAL 异常、对象存储错误、查询超时、Compactor 失败、采集器积压。
+
+业务日志告警可以使用 Loki 日志查询；平台健康告警应优先使用 Prometheus 指标。如果 Loki 已无法写入或查询，依赖 Loki 自身日志的规则也可能同时失效。
 
 ### 5.7 高可用与容灾
 
@@ -299,6 +370,8 @@ sum by (app) (
 | vlagent | 日志采集、缓冲、转发 | 新部署可选 |
 | Alloy/Vector/Fluent Bit | 通用采集 | 已有采集体系可复用 |
 | VictoriaLogs Grafana datasource | LogsQL 查询与展示 | Grafana 安装插件并配置数据源 |
+| vmalert | 周期评估 LogsQL 告警/记录规则 | 使用 VictoriaLogs 告警时部署 |
+| Alertmanager | 告警分组、抑制、静默和通知路由 | 与 Loki Ruler/vmalert 共用 |
 
 VictoriaLogs 官方建议：只要单机仍可通过增加 CPU、内存、磁盘和 IOPS 满足需求，就优先使用 single；集群模式用于突破单机纵向扩展上限。
 
@@ -314,10 +387,15 @@ flowchart LR
     single["VictoriaLogs Single"]
     disk[("本地 NVMe / PV")]
     grafana["Grafana<br/>VictoriaLogs Datasource"]
+    vmalert["vmalert<br/>LogsQL 规则"]
+    alertmanager["Alertmanager"]
+    receiver["飞书 / 钉钉 / 邮件 / Webhook"]
 
     collector --> gateway --> single
     single --> disk
     grafana --> single
+    vmalert --> single
+    vmalert --> alertmanager --> receiver
 ```
 
 大规模集群：
@@ -334,6 +412,8 @@ flowchart LR
     select -.->|"并行查询"| s1
     select -.->|"并行查询"| s2
     select -.->|"并行查询"| sn
+    vmalert["vmalert<br/>LogsQL 规则"] --> querygw
+    vmalert --> alertmanager["Alertmanager"] --> receiver["通知渠道"]
 ```
 
 ### 6.3 Single 部署基线
@@ -390,16 +470,86 @@ datasources:
 ### 6.6 LogsQL 查询示例
 
 ```text
-{env="prod",namespace="payment",app="order-api"} AND "timeout"
+{env=prod,namespace=payment,app=order-api} AND "timeout"
 ```
 
 ```text
-{env="prod"} level:error | stats count() by (app)
+{env=prod} level:error | stats by (app) count()
 ```
 
 应在 PoC 中验证团队常用的 20～30 条查询：关键词、字段过滤、正则、时间聚合、Top N、上下文查看、Trace 跳转和告警表达式，而不只测试写入吞吐。
 
-### 6.7 高可用与容灾
+### 6.7 VictoriaLogs 告警
+
+VictoriaLogs 的推荐路径是 `vmalert -> Alertmanager -> 通知渠道`。`vmalert` 通过 VictoriaLogs 的 LogsQL stats API 评估规则，触发后将 Alert 发送给 Alertmanager。Grafana 主要用于查询和看板；当前 VictoriaLogs datasource 插件不能在 Grafana Alerting UI 中展示 `vmalert` 的 datasource-managed rules。
+
+#### 6.7.1 vmalert 启动参数
+
+Docker Compose 示例：
+
+```yaml
+services:
+  vmalert:
+    image: victoriametrics/vmalert:<固定版本>
+    command:
+      - -rule=/etc/vmalert/rules/*.yaml
+      - -rule.defaultRuleType=vlogs
+      - -datasource.url=http://victorialogs:9428
+      - -notifier.url=http://alertmanager:9093
+      - -httpListenAddr=:8880
+      - -rule.evalDelay=5s
+    volumes:
+      - ./vmalert/rules:/etc/vmalert/rules:ro
+    ports:
+      - "127.0.0.1:8880:8880"
+    depends_on:
+      - victorialogs
+      - alertmanager
+```
+
+Kubernetes 环境中将规则以 ConfigMap、受控对象存储或 GitOps 流程发布。高可用环境可运行 2 个执行相同规则的 `vmalert` 副本，由 Alertmanager 去重；两个副本不得添加会改变 Alert 指纹的不同外部标签。同时配置 Pod 反亲和和 PodDisruptionBudget。多租户规则通过 group 的 `headers` 指定 `AccountID`/`ProjectID`，且规则存储和发布权限必须按租户隔离。
+
+#### 6.7.2 LogsQL 告警规则
+
+```yaml
+groups:
+  - name: victorialogs-business-alerts
+    type: vlogs
+    interval: 5m
+    rules:
+      - alert: HighErrorLogCount
+        expr: '{env=prod} level:in(error,fatal) | stats by (app) count() as error_logs | filter error_logs:>20'
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          environment: prod
+        annotations:
+          summary: "{{ $labels.app }} 错误日志持续增加"
+          description: "最近 5 分钟错误日志数为 {{ $value }}"
+          runbook_url: "https://runbooks.example.com/logging/high-error-log-count"
+```
+
+LogsQL 告警表达式必须包含 `stats` 将日志转换为数值，再用 `filter` 过滤阈值。不显式写 `_time` 时，`vmalert` 默认按 group `interval` 追加时间窗口；上例每 5 分钟评估最近 5 分钟的日志。
+
+使用前必须先在 VictoriaLogs UI 或 Grafana Explore 中执行去掉 `filter error_logs:>20` 的表达式，确认 `env`、`level`、`app` 字段存在。对于没有结构化 `level` 字段的普通文本日志，可以临时使用关键词查询，但必须通过样本检查误报：
+
+```yaml
+expr: 'error | stats by (container) count() as error_logs | filter error_logs:>20'
+```
+
+#### 6.7.3 告警状态持久化
+
+`-remoteWrite.url` 和 `-remoteRead.url` 不是告警发送的必要条件，但生产环境建议将告警状态和 Recording Rule 结果写入 VictoriaMetrics 或其他 Prometheus remote-write 兼容存储：
+
+```text
+-remoteWrite.url=http://victoriametrics:8428
+-remoteRead.url=http://victoriametrics:8428
+```
+
+不配置远程存储时，基础告警仍可工作，但 `vmalert` 重启后无法从持久层恢复先前状态，必须在故障演练中验证 `for` 计时和重复通知的实际行为。
+
+### 6.8 高可用与容灾
 
 - Single 模式本质上存在单实例故障窗口；通过快速重建、持久盘快照和明确 RTO/RPO 管理风险。
 - 高可用要求较高时使用 cluster：至少 2 个 `vlinsert`、2 个 `vlselect`，`vlstorage` 数量和复制策略按目标设计。
@@ -407,7 +557,7 @@ datasources:
 - 本地盘性能决定写入与查询体验，应持续监控磁盘空间、延迟、IOPS、吞吐和 inode。
 - 扩容 `vlstorage` 后，新增数据会重新分片，但历史数据不会自动均衡；容量规划必须留余量并按照官方 Rebalancing 流程执行。
 
-### 6.8 优缺点
+### 6.9 优缺点
 
 优点：单机组件少、部署和排障简单；结构化字段与全文检索友好；支持多种写入协议；可复用 Loki 协议采集器；从 single 到 cluster 有明确演进路径。
 
@@ -472,6 +622,133 @@ datasources:
 
 平台告警至少覆盖：采集器不可达、缓冲区持续增长、丢弃日志、4xx/5xx、限流、写入延迟、查询错误、磁盘空间、对象存储错误、WAL/Compactor/存储合并异常、证书到期和租户用量异常。
 
+### 9.1 告警分层与责任边界
+
+| 告警层 | 数据来源 | 规则引擎 | 典型告警 |
+| --- | --- | --- | --- |
+| 业务日志 | Loki/VictoriaLogs 中的日志 | Grafana-managed alert、Loki Ruler 或 vmalert | 错误数、错误率、关键事件、审计事件 |
+| 采集层 | Alloy/Vector/vlagent 的 `/metrics` | Prometheus/VictoriaMetrics | 发送失败、重试、队列积压、非策略性丢弃 |
+| 存储与查询层 | Loki/VictoriaLogs/vmalert 的 `/metrics` | Prometheus/VictoriaMetrics | 写入错误、查询错误、限流、WAL/合并异常 |
+| 基础资源 | node_exporter/kube-state-metrics/云监控 | Prometheus/VictoriaMetrics | 磁盘剩余、IO 延迟、OOM、Pod 重启、PVC 异常 |
+| 端到端 | 持续写入的合成日志 | 独立定时任务 + 查询规则 | 最新心跳日志超时未出现 |
+
+告警系统不能只监控进程存活。HTTP 200 或 Pod Running 只证明入口可达，不证明“采集 -> 写入 -> 持久化 -> 查询”的完整路径正常。必须保留一条独立的合成日志检测。
+
+Prometheus 基础存活规则示例：
+
+```yaml
+groups:
+  - name: logging-platform-availability
+    rules:
+      - alert: LoggingComponentDown
+        expr: up{job=~"alloy|loki|victorialogs|vmalert"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "日志平台组件 {{ $labels.job }} 不可达"
+          description: "instance={{ $labels.instance }} 已持续 5 分钟抓取失败"
+```
+
+`job` 标签必须以实际 Prometheus 抓取配置为准。写入失败、丢弃、查询错误等产品指标名可能随版本变化；上线前应对目标版本的 `/metrics` 做实际查询，不能根据旧仪表盘推测指标名。
+
+### 9.2 Alertmanager 通知路由
+
+Alertmanager 负责分组、去重、抑制、静默和路由，不负责查询日志。最小配置示例：
+
+```yaml
+services:
+  alertmanager:
+    image: prom/alertmanager:<固定版本>
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./data/alertmanager:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+```
+
+`alertmanager.yml` 示例：
+
+```yaml
+route:
+  receiver: platform-default
+  group_by: [alertname, environment, team]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: platform-critical
+      matchers:
+        - severity="critical"
+
+receivers:
+  - name: platform-default
+    webhook_configs:
+      - url: http://alert-relay.monitoring.svc:8080/alertmanager/default
+        send_resolved: true
+  - name: platform-critical
+    webhook_configs:
+      - url: http://alert-relay.monitoring.svc:8080/alertmanager/critical
+        send_resolved: true
+
+inhibit_rules:
+  - source_matchers:
+      - severity="critical"
+    target_matchers:
+      - severity="warning"
+    equal: [alertname, environment, service]
+```
+
+飞书、钉钉或其他内部渠道可以通过受控的 Webhook Relay 转发。Webhook Token、SMTP 密码、API Key 不得出现在规则文件、ConfigMap 或 Git 中，应放入 Secret 或外部密钥管理系统。
+
+每条可操作的告警至少包含：
+
+- `summary`：发生了什么。
+- `description`：时间窗口、当前值、阈值和受影响对象。
+- `severity`：严重级别。
+- `team`/`service`/`environment`：路由和归属信息。
+- `runbook_url`：处置手册，内容包含影响、查询、止损、恢复和升级条件。
+
+### 9.3 告警阈值设计
+
+- 先用 7～14 天历史数据计算正常基线，再设定阈值；示例中的 `20` 不是生产推荐值。
+- 对流量波动大的服务，优先使用“错误数 + 错误率 + 最小请求量”，避免低流量下的比例误报。
+- `warning` 用于需要工作时间处理的持续劣化，`critical` 只用于需要立即响应的用户影响或数据风险。
+- 用 `for`/pending period 吸收短暂波动，但对凭据泄露、数据删除等关键审计事件可以首次匹配即触发。
+- 不要按 `pod`、`trace_id`、`request_id`、用户 ID 等高基数字段生成独立 Alert；应先按稳定的 `app`/`service` 聚合。
+
+### 9.4 端到端验证
+
+每条新规则必须在非生产环境执行一次“触发 -> 通知 -> 恢复”演练：
+
+1. 从真实采集路径输出带唯一 `test_id` 的结构化测试日志，不要直接调后端 API 绕过采集器。
+2. 在 Grafana Explore 或 VictoriaLogs UI 中确认该日志可查，字段和时间戳正确。
+3. 暂时将测试规则阈值降低，确认状态依次变为 `pending` 和 `firing`。
+4. 检查 Alertmanager 是否收到 Alert，分组/路由是否正确，目标渠道是否收到通知。
+5. 停止测试日志，确认规则恢复且收到 resolved 通知。
+6. 恢复正式阈值，删除测试规则/静默，并保留演练时间、规则版本和验证结果。
+
+基础静态检查：
+
+```bash
+docker compose config
+amtool check-config ./alertmanager/alertmanager.yml
+```
+
+VictoriaLogs/vmalert 运行检查：
+
+```bash
+curl -fsS http://127.0.0.1:8880/api/v1/rules
+curl -fsS http://127.0.0.1:8880/api/v1/alerts
+curl -fsS http://127.0.0.1:9093/-/ready
+```
+
+`docker compose config` 或 API 返回成功只属于配置/运行状态检查，不能代替真实通知验证。
+
 ## 10. 两套方案对比
 
 | 维度 | Loki + Alloy/存量 Promtail | VictoriaLogs |
@@ -483,6 +760,8 @@ datasources:
 | 大规模复杂度 | 组件较多、独立伸缩成熟 | 三类集群组件，模型清晰 |
 | Grafana 集成 | 原生 Loki 数据源 | VictoriaLogs 插件 |
 | 采集器 | 新系统用 Alloy；Promtail 已移除 | vlagent、Alloy、Vector、Fluent Bit 等 |
+| 日志告警引擎 | Grafana-managed alert 或 Loki Ruler | vmalert（LogsQL） |
+| 通知管理 | Grafana Alerting 或 Alertmanager | Alertmanager |
 | 多租户 | 原生租户头，需可信网关 | AccountID/ProjectID，需可信网关 |
 | 适合团队 | 已有 Grafana/Loki/LogQL 能力 | 重视简洁运维与字段检索 |
 | 主要风险 | 高基数、分布式调优、Promtail 迁移 | 插件/语言学习、Single 单点、扩容再平衡 |
@@ -900,11 +1179,18 @@ deploy/
 │   └── config.alloy
 ├── loki/
 │   ├── values-prod.yaml
-│   └── dashboards/
+│   ├── dashboards/
+│   └── rules/
 ├── victorialogs-single/
 │   └── values-prod.yaml
 ├── victorialogs-cluster/
 │   └── values-prod.yaml
+├── vmalert/
+│   ├── values-prod.yaml
+│   └── rules/
+├── alertmanager/
+│   ├── values-prod.yaml
+│   └── config/
 ├── grafana/
 │   ├── values-prod.yaml
 │   └── provisioning/
@@ -913,7 +1199,7 @@ deploy/
     └── synthetic-log-generator.yaml
 ```
 
-CI 流程：YAML/Alloy 语法检查 → `helm lint` → `helm template` → Policy 扫描 → 非生产安装 → 合成日志验证 → 人工审批 → 生产 `helm upgrade --install --atomic`。Secret 使用 External Secrets、SOPS 或同类方案，明文凭据禁止进入 Git。
+CI 流程：YAML/Alloy 语法检查 → Loki/vmalert/Alertmanager 规则静态检查 → `helm lint` → `helm template` → Policy 扫描 → 非生产安装 → 合成日志与告警验证 → 人工审批 → 生产 `helm upgrade --install --atomic`。Secret 使用 External Secrets、SOPS 或同类方案，明文凭据禁止进入 Git。
 
 ### 11.7 上线检查与冒烟测试
 
@@ -1299,10 +1585,12 @@ docker compose logs --tail=100 victorialogs alloy grafana
 curl -fsS http://127.0.0.1:9428/
 curl -fsS http://127.0.0.1:3000/api/health
 curl -fsS http://127.0.0.1:9428/select/logsql/query \
-  -d 'query={job="docker"}'
+  -d 'query={job=docker}'
 ```
 
-Grafana 插件 ID和数据源类型应按锁定版本核对。生产环境建议将插件预装进固定版本的 Grafana 自定义镜像，避免启动时下载失败或版本漂移。
+Grafana 插件 ID 和数据源类型应按锁定版本核对。生产环境建议将插件预装进固定版本的 Grafana 自定义镜像，避免启动时下载失败或版本漂移。
+
+需要日志告警时，在该 Compose 中继续合并 6.7.1 的 `vmalert` 服务和 9.2 的 `alertmanager` 服务，并把 `vmalert/rules`、`alertmanager.yml`、Alertmanager 状态目录一并持久化。添加后将 `vmalert alertmanager` 加入 `docker compose logs` 和健康检查，再执行 9.4 的完整触发演练。
 
 #### 11.9.4 远程主机接入
 
@@ -1398,6 +1686,12 @@ docker compose start alloy
 - [ ] 常用查询的 P95/P99 满足目标。
 - [ ] 单节点/单 Pod 故障期间平台行为符合 RTO/RPO。
 - [ ] 限流、磁盘不足、对象存储异常和证书到期均有告警。
+- [ ] 业务日志规则可从实际采集路径触发，并完成 `pending -> firing -> resolved` 验证。
+- [ ] Loki Ruler 或 vmalert 规则评估错误、规则数量限制和最后成功评估时间可监控。
+- [ ] Alertmanager 分组、抑制、静默、重复提醒和恢复通知已通过演练。
+- [ ] 合成日志可同时发现采集、写入、存储和查询路径异常。
+- [ ] 告警不按 Pod、Trace ID、Request ID 等高基数字段生成大量独立实例。
+- [ ] 通知配置与规则文件中不含 Webhook Token、SMTP 密码或 API Key。
 - [ ] 保留删除、备份恢复、租户隔离通过演练。
 - [ ] 配置、Dashboard、告警规则和操作手册已进入 Git。
 - [ ] Promtail 存量环境具有明确的 Alloy 迁移日期和回滚方案。
@@ -1421,6 +1715,9 @@ docker compose start alloy
 - [Grafana Loki：Storage Schema](https://grafana.com/docs/loki/latest/operations/storage/schema/)
 - [Grafana Loki：Helm 安装与部署模式](https://grafana.com/docs/loki/latest/setup/install/helm/)
 - [Grafana Loki：Distributed Helm 部署](https://grafana.com/docs/loki/latest/setup/install/helm/install-microservices/)
+- [Grafana Loki：Alerting 与 Ruler](https://grafana.com/docs/loki/latest/alert/)
+- [Grafana：Grafana-managed Alert Rules](https://grafana.com/docs/grafana/latest/alerting/alerting-rules/create-grafana-managed-rule/)
+- [Prometheus：Alertmanager 配置](https://prometheus.io/docs/alerting/latest/configuration/)
 - [Grafana Alloy：采集 Kubernetes 日志](https://grafana.com/docs/grafana-cloud/send-data/alloy/collect/logs-in-kubernetes/)
 - [Grafana Loki：Docker Compose Quick Start](https://grafana.com/docs/loki/latest/get-started/quick-start/quick-start/)
 - [Grafana Alloy：Docker 安装](https://grafana.com/docs/grafana-cloud/send-data/alloy/set-up/install/docker/)
@@ -1430,4 +1727,6 @@ docker compose start alloy
 - [VictoriaLogs：数据接入](https://docs.victoriametrics.com/victorialogs/data-ingestion/)
 - [VictoriaLogs：通过 Promtail/Alloy 接入](https://docs.victoriametrics.com/victorialogs/data-ingestion/promtail/)
 - [VictoriaLogs：Grafana Datasource](https://docs.victoriametrics.com/victorialogs/victorialogs-datasource/)
+- [VictoriaLogs：使用 vmalert 配置日志告警](https://docs.victoriametrics.com/victorialogs/vmalert/)
+- [VictoriaMetrics：vmalert](https://docs.victoriametrics.com/victoriametrics/vmalert/)
 - [VictoriaLogs：Docker Quick Start](https://docs.victoriametrics.com/victorialogs/quickstart/)
