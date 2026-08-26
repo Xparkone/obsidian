@@ -1,6 +1,6 @@
 # GitLab CI/CD YAML 详细语法与使用方法
 
-> 本文是一份独立的 GitLab CI/CD 配置手册，面向第一次编写 `.gitlab-ci.yml` 的开发者，也可作为日常速查资料。示例以当前 GitLab 官方在线文档为依据核对（核对日期：2026-07-23）。  
+> 本文是一份独立的 GitLab CI/CD 配置手册，面向第一次编写 `.gitlab-ci.yml` 的开发者，也可作为日常速查资料。示例以 GitLab 19.3 当前官方在线文档为依据核对（核对日期：2026-08-26）。
 > GitLab.com 会持续升级；Self-Managed 实例可能停留在较旧版本。凡涉及较新、实验性、Beta、Runner 版本或付费层级的功能，使用前都应对照实例对应版本的官方文档与 CI Lint。
 
 ## 目录
@@ -33,6 +33,30 @@
 - [26. 最佳实践](#26-最佳实践)
 - [27. 关键词速查索引](#27-关键词速查索引)
 - [28. 官方参考资料](#28-官方参考资料)
+
+---
+
+## 建议学习路线
+
+这篇文档同时是教程和参考手册，不建议第一次就从头背到尾。按下面六个练习逐步增加配置，每一步都提交一次并观察 pipeline 图、job 日志和 artifacts：
+
+| 练习 | 目标 | 重点语法 | 完成标准 |
+|---|---|---|---|
+| 1. Hello CI | 让 Runner 执行一条命令 | job、`script` | job 状态为 passed，能读懂日志中的准备、取代码、执行和清理阶段 |
+| 2. 三阶段流水线 | 拆分检查、测试、构建 | `stages`、`stage` | 同阶段可并行，失败会阻止后续阶段 |
+| 3. 传递构建结果 | 把 `dist/` 交给后续 job | `artifacts`、`needs` | 后续 job 能取得文件，且不重新构建 |
+| 4. 控制触发条件 | 区分 MR、默认分支和 tag | `workflow:rules`、job `rules` | 普通 push 与 MR 不产生无意的重复流水线 |
+| 5. 复用配置 | 抽取公共镜像和脚本 | `default`、`extends`、`include` | 主配置保持简短，合并后的配置符合预期 |
+| 6. 安全部署 | 增加 staging 和手动 production | `environment`、`resource_group`、`when: manual` | 同一环境部署串行；生产部署需要确认并可定位到唯一 artifact/镜像 digest |
+
+建议先精读第 1～14、21、24、25 节。第 15～20、22～23 节用于进阶，不必在第一周全部掌握。
+
+验证边界要分开：
+
+- **静态检查**：YAML 能解析，文档代码块与链接结构正确。
+- **GitLab 配置检查**：目标项目的 CI Lint 能解析 include，并模拟出预期的 `rules` 和 `needs`。
+- **Runner 测试**：实际 Runner 能拉取镜像、访问依赖服务、上传 cache/artifacts。
+- **部署确认**：目标环境完成健康检查、版本核对和回滚演练。pipeline 显示 passed 本身不等于应用已经可用。
 
 ---
 
@@ -406,6 +430,45 @@ test:
 - 在 `after_script` 中生成或修改、且位于 artifacts 路径内的文件，可随 artifacts 上传。
 - job 被取消后，`CI_JOB_TOKEN` 可能立即失效，不适合在清理阶段继续调用需要该 token 的 API。
 
+### 6.5 Job `inputs`：可校验、可重试覆盖的作业参数
+
+GitLab 18.10 引入 job inputs，要求 GitLab Runner 18.9 或更高版本。它适合部署目标、测试套件、功能开关等“属于单个 job，且手动运行或重试时可能需要调整”的参数。
+
+```yaml
+deploy:
+  inputs:
+    target_env:
+      default: staging
+      options: [staging, production]
+      description: Target deployment environment
+    replicas:
+      type: number
+      default: 3
+    debug_mode:
+      type: boolean
+      default: false
+  script:
+    - 'echo "environment=${{ job.inputs.target_env }} replicas=${{ job.inputs.replicas }}"'
+    - 'if [ "${{ job.inputs.debug_mode }}" = "true" ]; then set -x; fi'
+    - './scripts/deploy.sh "${{ job.inputs.target_env }}" "${{ job.inputs.replicas }}"'
+```
+
+要点：
+
+- 每个 job input 都必须有 `default`。
+- 类型可为 `string`、`number`、`boolean` 或 `array`，还可用 `options`、`regex` 做约束。
+- 引用语法是 `${{ job.inputs.NAME }}`，它不是环境变量，不能写成 `$NAME`。
+- 作用域只在当前 job，其他 job 和 included 文件不可读取。
+- job inputs 在 job 创建、手动运行或重试时求值，不能用于 job 名称、`stage`、`rules` 或 `include` 等必须在创建 pipeline 时决定的位置。
+
+job inputs、配置 inputs 和变量不要混为一谈：
+
+| 机制 | 定义位置 | 引用方式 | 适合场景 |
+|---|---|---|---|
+| Job inputs | job 内的 `inputs` | `${{ job.inputs.NAME }}` | 单个 job 的类型化参数，运行或重试时可覆盖 |
+| 配置 inputs | 文件头 `spec:inputs` | `$[[ inputs.NAME ]]` | 模板、component、included 文件的参数化 |
+| CI/CD variables | UI、顶层或 job `variables` | `$NAME` / `${NAME}` | 运行期环境变量、凭据和脚本间常规参数 |
+
 ---
 
 ## 7. 镜像与服务容器
@@ -706,11 +769,15 @@ rules:
 deploy-production:
   script:
     - ./deploy.sh production
+  manual_confirmation: Confirm deployment to production
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
+      allow_failure: false
     - when: never
 ```
+
+`manual_confirmation` 可为手动作业显示更明确的确认提示；它不能代替 protected environment、审批规则和权限控制。生产 job 还应显式设置 `allow_failure: false`，避免团队误解手动作业的阻塞行为。
 
 延迟执行：
 
@@ -1558,9 +1625,72 @@ include:
       stage: test
 ```
 
-CI/CD Catalog components 和 `spec:inputs` 是现代参数化复用方式，但功能在近年快速演进。输入类型、默认值、校验、插值函数、版本选择和层级限制均应查对应 GitLab 版本文档，不要把普通变量语法与 `$[[ inputs.* ]]` 混用。
+CI/CD Catalog components 和 `spec:inputs` 是现代参数化复用方式。版本选择和部分高级校验能力仍在演进，Self-Managed 实例应查对应版本。
 
-### 17.5 条件 include
+### 17.5 `spec:inputs` 与 `include:inputs`
+
+配置 inputs 在 pipeline 创建时完成类型校验和插值，之后保持不变，适合给共享模板定义明确的调用接口。
+
+模板文件 `.gitlab/ci/deploy-template.yml`：
+
+```yaml
+spec:
+  inputs:
+    environment:
+      description: Target environment
+      options: [staging, production]
+    job-stage:
+      default: deploy
+    replicas:
+      type: number
+      default: 2
+---
+
+deploy-$[[ inputs.environment ]]:
+  stage: $[[ inputs.job-stage ]]
+  script:
+    - './scripts/deploy.sh "$[[ inputs.environment ]]" "$[[ inputs.replicas ]]"'
+  environment:
+    name: $[[ inputs.environment ]]
+```
+
+主 `.gitlab-ci.yml`：
+
+```yaml
+stages: [test, deploy]
+
+include:
+  - local: /.gitlab/ci/deploy-template.yml
+    inputs:
+      environment: staging
+      replicas: 3
+```
+
+要点：
+
+- `spec` 必须位于文件头；同一文件后面还有 job 时，用 `---` 分隔 header 与配置正文。
+- 没有 `default` 的 input 是必填项；通过 `include` 使用时，调用方必须在 `include:inputs` 中传值。
+- 默认类型是 `string`，还支持 `array`、`number`、`boolean`；可结合 `description`、`options`、`regex` 和对应版本支持的校验规则。
+- input 只在声明它的文件中可见。要传给另一个 included 文件或下游 pipeline，必须显式使用 `include:inputs` 或 `trigger:inputs`。
+- `$[[ inputs.* ]]` 是 pipeline 创建阶段的配置插值；`$VARIABLE` 是 job 运行阶段的环境变量展开。
+
+### 17.6 `include:cache`：缓存远程配置
+
+GitLab 19.0 起，`include:cache` 已正式可用。它只支持 `include:remote`，用于减少重复下载远程配置的请求。
+
+```yaml
+include:
+  - remote: https://example.com/ci/common.yml
+    cache: 1 hour
+    integrity: sha256-L3/GAoKaw0Arw6hDCKeKQlV1QPEgHYxGBHsH4zG1IY8=
+```
+
+- `cache: true` 使用默认 1 小时 TTL，也可写 `30 minutes`、`1 day` 等时长，最短 1 分钟。
+- TTL 内远程文件即使更新也仍可能使用缓存副本，要在性能和配置新鲜度之间取舍。
+- 配合 `integrity` 时，即使命中缓存也会继续校验内容哈希。
+- 缓存不能替代供应链固定：能使用自有 GitLab 项目时，优先 `include:project` 并固定完整 commit SHA。
+
+### 17.7 条件 include
 
 ```yaml
 include:
@@ -1575,7 +1705,7 @@ include:
           - docker/**/*
 ```
 
-### 17.6 合并行为
+### 17.8 合并行为
 
 GitLab 先按顺序递归合并 included 文件，再将主 `.gitlab-ci.yml` 合并到结果。大体规则：
 
@@ -1584,7 +1714,7 @@ GitLab 先按顺序递归合并 included 文件，再将主 `.gitlab-ci.yml` 合
 - 主文件通常可覆盖 include 中的值。
 - 数组不能按元素自动合并，例如主文件重写 `rules` 会替换原数组。
 
-### 17.7 Include 限制与陷阱
+### 17.9 Include 限制与陷阱
 
 - 当前官方文档说明默认最多 150 个嵌套 include；GitLab 15.10 之前默认限制不同，Self-Managed 管理员也可调整。
 - include 解析有超时和网络失败风险。
@@ -2437,6 +2567,8 @@ script:
 | `image` | job 主容器 | job/default | 只对相应 executor 生效 |
 | `services` | 旁路服务容器 | job/default | 不是 localhost，且需等待就绪 |
 | `variables` | 配置变量 | 顶层/job | 作用域、优先级和展开时机 |
+| Job `inputs` | 类型化的单 job 参数 | job | 需要 Runner 18.9+；每项必须有默认值 |
+| `spec:inputs` | 参数化配置文件 | YAML header | 无默认值即必填；作用域限当前文件 |
 | `rules` | 决定 job 是否加入 | job | 第一条匹配即停止 |
 | `workflow:rules` | 决定 pipeline 是否创建 | 顶层 | 可能阻止所有 MR pipeline |
 | `needs` | DAG 依赖和 artifact 下载 | job | 可选 job 要 `optional` |
@@ -2455,6 +2587,7 @@ script:
 | `inherit` | 控制默认/变量继承 | job | false 可能移除必要配置 |
 | `extends` | 继承模板 | job | 哈希合并，数组不合并 |
 | `include` | 合并外部配置 | 顶层 | 权限、版本固定、合并顺序 |
+| `include:cache` | 缓存 remote include | `include:remote` | TTL 内可能继续使用旧配置，仅 GitLab 19.0+ |
 | YAML anchor | 同文件复用 | 任意 YAML | 不能跨 include |
 | `!reference` | 跨文件选择配置 | job/隐藏模板 | 处理时机和矩阵限制 |
 | `trigger` | 创建下游 pipeline | trigger job | 来源变量和状态策略 |
@@ -2463,6 +2596,7 @@ script:
 | `id_tokens` | 生成 OIDC JWT | job/default（依版本） | audience/claims 必须严格匹配 |
 | `allow_failure` | 允许失败 | job/rule | manual 默认值存在语境差异 |
 | `when` | 执行条件/时机 | job/rule/artifacts | job 与 artifacts 的取值不同 |
+| `manual_confirmation` | 自定义手动作业提示 | manual job | 只是确认文案，不是授权或审批机制 |
 | `only/except` | 旧式条件 | job | 已不推荐，新配置用 rules |
 
 ---
@@ -2481,6 +2615,8 @@ script:
 - [Job artifacts](https://docs.gitlab.com/ci/jobs/job_artifacts/)
 - [Caching in GitLab CI/CD](https://docs.gitlab.com/ci/caching/)
 - [CI/CD variables](https://docs.gitlab.com/ci/variables/)
+- [CI/CD inputs](https://docs.gitlab.com/ci/inputs/)
+- [Job inputs](https://docs.gitlab.com/ci/jobs/job_inputs/)
 - [Predefined CI/CD variables reference](https://docs.gitlab.com/ci/variables/predefined_variables/)
 - [Environments and deployments](https://docs.gitlab.com/ci/environments/)
 - [OIDC authentication using ID tokens](https://docs.gitlab.com/ci/secrets/id_token_authentication/)
@@ -2488,6 +2624,7 @@ script:
 - [Debugging CI/CD pipelines](https://docs.gitlab.com/ci/debugging/)
 - [GitLab Runner executors](https://docs.gitlab.com/runner/executors/)
 - [GitLab CI/CD examples](https://docs.gitlab.com/ci/examples/)
+- [GitLab 19.3 release notes](https://docs.gitlab.com/releases/19/gitlab-19-3-released/)
 
 ---
 
