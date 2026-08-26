@@ -113,6 +113,7 @@
 - [Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md](监控/Tempo-OpenTelemetry-SeaweedFS-Grafana分布式追踪.md)
 - [日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md](监控/日志平台方案设计：Loki-Promtail-Grafana与VictoriaLogs.md)
 - [VictoriaLogs-Grafana-Alloy部署运维文档.md](监控/VictoriaLogs-Grafana-Alloy部署运维文档.md)
+- [Loggie-VictoriaLogs-Grafana-Kubernetes日志采集部署与运维.md](监控/Loggie-VictoriaLogs-Grafana-Kubernetes日志采集部署与运维.md)
 - [deepflow-deployment-and-usage.md](监控/deepflow-deployment-and-usage.md)
 
 ### 自动化
