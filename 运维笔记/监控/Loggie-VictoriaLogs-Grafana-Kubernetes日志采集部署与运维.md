@@ -158,14 +158,61 @@ kubectl auth can-i create clusterroles.rbac.authorization.k8s.io
 
 ## 4. 规划变量和域名
 
-部署前明确以下变量：
+为了避免每次登录后重复输入变量，可以把通用变量集中到 `/opt/logging-stack/logging-env.sh`。这个文件是供 Shell 使用的环境变量脚本，与后文供 Docker Compose 使用的 `.env` 不是同一个文件。
+
+先创建目录：
 
 ```bash
-export LOGGING_ROOT=/opt/logging-stack
-export VICTORIALOGS_HOST='<Kubernetes节点可访问的内网IP或DNS>'
-export VICTORIALOGS_PORT=9428
-export GRAFANA_PORT=3000
-export LOGGIE_NAMESPACE=loggie
+sudo mkdir -p /opt/logging-stack
+sudo chown "$(id -u):$(id -g)" /opt/logging-stack
+```
+
+创建 `/opt/logging-stack/logging-env.sh`：
+
+```bash
+#!/usr/bin/env bash
+
+# 日志平台在 Docker 主机上的部署根目录
+export LOGGING_ROOT="${LOGGING_ROOT:-/opt/logging-stack}"
+
+# 必须替换成所有 Kubernetes 节点都能访问的内网 IP 或 DNS
+export VICTORIALOGS_HOST="${VICTORIALOGS_HOST:-REPLACE_WITH_PRIVATE_IP_OR_DNS}"
+
+# 服务端口
+export VICTORIALOGS_PORT="${VICTORIALOGS_PORT:-9428}"
+export GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+
+# Loggie 在 Kubernetes 中的命名空间
+export LOGGIE_NAMESPACE="${LOGGIE_NAMESPACE:-loggie}"
+
+# 防止忘记替换 VictoriaLogs 地址后继续执行部署命令
+if [[ "$VICTORIALOGS_HOST" == "REPLACE_WITH_PRIVATE_IP_OR_DNS" ]]; then
+  printf '%s\n' \
+    'ERROR: 请修改 logging-env.sh 中的 VICTORIALOGS_HOST' >&2
+  return 1 2>/dev/null || exit 1
+fi
+```
+
+不要在这个脚本中保存密码、Token、Cookie 或私钥。脚本只存放非敏感的路径、地址、端口和命名空间。
+
+设置权限并加载：
+
+```bash
+chmod 640 /opt/logging-stack/logging-env.sh
+
+source /opt/logging-stack/logging-env.sh
+
+printf 'LOGGING_ROOT=%s\n' "$LOGGING_ROOT"
+printf 'VICTORIALOGS_HOST=%s\n' "$VICTORIALOGS_HOST"
+printf 'VICTORIALOGS_PORT=%s\n' "$VICTORIALOGS_PORT"
+printf 'GRAFANA_PORT=%s\n' "$GRAFANA_PORT"
+printf 'LOGGIE_NAMESPACE=%s\n' "$LOGGIE_NAMESPACE"
+```
+
+`source` 只对当前 Shell 会话及其子进程生效。重新登录后需要再次执行：
+
+```bash
+source /opt/logging-stack/logging-env.sh
 ```
 
 地址要求：
@@ -182,9 +229,11 @@ export LOGGIE_NAMESPACE=loggie
 以下步骤会写入 Docker 主机文件系统，执行前应确认目录和磁盘挂载点：
 
 ```bash
-sudo mkdir -p /opt/logging-stack/{data/victorialogs,data/grafana,grafana/provisioning/datasources,secrets}
-sudo chown -R "$(id -u):$(id -g)" /opt/logging-stack
-cd /opt/logging-stack
+source /opt/logging-stack/logging-env.sh
+
+sudo mkdir -p "$LOGGING_ROOT"/{data/victorialogs,data/grafana,grafana/provisioning/datasources,secrets}
+sudo chown -R "$(id -u):$(id -g)" "$LOGGING_ROOT"
+cd "$LOGGING_ROOT"
 ```
 
 推荐把 `/opt/logging-stack/data/victorialogs` 放在独立数据盘或受监控的持久化文件系统上。

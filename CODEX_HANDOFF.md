@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-08-26 19:40:08 +0800
+更新时间：2026-08-27 14:17:38 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -34,6 +34,7 @@
 
 - 编写 22 章通用部署与运维文档。
 - 覆盖 stdout、文件日志、在线/离线、网络、端到端验证、容量、安全、监控、升级回滚和故障排查。
+- 增加 `/opt/logging-stack/logging-env.sh` 通用环境变量脚本、加载方法、占位符校验和敏感信息边界。
 - 更新监控分类 README 索引。
 - 完成 Markdown、YAML、JSON、Bash 和 Docker Compose 静态检查。
 
@@ -45,11 +46,11 @@
 
 ## 验证结果
 
-- 文档共约 1569 行。
-- 180 个 Markdown 代码围栏，数量成对。
+- 文档共约 1618 行。
+- 186 个 Markdown 代码围栏，数量成对。
 - 10 个 YAML 代码块解析通过。
 - 1 个 JSON 代码块解析通过。
-- 58 个 Bash 代码块替换占位符后通过 `bash -n`。
+- 61 个 Bash 代码块替换占位符后通过 `bash -n`。
 - Docker Compose 示例可解析出 `victorialogs` 和 `grafana` 服务；Compose v2 对兼容旧版的 `version: "3.8"` 给出已过时提示，文档已解释。
 - README 链接目标存在。
 - `git diff --check` 和新文件空白检查无错误。
@@ -62,7 +63,7 @@
 
 ## 下一步
 
-1. 阅读并评审新文档中的版本、网络、存储和安全占位符。
+1. 阅读并评审新文档中的版本、网络、存储和安全占位符，并在 `logging-env.sh` 中填写实际 `VICTORIALOGS_HOST`。
 2. 在测试环境准备固定版本镜像、Loggie Chart 和 Grafana 插件。
 3. 依次执行 Compose/Helm 静态检查、测试部署和端到端验证。
 4. 记录真实吞吐、积压、延迟、压缩率和磁盘增长后再确定生产资源。
