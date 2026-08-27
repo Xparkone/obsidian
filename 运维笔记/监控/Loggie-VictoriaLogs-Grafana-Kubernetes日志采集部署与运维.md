@@ -170,26 +170,19 @@ sudo chown "$(id -u):$(id -g)" /opt/logging-stack
 创建 `/opt/logging-stack/logging-env.sh`：
 
 ```bash
+
 #!/usr/bin/env bash
 
-# 日志平台在 Docker 主机上的部署根目录
-export LOGGING_ROOT="${LOGGING_ROOT:-/opt/logging-stack}"
+export LOGGING_ROOT="/opt/logging-stack"
+export VICTORIALOGS_HOST="10.206.16.8"
+export VICTORIALOGS_PORT="9428"
+export GRAFANA_PORT="3000"
+export LOGGIE_NAMESPACE="loggie"
 
-# 必须替换成所有 Kubernetes 节点都能访问的内网 IP 或 DNS
-export VICTORIALOGS_HOST="${VICTORIALOGS_HOST:-REPLACE_WITH_PRIVATE_IP_OR_DNS}"
-
-# 服务端口
-export VICTORIALOGS_PORT="${VICTORIALOGS_PORT:-9428}"
-export GRAFANA_PORT="${GRAFANA_PORT:-3000}"
-
-# Loggie 在 Kubernetes 中的命名空间
-export LOGGIE_NAMESPACE="${LOGGIE_NAMESPACE:-loggie}"
-
-# 防止忘记替换 VictoriaLogs 地址后继续执行部署命令
 if [[ "$VICTORIALOGS_HOST" == "REPLACE_WITH_PRIVATE_IP_OR_DNS" ]]; then
-  printf '%s\n' \
-    'ERROR: 请修改 logging-env.sh 中的 VICTORIALOGS_HOST' >&2
-  return 1 2>/dev/null || exit 1
+    printf '%s\n' \
+        'ERROR: 请修改 logging-env.sh 中的 VICTORIALOGS_HOST' >&2
+    return 1 2>/dev/null || exit 1
 fi
 ```
 
