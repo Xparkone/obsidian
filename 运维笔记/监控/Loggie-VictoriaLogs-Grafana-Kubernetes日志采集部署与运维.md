@@ -396,6 +396,11 @@ cd /opt/logging-stack
 docker compose pull
 docker compose up -d
 docker compose ps
+
+
+---
+chown -R 472:472 /opt/logging-stack/data/grafana
+chmod -R u+rwX /opt/logging-stack/data/grafana
 ```
 
 只读验证：
