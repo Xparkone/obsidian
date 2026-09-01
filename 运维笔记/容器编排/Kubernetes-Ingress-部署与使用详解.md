@@ -397,6 +397,8 @@ helm show values \
 
 下面部署两个简单 Web 服务，并通过不同路径访问。
 
+本章业务清单使用 F5/NGINX 示例创建的 `nginx` IngressClass。如果使用上一节的 Traefik，把示例中的 `ingressClassName: nginx` 改成 `ingressClassName: traefik`，并从 `traefik` 命名空间查询 Controller Service。其他 Controller 一律以 `kubectl get ingressclass` 的实际结果为准。
+
 ### 5.1 创建命名空间和后端服务
 
 保存为 `demo-backends.yaml`：
@@ -1561,4 +1563,7 @@ kubectl get ingress --all-namespaces \
 - [Gateway API：Welcome ingress-nginx Users](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/)
 - [cert-manager：Securing Ingress Resources](https://cert-manager.io/docs/usage/ingress/)
 - [F5 NGINX Ingress Controller：Helm 安装](https://docs.nginx.com/nginx-ingress-controller/install/helm/open-source/)
-- [Traefik：Kubernetes Quick Start](https://doc.traefik.io/traefik/getting-started/quick-start-with-kubernetes/)
+- [Traefik：Kubernetes Quick Start](https://doc.traefik.io/traefik/getting-started/kubernetes/)
+- [Traefik：Kubernetes Ingress Provider](https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-ingress/)
+- [Traefik Helm Chart：Values](https://github.com/traefik/traefik-helm-chart/blob/master/traefik/VALUES.md)
+- [F5 NGINX Ingress Controller：版本兼容矩阵](https://docs.nginx.com/nginx-ingress-controller/changelog)

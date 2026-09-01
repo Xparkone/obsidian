@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-08-27 14:17:38 +0800
+更新时间：2026-09-01 10:48:05 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -10,69 +10,72 @@
 
 ## 当前目标
 
-为任意具备 Kubernetes、Docker、Docker Compose、kubectl 和 Helm 的 Linux 环境提供一份通用的 Loggie + VictoriaLogs + Grafana Kubernetes 日志采集部署与运维文档。
+完善通用 Kubernetes Ingress 与 Ingress Controller 详细文档，解释是什么、为什么需要、如何部署使用，并用 Mermaid `sequenceDiagram` 展示配置生效和真实请求过程。
 
 ## 已确认事实
 
-- 新文档位于 `运维笔记/监控/Loggie-VictoriaLogs-Grafana-Kubernetes日志采集部署与运维.md`。
+- 已有同主题文档位于 `运维笔记/容器编排/Kubernetes-Ingress-部署与使用详解.md`，本次直接完善，没有创建重复笔记。
+- Ingress 是声明式 HTTP/HTTPS 路由规则；Ingress Controller 负责监听对象、调谐代理或负载均衡配置并实际接收流量。
+- Ingress API 仍为稳定 API但已冻结；Gateway API 是新建平台的优先评估方向。
+- Kubernetes 社区 `kubernetes/ingress-nginx` 已于 2026 年 3 月停止维护；F5/NGINX Ingress Controller 是不同项目。
 - `运维笔记/README.md` 已增加该文档入口。
-- 文档不包含当前勘察服务器 IP、`/root/cuixiao` 或其他现场专用值。
-- 文档明确区分静态检查、测试环境验证和生产确认。
 
 ## 基于证据的判断
 
-- 现有 `VictoriaLogs-Grafana-Alloy部署运维文档.md` 面向单机/Docker 日志，新文档独立聚焦 Kubernetes Pod 与 Loggie，职责边界更清晰。
-- 示例采用 Kubernetes 内 Loggie DaemonSet、Docker 主机运行 VictoriaLogs/Grafana 的通用架构，可通过占位符适配不同内网 IP、DNS、镜像版本和业务命名空间。
+- 将“配置流”和“数据流”分成两张时序图，有助于避免把 `kubectl apply` 成功误认为业务请求已经可达。
+- 通用文档同时保留 Traefik 和 F5/NGINX 两种仍在维护的示例，并明确不同 Controller 的 IngressClass、注解、CRD 和默认行为不能直接互换。
+- Controller 的 Service 使用 `LoadBalancer`、NodePort 还是 MetalLB，必须根据公有云、裸金属或本地集群的入口能力选择。
 
 ## 尚未验证的可能性
 
-- 未在新的真实环境中执行 Docker Compose、Helm 安装、LogConfig 应用和端到端测试。
-- 目标环境的 Loggie Chart、镜像、CRD 与 Kubernetes 版本兼容性需要现场确认。
-- 生产容量、压缩率、保留期和资源规格需要用真实日志流量测量。
+- 尚未在真实 Kubernetes 集群执行 Helm 安装、Ingress 应用和端到端请求验证。
+- Traefik 示例未固定通用 Chart 版本；生产部署必须根据目标 Kubernetes 版本选择并固定经测试的 Chart 和镜像版本。
+- Mermaid 已完成静态结构检查，但本机没有 `mmdc`，尚未执行渲染级验证。
 
 ## 已完成
 
-- 编写 22 章通用部署与运维文档。
-- 覆盖 stdout、文件日志、在线/离线、网络、端到端验证、容量、安全、监控、升级回滚和故障排查。
-- 增加 `/opt/logging-stack/logging-env.sh` 通用环境变量脚本、加载方法、占位符校验和敏感信息边界。
-- 更新监控分类 README 索引。
-- 完成 Markdown、YAML、JSON、Bash 和 Docker Compose 静态检查。
+- 在原有 20 章文档中补充“是什么、为什么、怎么用”的阅读目标和原理说明。
+- 新增 2 张 Mermaid `sequenceDiagram`：客户端请求数据流、Controller 配置调谐流。
+- 新增 Controller 选型表、Traefik Helm 安装、IngressClass 关系、裸金属入口提示和跨 Controller 迁移边界。
+- 更新官方资料日期和 Traefik/F5 官方参考链接。
+- 把文档加入容器编排分类 README 索引。
 
 ## 修改文件
 
-- `运维笔记/监控/Loggie-VictoriaLogs-Grafana-Kubernetes日志采集部署与运维.md`
+- `运维笔记/容器编排/Kubernetes-Ingress-部署与使用详解.md`
 - `运维笔记/README.md`
 - `CODEX_HANDOFF.md`
 
 ## 验证结果
 
-- 文档共约 1618 行。
-- 186 个 Markdown 代码围栏，数量成对。
-- 10 个 YAML 代码块解析通过。
-- 1 个 JSON 代码块解析通过。
-- 61 个 Bash 代码块替换占位符后通过 `bash -n`。
-- Docker Compose 示例可解析出 `victorialogs` 和 `grafana` 服务；Compose v2 对兼容旧版的 `version: "3.8"` 给出已过时提示，文档已解释。
-- README 链接目标存在。
-- `git diff --check` 和新文件空白检查无错误。
+- 文档共 1569 行，142 个 Markdown 代码围栏成对。
+- 2 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。
+- 17 个 YAML 代码块通过 Ruby Psych 语法解析。
+- README 新增链接目标存在；全量 README 检查发现一个与本任务无关的既有缺失目录 `CI-CD/examples/gitlab-compose/`，未修改。
+- `git diff --check` 无错误。
+- 本任务未主动执行 Git 提交；工作期间仓库出现自动 `vault backup` 提交，最终状态仍以当前 `git status` 为准。
 
 ## 未解决问题
 
-- 需要在目标环境选择并固定实际 Grafana、Loggie、Chart 和插件版本。
-- 需要在目标环境验证每个 Kubernetes 节点到 VictoriaLogs `9428/TCP` 的连通性。
-- 需要执行唯一测试日志的端到端写入和查询验证。
+- 需要在目标环境确认 Kubernetes 版本、已有 Controller、IngressClass、入口类型、DNS 和证书方案。
+- 需要在测试集群实际验证 `IngressClass -> Ingress -> Service -> EndpointSlice -> Pod`，并用正确 Host/SNI 发起请求。
+- 如果现网仍使用社区 ingress-nginx，需要先盘点专有注解和行为，再制定并行迁移和回切方案。
 
 ## 下一步
 
-1. 阅读并评审新文档中的版本、网络、存储和安全占位符，并在 `logging-env.sh` 中填写实际 `VICTORIALOGS_HOST`。
-2. 在测试环境准备固定版本镜像、Loggie Chart 和 Grafana 插件。
-3. 依次执行 Compose/Helm 静态检查、测试部署和端到端验证。
-4. 记录真实吞吐、积压、延迟、压缩率和磁盘增长后再确定生产资源。
+1. 在目标集群执行部署前只读检查，确认是否已经存在 Traefik、APISIX、云 Controller 或其他入口。
+2. 根据公有云、裸金属或本地集群选择 LoadBalancer、MetalLB、NodePort 或端口映射。
+3. 固定 Controller Chart 和镜像版本，在测试命名空间应用最小后端与 Ingress。
+4. 验证入口地址、Host/Path、TLS、Service、EndpointSlice、Pod 和 Controller 日志后，再进入生产变更流程。
 
 ## 重要命令
 
 ```bash
 git -C /Users/lijiaxuan/Documents/hermes status --short
 git -C /Users/lijiaxuan/Documents/hermes diff --check
+kubectl get ingressclass
+kubectl get ingress --all-namespaces
+kubectl get pods --all-namespaces | grep -Ei 'ingress|gateway|traefik|nginx|kong|haproxy'
 ```
 
 ## 既有阶段记录（2026-08-26，GitLab CI/CD，保留）
@@ -101,8 +104,8 @@ git -C /Users/lijiaxuan/Documents/hermes diff --check
 
 ## 注意事项
 
-- 当前只完成文档和静态配置验证，没有实际部署或修改远程服务器。
-- 不得把密码、Token、Cookie、私钥或完整认证头补写到文档和交接文件中。
-- 不要把 YAML/Compose/Helm 静态通过表述为日志链路已经生产可用。
-- 静态 YAML 解析不等于 GitLab CI 语义校验，pipeline passed 也不等于应用健康检查通过。
-- 当前工作区包含未提交修改，不要覆盖或清理。
+- 当前只完成文档和静态验证，没有实际部署或修改 Kubernetes 集群。
+- 不得把密码、Token、Cookie、私钥、TLS 私钥或完整认证头补写到文档和交接文件中。
+- Helm 返回成功、Pod Ready、Ingress 有地址都不等于业务已经端到端可用，必须发起实际 Host/SNI 请求。
+- 不要在没有盘点业务 Ingress 的情况下卸载或替换 Controller。
+- 当前工作区可能受自动 `vault backup` 任务影响；继续修改前重新读取文件并检查 Git 状态。
