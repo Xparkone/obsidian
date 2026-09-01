@@ -1129,7 +1129,535 @@ kubectl get serviceaccount -n demo-prod -o yaml
 - 不把 `set -x` 用在包含 Token、密码或完整认证 URL 的脚本中。
 - 记录 Source Commit、Image digest、GitOps Commit、Argo CD revision 和业务验收结果。
 
-## 15. 升级和维护顺序
+## 15. 有审计要求时的落地方案
+
+### 15.1 审计目标
+
+审计不是保存一份 Pipeline 日志，而是能够在给定时间范围内回答以下问题：
+
+- 谁提出、审核、批准并执行了变更？
+- 变更来自哪个需求、Merge Request 和 Source Commit？
+- 哪个 Pipeline、Job、Runner 执行了构建？
+- 生成了哪个镜像 Tag、digest、SBOM 和签名？
+- 哪个 GitOps Commit 修改了哪个环境？
+- Argo CD 在什么时间、以哪个身份同步了哪些资源？
+- Kubernetes API 实际接受了哪些 create、patch、update、delete 请求？
+- 发布后的健康检查和业务验收结果是什么？
+- 如果发生回滚，谁批准、回滚到哪个版本、结果如何？
+- 证据是否完整、是否可能被普通开发人员修改或删除？
+
+最终应能从任意一个关键标识反查整条记录：
+
+```text
+需求/工单号
+  -> Merge Request IID
+  -> Source Commit SHA
+  -> Pipeline ID / Job ID
+  -> Image digest
+  -> GitOps Commit SHA
+  -> Argo CD Application revision / Sync ID
+  -> Kubernetes auditID / Deployment revision
+  -> 验收记录 / 回滚记录
+```
+
+### 15.2 先确认审计口径
+
+在实施前让安全、内审、法务或客户确认以下内容。技术团队不能自行把“保存了日志”解释为满足某项法规。
+
+| 项目 | 需要明确的问题 |
+|---|---|
+| 审计范围 | 只审生产发布，还是包括权限、配置、密钥、Runner、仓库和集群操作？ |
+| 留存期限 | 在线检索多久、归档多久、到期如何销毁？ |
+| 证据粒度 | 只要元数据，还是需要 MR diff、Job 日志、镜像 SBOM、扫描报告和业务验收？ |
+| 完整性 | 是否要求 WORM/Object Lock、数字签名、哈希校验或第三方时间戳？ |
+| 职责分离 | 开发、审批、发布、审计管理员是否必须由不同人员承担？ |
+| 数据位置 | 日志和归档是否允许跨地域、跨境或进入公有云？ |
+| 隐私与秘密 | 哪些字段属于个人信息，哪些日志可能携带 Token、Secret 或业务数据？ |
+| 取证时效 | 出现事件后多长时间内必须导出完整证据包？ |
+| 审计失败策略 | 审计系统不可用时阻断生产发布，还是进入带补录要求的应急流程？ |
+
+留存期限不能直接照抄“90 天、1 年或 7 年”这类通用数字，应以实际合同、制度和适用要求为准。
+
+### 15.3 审计架构
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as 开发者
+    actor Approver as 审批人
+    participant GitLab as GitLab
+    participant Runner as Runner Job
+    participant Registry as 镜像仓库
+    participant GitOps as GitOps仓库
+    participant Argo as Argo CD
+    participant API as Kubernetes API
+    participant Recorder as Deploy Recorder
+    participant SIEM as 日志平台或SIEM
+    participant Archive as 不可变归档
+
+    Dev->>GitLab: 提交MR并关联工单号
+    Approver->>GitLab: 审核并批准MR或生产部署
+    GitLab->>Recorder: Webhook上报MR、Pipeline和审批元数据
+    GitLab->>Runner: 下发构建Job
+    Runner->>Registry: 推送镜像并取得digest
+    Runner->>Recorder: 上报Commit、Job、digest和测试结果
+    Runner->>GitOps: 提交目标镜像digest
+    GitOps-->>Argo: 期望状态revision变化
+    Argo->>API: 同步资源
+    Argo->>Recorder: Webhook上报revision、资源和健康结果
+    API->>SIEM: 输出Kubernetes审计事件
+    GitLab->>SIEM: 输出审计事件和系统日志
+    Argo->>SIEM: 输出JSON组件日志
+    Recorder->>Archive: 周期性生成证据包和校验清单
+    SIEM->>Archive: 按留存策略归档原始事件
+    Archive-->>Approver: 提供只读检索和受控导出
+```
+
+推荐分成三个层次：
+
+| 层次 | 用途 | 典型内容 |
+|---|---|---|
+| 业务审计库 | 快速按部署查询 | Deploy Recorder 中的 Pipeline、Deployment、Sync、Actor、关联 ID |
+| 日志平台/SIEM | 检索和告警 | GitLab、Runner、Registry、Argo CD、Kubernetes audit 原始事件 |
+| 不可变归档 | 长期证据与防篡改 | 原始日志、证据 JSON、报告、哈希清单、签名和导出审批记录 |
+
+Deploy Recorder 适合做关联查询，但其数据库管理员能够修改数据。没有外部只追加采集、访问审计、不可变存储和校验机制时，不能单独作为防篡改证据库。
+
+### 15.4 统一关联字段
+
+所有系统应尽可能携带同一组字段。字段缺失时，要记录为什么无法取得，不能用空值掩盖采集失败。
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `change_ticket` | 工单系统或 MR | 关联业务变更申请 |
+| `project_path` | GitLab | 唯一定位项目 |
+| `merge_request_iid` | GitLab | 查询 diff、审批人和讨论 |
+| `source_commit_sha` | GitLab | 定位实际构建源码 |
+| `pipeline_id`、`job_id` | GitLab CI | 定位执行记录和日志 |
+| `runner_id`、`runner_system_id` | GitLab Runner | 确定执行节点或 Runner Manager |
+| `image_reference` | Registry | 镜像仓库和 Tag |
+| `image_digest` | Registry/构建 Job | 不可变定位镜像内容 |
+| `sbom_digest` | SBOM 工具 | 校验软件物料清单 |
+| `signature_reference` | 签名系统 | 验证镜像签名和签名身份 |
+| `gitops_commit_sha` | GitOps 仓库 | 定位期望状态变更 |
+| `environment`、`cluster`、`namespace` | GitOps/Argo CD | 定位部署目标 |
+| `argocd_app`、`sync_revision` | Argo CD | 定位 Application 和同步历史 |
+| `kubernetes_audit_id` | kube-apiserver | 关联实际 API 请求 |
+| `actor`、`actor_id`、`source_ip` | 各系统 | 追踪主体和来源 |
+| `occurred_at`、`ingested_at` | 源系统/审计系统 | 区分事件时间和采集时间 |
+| `result`、`reason` | 各系统 | 成功、失败、拒绝及原因 |
+
+所有时间建议统一保存 UTC，并保留源时区。GitLab、Kubernetes 节点、Runner、Argo CD、数据库和日志平台必须使用可靠时间同步；否则跨系统排序会失真。
+
+### 15.5 GitLab 侧控制和采集
+
+#### 15.5.1 强制变更入口
+
+生产相关仓库建议配置：
+
+- 保护默认分支，禁止普通开发人员直接 push。
+- 使用 Merge Request，要求 Pipeline 成功、讨论解决后才能合并。
+- 为 GitOps 目录配置 CODEOWNERS。
+- 禁止 MR 作者批准自己的变更。
+- 要求重新 push 后重置旧批准，避免“审批后换代码”。
+- 生产环境使用 Protected Environment 和 Deployment Approval，或使用受控 GitOps MR 审批。
+- 紧急变更使用单独的 break-glass 流程，要求原因、工单、双人批准和事后复盘。
+
+GitLab Free、Premium、Ultimate 对“可选批准、强制批准、部署批准、实例级审计和外部流式审计”的支持不同。正式设计前必须核对目标 GitLab 版本和许可证，不能只根据页面名称判断功能可用。
+
+#### 15.5.2 应采集的 GitLab 证据
+
+- 用户登录、失败登录、MFA、成员和角色变化。
+- Project/Group/Runner 创建、删除、暂停、Token 轮换和配置变化。
+- 保护分支、审批规则、CI/CD Variable、Webhook、Deploy Token 的变化。
+- Push、Merge Request、审批、合并、Tag、Release。
+- Pipeline、Job、Artifact、Environment、Deployment 和人工操作。
+- 审计配置自身的创建、修改和删除。
+
+采集方式按许可证和规模选择：
+
+1. GitLab Audit Events UI/API：适合定期导出和调查。
+2. External Audit Event Streaming：适合实时送往 SIEM，但功能通常受许可证限制。
+3. Project/System Webhook：补充 Push、MR、Pipeline、Job 和 Deployment 业务事件。
+4. GitLab Rails、NGINX、Sidekiq、Gitaly、Registry 日志：用于故障和安全取证。
+
+CSV 手工导出不适合作为唯一长期方案，因为可能存在单次导出数量、查询时间范围和人工遗漏问题。
+
+### 15.6 CI、Runner 与镜像供应链证据
+
+#### 15.6.1 Pipeline 必须生成的证据
+
+每次生产候选构建至少保存：
+
+- Source Commit、MR、Pipeline、Job、Runner 标识。
+- 测试报告、覆盖率、静态扫描和依赖扫描结果。
+- 构建工具与基础镜像版本。
+- 完整镜像引用和 digest。
+- SBOM 文件及其 SHA-256。
+- 镜像签名和签名身份；如使用 keyless 签名，还要保留证书和透明日志引用。
+- GitOps Commit、目标环境和审批记录。
+
+不要只保存 Tag。Tag 可以被重新指向，审计和部署应以 digest 为准：
+
+```text
+registry.example.com/platform/demo-api@sha256:<IMAGE_DIGEST>
+```
+
+#### 15.6.2 审计证据 JSON 示例
+
+```json
+{
+  "schema_version": "1.0",
+  "change_ticket": "CHG-2026-000123",
+  "project_path": "platform/demo-api",
+  "merge_request_iid": 42,
+  "source_commit_sha": "<FULL_SOURCE_COMMIT_SHA>",
+  "pipeline_id": "<PIPELINE_ID>",
+  "job_id": "<JOB_ID>",
+  "runner_id": "<RUNNER_ID>",
+  "image_reference": "registry.example.com/platform/demo-api",
+  "image_digest": "sha256:<IMAGE_DIGEST>",
+  "sbom_sha256": "<SBOM_SHA256>",
+  "gitops_commit_sha": "<FULL_GITOPS_COMMIT_SHA>",
+  "environment": "production",
+  "cluster": "prod-cluster",
+  "namespace": "demo-prod",
+  "created_at": "2026-09-01T07:30:00Z"
+}
+```
+
+这份 JSON 不应包含密码、Token、Cookie、私钥、完整认证头或 Secret 内容。
+
+#### 15.6.3 GitLab Artifact 示例
+
+`IMAGE_DIGEST` 和 `GITOPS_COMMIT_SHA` 不是 GitLab 自动提供的变量。上游构建 Job 应从 Registry 查询 digest 后写入 dotenv Artifact，GitOps Job 应在 push 成功后取得远端 Commit SHA，再写入另一个 dotenv Artifact。例如：
+
+```yaml
+artifacts:
+  reports:
+    dotenv: build.env
+```
+
+对应脚本分别写入：
+
+```bash
+printf 'IMAGE_DIGEST=%s\n' "$IMAGE_DIGEST" > build.env
+printf 'GITOPS_COMMIT_SHA=%s\n' "$GITOPS_COMMIT_SHA" > gitops.env
+```
+
+然后在 Pipeline 的 `stages` 中增加独立的 `evidence` 阶段：
+
+```yaml
+collect-audit-evidence:
+  stage: evidence
+  image: alpine:3.22
+  tags:
+    - k8s-build
+  needs:
+    - job: build-image
+      artifacts: true
+    - job: update-production-gitops
+      artifacts: true
+  before_script:
+    - apk add --no-cache jq
+  script:
+    - test -n "$CHANGE_TICKET"
+    - test -n "$IMAGE_DIGEST"
+    - test -n "$GITOPS_COMMIT_SHA"
+    - >-
+      jq -n
+      --arg schema_version "1.0"
+      --arg change_ticket "$CHANGE_TICKET"
+      --arg project_path "$CI_PROJECT_PATH"
+      --arg source_commit_sha "$CI_COMMIT_SHA"
+      --arg pipeline_id "$CI_PIPELINE_ID"
+      --arg job_id "$CI_JOB_ID"
+      --arg image_reference "$CI_REGISTRY_IMAGE"
+      --arg image_digest "$IMAGE_DIGEST"
+      --arg gitops_commit_sha "$GITOPS_COMMIT_SHA"
+      --arg environment "production"
+      --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      '{
+        schema_version: $schema_version,
+        change_ticket: $change_ticket,
+        project_path: $project_path,
+        source_commit_sha: $source_commit_sha,
+        pipeline_id: $pipeline_id,
+        job_id: $job_id,
+        image_reference: $image_reference,
+        image_digest: $image_digest,
+        gitops_commit_sha: $gitops_commit_sha,
+        environment: $environment,
+        created_at: $created_at
+      }'
+      > deployment-evidence.json
+    - sha256sum deployment-evidence.json > deployment-evidence.sha256
+  artifacts:
+    when: always
+    paths:
+      - deployment-evidence.json
+      - deployment-evidence.sha256
+    expire_in: 1 year
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+```
+
+`expire_in: 1 year` 只是示例，必须改成组织批准的期限。GitLab Artifact 仍可能被有权限的人删除，正式审计证据还要复制到独立、限制删除并支持完整性校验的归档系统。
+
+Runner 审计还要记录 Helm values 版本、Chart/App Version、Runner 配置变更、ServiceAccount/RBAC 变更和 Job Pod 调度节点。不要采集完整 CI/CD Variable 或 Secret 环境变量。
+
+### 15.7 Argo CD 侧采集
+
+至少保留：
+
+- `argocd-server` 登录、API/CLI 操作和 RBAC 拒绝日志。
+- `argocd-application-controller` 的同步、健康状态和资源变化日志。
+- `argocd-repo-server` 的仓库访问和清单生成失败日志。
+- `argocd-notifications-controller` 的 Webhook 投递、重试和失败日志。
+- `Application.status.operationState`、`sync.revision`、history、resources 和 diff。
+- `AppProject`、Repository、Cluster Secret、RBAC、SSO 配置变化。
+
+建议把组件日志改为 JSON，便于日志平台解析。具体键名随安装方式和版本确认，例如在 `argocd-cmd-params-cm` 中配置对应组件的 `*.log.format: "json"`，修改前先读取当前 ConfigMap，不能覆盖已有参数。
+
+Argo CD Notifications 可以在同步成功且健康后，把结果推给 Deploy Recorder：
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  service.webhook.deploy-recorder: |
+    url: https://deploy-recorder.example.com
+    headers:
+      - name: Content-Type
+        value: application/json
+      - name: X-API-Key
+        value: $deploy-recorder-api-key
+  template.audit-sync-succeeded: |
+    webhook:
+      deploy-recorder:
+        method: POST
+        path: /api/v1/argocd/webhook
+        body: |
+          {
+            "application": "{{.app.metadata.name}}",
+            "project": "{{.app.spec.project}}",
+            "revision": "{{.app.status.sync.revision}}",
+            "sync_status": "{{.app.status.sync.status}}",
+            "health_status": "{{.app.status.health.status}}",
+            "finished_at": "{{.app.status.operationState.finishedAt}}"
+          }
+  trigger.audit-sync-succeeded: |
+    - when: app.status.operationState.phase == 'Succeeded' and app.status.health.status == 'Healthy'
+      oncePer: app.status.sync.revision
+      send:
+        - audit-sync-succeeded
+```
+
+API Key 应保存到 `argocd-notifications-secret` 或外部密钥系统，由 Notifications 的变量机制引用，不得直接写入 ConfigMap。还应为 `Failed`、`Error`、`Degraded` 和回滚分别配置事件。
+
+Application 增加订阅标注：
+
+```yaml
+metadata:
+  annotations:
+    notifications.argoproj.io/subscribe.audit-sync-succeeded.deploy-recorder: ''
+```
+
+通知发送成功只证明审计接收端返回成功，仍需监控丢弃、积压、重试耗尽和重复事件。接收端应使用 `application + revision + event_type` 做幂等处理。
+
+### 15.8 Kubernetes API 审计
+
+Kubernetes Audit 由 kube-apiserver 生成，能记录请求人、时间、verb、资源、命名空间、响应状态和 `auditID`。Kubernetes Event 不是 Audit Event，不能互相替代。
+
+托管 Kubernetes 通常不能直接修改 kube-apiserver 参数，应通过云厂商控制台或 API 开启控制平面审计，并确认日志服务、保留期限和导出目标。自建集群可配置 Audit Policy 和 log/webhook backend。
+
+安全起点示例：
+
+```yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  - level: None
+    users:
+      - system:kube-proxy
+    verbs:
+      - watch
+  - level: Metadata
+    resources:
+      - group: ''
+        resources:
+          - secrets
+  - level: Request
+    verbs:
+      - create
+      - update
+      - patch
+      - delete
+    resources:
+      - group: apps
+        resources:
+          - deployments
+          - statefulsets
+          - daemonsets
+      - group: batch
+        resources:
+          - jobs
+          - cronjobs
+      - group: argoproj.io
+        resources:
+          - applications
+          - applicationsets
+          - appprojects
+  - level: Metadata
+```
+
+关键设计：
+
+- Secret 只记录 `Metadata`，避免请求体把敏感值写进审计日志。
+- 对生产工作负载写操作记录 `Request`，用于看清 patch 或对象内容变化。
+- Deployment 等对象的 `Request` 可能记录 `env` 字面量；必须禁止把密码或 Token 直接写进工作负载 YAML。如果现场无法保证这一点，应先降为 `Metadata` 并修复 Secret 管理。
+- `RequestResponse` 数据量和泄密风险都更高，只在明确场景使用。
+- Audit Policy 规则按顺序首次匹配生效，变更后必须做采样验证。
+- 日志 backend 要设置轮转；webhook backend 要监控缓冲区、丢弃和接收端可用性。
+- 审计日志也属于敏感数据，应加密、限制访问并记录查询和导出行为。
+
+验证时不要用真实 Secret 内容，可在测试命名空间创建无敏感数据的 ConfigMap 或 Deployment，再查询对应 `auditID`、user、verb、namespace、objectRef 和 responseStatus。
+
+### 15.9 Deploy Recorder 的审计增强
+
+现有 `gitlab-ci-argocd` 示例已经包含 `pipelines`、`builds`、`deployments`、`argocd_syncs`、`argocd_resources` 和 `audit_logs`，可以作为关联查询起点。要用于正式审计，建议增加：
+
+| 增强项 | 目的 |
+|---|---|
+| `event_id` 与唯一约束 | Webhook 重试时去重 |
+| `event_type`、`schema_version` | 支持事件演进和分类 |
+| `source_event_id` | 保留 GitLab/Argo/Kubernetes 原始 ID |
+| `occurred_at`、`ingested_at` | 识别延迟、补录和时间偏差 |
+| `actor_id`、`actor_type`、`source_ip` | 避免仅凭可改显示名识别人 |
+| Source/MR/Pipeline/Job/GitOps/Sync/auditID | 完整关联部署过程 |
+| `payload_sha256` | 校验保存负载是否变化 |
+| `previous_hash`、`record_hash` | 建立追加记录哈希链，辅助发现修改或删除 |
+| `archive_object_key`、`archive_version_id` | 关联不可变对象归档 |
+| `retention_class`、`legal_hold` | 执行不同留存和冻结策略 |
+
+数据库约束和哈希链只能提高可检测性，不能代替外部不可变存储。数据库管理员仍可能同时修改数据和重新计算哈希，所以应定期把原始事件与清单写入独立账号或独立安全域的 Object Lock/WORM 存储。
+
+现有表的基础查询示例：
+
+```sql
+SELECT
+    a.created_at,
+    a.actor,
+    a.source,
+    a.action,
+    a.pipeline_id,
+    a.deployment_id,
+    a.details
+FROM audit_logs a
+WHERE a.project_id = :project_id
+  AND a.created_at >= :created_after
+  AND a.created_at < :created_before
+ORDER BY a.created_at ASC, a.id ASC;
+```
+
+查询接口必须使用参数化 SQL、分页和权限过滤；审计人员可以只读查询，应用账号只允许写入必要事件，数据库管理员与审计导出审批人应分离。
+
+### 15.10 留存、防篡改和权限
+
+#### 留存分层
+
+```text
+热数据：日志平台，快速搜索和告警
+温数据：低成本可查询存储，用于月度和季度审计
+归档：Object Lock/WORM，只读证据包和原始日志
+```
+
+每批归档建议包含：
+
+- 原始 NDJSON/JSON 日志，不只保存截图或汇总表。
+- `manifest.json`：文件名、时间范围、记录数、来源和 schema 版本。
+- `SHA256SUMS`：每个文件的哈希。
+- 可选数字签名和签名证书引用。
+- 导出人、审批人、导出时间、查询条件和工单号。
+- 采集失败、缺口、补录和时钟异常说明。
+
+#### 权限分离
+
+| 角色 | 允许 | 不应允许 |
+|---|---|---|
+| 开发人员 | 查看自己的 Pipeline 和发布结果 | 删除生产审计日志、修改归档策略 |
+| 发布审批人 | 审批生产变更、查看证据 | 修改构建产物或替开发者提交代码 |
+| 平台管理员 | 维护 GitLab/Runner/Argo/Kubernetes | 无审批删除或修改审计归档 |
+| 审计人员 | 只读查询、受控导出 | 修改生产系统和审计记录 |
+| 安全管理员 | 管理采集、告警和保留策略 | 单人完成变更、审批、销毁全部过程 |
+
+删除、缩短留存、关闭采集、修改 Audit Policy、关闭 Webhook 或变更审计权限本身也必须产生审计事件和告警。
+
+### 15.11 告警和完整性检查
+
+至少对以下情况告警：
+
+- 生产分支直接 push 或绕过 MR。
+- 审批规则、保护分支、Protected Environment 被降低或关闭。
+- Runner 新注册、Token 轮换、启用 privileged、RBAC 扩权。
+- CI/CD Variable、Deploy Token、Webhook 和 Repository 凭据变化。
+- Argo CD local admin 登录、RBAC/SSO/Repository/Cluster 配置变化。
+- 生产 Application 手工 sync、rollback、delete、prune 或关闭自动同步。
+- Kubernetes 对生产 Namespace 的高权限直接写操作。
+- Audit Policy、日志采集 DaemonSet、Webhook 或归档策略变化。
+- 事件延迟超过阈值、记录数突然为零、Webhook 重试耗尽。
+- 证据文件哈希不一致、Object Lock 未生效或归档任务失败。
+
+建议每日自动对账：
+
+```text
+GitLab生产Deployment数量
+  == Deploy Recorder生产部署记录数量
+  == Argo CD目标revision变化数量
+  == 对应时间窗内可解释的Kubernetes写操作集合
+```
+
+这些数量不一定机械相等，例如一次 Argo CD Sync 会产生多个 Kubernetes 请求；应建立可解释的关联规则和例外清单，而不是只做简单计数。
+
+### 15.12 审计验收与取证演练
+
+上线前选一个无敏感数据的测试应用，执行：
+
+1. 创建工单和 MR。
+2. 由非作者完成审批。
+3. 运行 Pipeline，生成测试报告、镜像 digest 和证据 JSON。
+4. 审批生产环境或 GitOps MR。
+5. 由 Argo CD 同步并通过健康检查。
+6. 从 Kubernetes Audit 找到对应写操作。
+7. 执行一次失败部署和 Git revert 回滚。
+8. 从审计系统只输入 Source Commit 或工单号，导出完整证据包。
+9. 校验证据哈希、归档版本和 Object Lock 状态。
+10. 用无权限开发账号尝试删除审计记录，确认被拒绝并产生告警。
+
+验收表：
+
+| 检查点 | 预期证据 | 状态 |
+|---|---|---|
+| 身份 | 唯一用户 ID、认证方式、源 IP、时间 | 待验证 |
+| 审批 | MR/部署审批人、规则和意见 | 待验证 |
+| 构建 | Pipeline、Job、Runner、测试报告 | 待验证 |
+| 产物 | 镜像 digest、SBOM、签名 | 待验证 |
+| GitOps | Commit、diff、目标环境 | 待验证 |
+| Argo CD | Application、revision、sync、health、resources | 待验证 |
+| Kubernetes | auditID、user、verb、objectRef、responseStatus | 待验证 |
+| 业务 | 健康检查、版本接口、业务结果 | 待验证 |
+| 回滚 | 原因、批准人、旧版本和恢复结果 | 待验证 |
+| 完整性 | 哈希、签名、不可变归档和访问记录 | 待验证 |
+| 缺口处理 | 采集失败告警、补录审批和说明 | 待验证 |
+
+审计系统不可用时是否阻断发布要由制度决定。高要求环境通常需要 fail-closed 或受控 break-glass；不能在 CI 脚本里悄悄写 `curl ... || true` 后继续生产发布。
+
+## 16. 升级和维护顺序
 
 ### GitLab
 
@@ -1165,7 +1693,7 @@ helm -n gitlab-runner history gitlab-runner
 4. 维护窗口内应用完整目标版本清单，不只修改镜像 Tag。
 5. 验证 repo、cluster、Application、SSO、CLI 和真实同步。
 
-## 16. 文档内外的验证边界
+## 17. 文档内外的验证边界
 
 | 层级 | 本文能做什么 | 仍需现场做什么 |
 |---|---|---|
@@ -1175,7 +1703,7 @@ helm -n gitlab-runner history gitlab-runner
 | 服务 | 给出健康与日志检查点 | 验证真实 GitLab、Runner、Argo CD 和 Registry |
 | 发布 | 给出端到端步骤 | 完成真实提交、镜像、同步、请求和回滚演练 |
 
-## 17. 相关笔记
+## 18. 相关笔记
 
 - [用 Docker Compose 部署 GitLab CE](gitlab-docker-compose-guide.md)
 - [Argo CD 部署与使用详解](Argo-CD-部署与使用详解.md)
@@ -1185,7 +1713,7 @@ helm -n gitlab-runner history gitlab-runner
 - [Kubernetes Ingress 部署与使用详解](../容器编排/Kubernetes-Ingress-部署与使用详解.md)
 - [GitLab CI + Argo CD Deploy Recorder 示例](gitlab-ci-argocd/README.md)
 
-## 18. 官方参考
+## 19. 官方参考
 
 - [GitLab：Install GitLab in a Docker container](https://docs.gitlab.com/install/docker/installation/)
 - [GitLab：Container Registry administration](https://docs.gitlab.com/administration/packages/container_registry/)
@@ -1194,5 +1722,11 @@ helm -n gitlab-runner history gitlab-runner
 - [GitLab：Migrating to the new runner registration workflow](https://docs.gitlab.com/ci/runners/new_creation_workflow/)
 - [GitLab：CI/CD job token](https://docs.gitlab.com/ci/jobs/ci_job_token/)
 - [GitLab：Build Docker images with BuildKit](https://docs.gitlab.com/ci/docker/using_buildkit/)
+- [GitLab：Audit events](https://docs.gitlab.com/user/compliance/audit_events/)
+- [GitLab：Audit events administration](https://docs.gitlab.com/administration/compliance/audit_event_reports/)
+- [GitLab：Merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
+- [GitLab：Deployment approvals](https://docs.gitlab.com/ci/environments/deployment_approvals/)
 - [Argo CD：Installation](https://argo-cd.readthedocs.io/en/stable/operator-manual/installation/)
 - [Argo CD：Getting Started](https://argo-cd.readthedocs.io/en/stable/getting_started/)
+- [Argo CD：Notifications Webhook](https://argo-cd.readthedocs.io/en/stable/operator-manual/notifications/services/webhook/)
+- [Kubernetes：Auditing](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/)

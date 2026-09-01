@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-09-01 15:42:20 +0800
+更新时间：2026-09-01 19:29:13 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -10,7 +10,7 @@
 
 ## 当前目标
 
-整理一份 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收和回滚的详细流程文档，并使用 Mermaid `sequenceDiagram` 表达主要交互过程。
+整理一份 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收、回滚和审计取证的详细流程文档，并使用 Mermaid `sequenceDiagram` 表达主要交互过程。
 
 ## 已确认事实
 
@@ -20,6 +20,9 @@
 - 旧 Runner 文档中发现疑似真实 registration token，已从文档删除并替换为占位符；若该 Token 仍然有效，需要在对应 GitLab 实例旋转。
 - Argo CD 官方生产安装优先使用 HA 清单；非 HA `install.yaml` 适合学习和验证。
 - 新主文档已加入 `运维笔记/README.md` 的 CI-CD 分类索引。
+- GitLab 审计事件、强制 MR/部署审批、实例级审计和外部审计流的能力会受版本与许可证影响，实施前必须按目标实例核对。
+- Kubernetes Audit Event 由 kube-apiserver 生成，与普通 Kubernetes Event 不同；托管集群通常需要通过云厂商控制台或 API 开启。
+- 现有 Deploy Recorder 可以关联 Pipeline、Deployment、Argo CD Sync 和 audit_logs，但没有独立不可变归档时不能单独作为防篡改审计系统。
 
 ## 基于证据的判断
 
@@ -27,6 +30,8 @@
 - CI 负责测试、BuildKit rootless 构建镜像和更新 GitOps 仓库；Argo CD 负责集群同步，可避免普通 CI Job 长期持有生产集群凭据。
 - 应使用源码仓库与 GitOps 仓库分离、Commit SHA/digest 镜像、最小 RBAC、保护分支/环境和短期 Token。
 - GitLab 19.1+ 可在严格 allowlist 和目标项目授权下使用跨项目 `CI_JOB_TOKEN` push；低版本应使用短期、最小权限的 Project Access Token。
+- 审计设计应以 Source Commit、Pipeline/Job、Image digest、GitOps Commit、Argo CD revision 和 Kubernetes auditID 为主键建立证据关系，而不是只保存页面截图。
+- 正式审计需要业务审计库、日志平台/SIEM 和独立 Object Lock/WORM 归档分层；数据库内哈希链只能辅助发现篡改，不能对抗同时控制数据库和哈希计算的管理员。
 
 ## 尚未验证的可能性
 
@@ -34,6 +39,8 @@
 - 文档中的 GitLab、Runner Chart 和 Argo CD 版本使用待确认占位符，必须根据目标环境固定并测试。
 - BuildKit rootless 是否被目标集群 AppArmor、seccomp、Pod Security 或节点内核阻止，需要现场验证。
 - Mermaid 已完成结构检查，但未使用浏览器或 `mmdc` 做渲染级验证。
+- 审计留存期、不可变要求、职责分离和审计故障时是否阻断发布，仍需由安全、内审、法务或客户确认。
+- GitLab 审计功能、Kubernetes Audit Policy、Argo CD Notifications 和 Deploy Recorder 增强尚未在真实环境配置或验证。
 
 ## 已完成
 
@@ -42,6 +49,8 @@
 - 覆盖部署前参数/网络规划、GitLab Compose 与 Registry TLS、Runner Token Secret 与 Helm、Argo CD 固定版本安装、Kustomize GitOps 结构、BuildKit rootless Pipeline、分层验收、回滚、故障定位和生产检查。
 - 在 Deploy Recorder 示例 README 增加主流程入口，避免把扩展示例误认为基础安装文档。
 - 更新海外弹性 Runner 文档的认证提示，删除疑似真实 Token，改用 `runnerToken` 占位符。
+- 主文档新增审计落地章节，覆盖审计口径、证据关系、统一字段、GitLab/Runner/Registry/Argo CD/Kubernetes 采集、证据 JSON、dotenv/Artifact、Audit Policy、Deploy Recorder 增强、WORM 归档、职责分离、告警、每日对账和取证演练。
+- 增加第 6 张 Mermaid `sequenceDiagram`，描述从 MR、审批、构建、镜像、GitOps、Argo CD、Kubernetes 到 SIEM 和不可变归档的审计过程。
 
 ## 修改文件
 
@@ -53,9 +62,9 @@
 
 ## 验证结果
 
-- 主文档 110 个 Markdown 代码围栏成对。
-- 5 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。
-- 10 个 YAML 代码块通过 Ruby Psych 语法解析。
+- 主文档 136 个 Markdown 代码围栏成对。
+- 6 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。
+- 15 个 YAML 代码块通过 Ruby Psych 语法解析，1 个 JSON 代码块通过 JSON 解析。
 - 主文档全部本地 Markdown 链接目标存在。
 - 已搜索并确认旧文档中的疑似真实 Runner Token 不再存在。
 - `git diff --check` 无错误。
@@ -66,6 +75,7 @@
 - 需要确认目标 GitLab/Kubernetes 版本、域名、可信 CA、镜像仓库、IngressClass、StorageClass、网络策略、Runner 并发和资源额度。
 - 需要确认旧 Runner 文档中的 Token 是否对应仍在使用的 GitLab；若是，应立即旋转并检查异常 Runner。
 - 需要在测试环境完成真实 Git push、Runner Job、Registry push/pull、GitOps 提交、Argo CD Sync、业务请求和回滚演练。
+- 需要确认适用审计制度、保留期限、GitLab 许可证、集群控制面权限、SIEM/对象存储目标、职责分离和 break-glass 流程。
 
 ## 下一步
 
@@ -73,6 +83,7 @@
 2. 若疑似泄露的旧 Runner Token 仍有效，先在 GitLab 旋转或删除对应 Runner。
 3. 在测试环境按主文档顺序部署，使用 CI Lint、Helm render 和 server-side dry-run 补足语义验证。
 4. 完成一次端到端发布和 Git revert 回滚，记录 Source Commit、Image digest、GitOps Commit、Argo CD revision 和业务结果。
+5. 用测试应用完成一次审计取证演练，验证 GitLab Audit/Webhook、Argo CD Notifications、Kubernetes auditID、证据哈希和不可变归档。
 
 ## 重要命令
 
