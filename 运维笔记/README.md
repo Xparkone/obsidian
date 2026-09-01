@@ -51,6 +51,7 @@
 - [GitLab 域名配置技术文档（自建 Omnibus）.md](CI-CD/GitLab%20域名配置技术文档（自建%20Omnibus）.md)
 - [GitLab 数据导入技术文档：场景分流与实操指南.md](CI-CD/GitLab%20数据导入技术文档：场景分流与实操指南.md)
 - [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md)
+- [GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)
 - [GitHub-Actions-配置语法.md](CI-CD/GitHub-Actions-配置语法.md)
 - [Jenkinsfile-配置语法.md](CI-CD/Jenkinsfile-配置语法.md)
 - [Drone-CI-配置语法.md](CI-CD/Drone-CI-配置语法.md)

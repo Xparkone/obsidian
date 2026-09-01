@@ -1,6 +1,8 @@
 # GitLab CI + ArgoCD 全链路部署流程 (Deploy Recorder)
 
 > **目标**: 将 GitLab CI Pipeline 的每个阶段操作 + ArgoCD 的同步/健康检查事件，全部持久化到数据库，形成完整的部署追溯链。
+>
+> 本目录是部署记录器示例工程，不是 GitLab、GitLab Runner 与 Argo CD 的基础安装入口。三套系统从零部署、GitOps 仓库初始化、CI 构建和端到端验收请先阅读：[GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](../GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)。
 
 ---
 

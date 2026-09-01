@@ -1,5 +1,7 @@
 # 海外弹性 GitLab Runner 构建方案
 
+> 安全与版本提示（2026-09-01）：本文保留的是阿里云 ASK、ECI、NAS 与旧 Kaniko 方案的专项设计。新部署应使用 GitLab Runner authentication token（通常以 `glrt-` 开头）和 Helm Chart 的 `runnerToken`/外部 Secret，不再使用已不推荐的 `runnerRegistrationToken`。通用部署流程见：[GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)。Kaniko 构建示例应优先评估迁移到 BuildKit rootless。
+
 ## 概述
 
 在海外构建公共镜像时，需要同时开启大量构建机并行执行以提高效率，对弹性资源需求极强。本方案基于**阿里云 ASK（Serverless Kubernetes）+ ECI（弹性容器实例）**，使用 Helm 部署 GitLab Runner，配合 Kaniko 实现无 Docker Daemon 的安全镜像构建。
@@ -132,8 +134,9 @@ helm install --namespace gitlab gitlab-runner -f values.yaml gitlab/gitlab-runne
 
 ```yaml
 # GitLab 地址
-gitlabUrl: https://git.dp.tech/
-runnerRegistrationToken: "at7GpK4LhJQyYvQDDnUh"
+gitlabUrl: https://git.example.com/
+# 不要把真实 Token 写入 values.yaml；应通过 Kubernetes Secret 注入。
+runnerToken: "<RUNNER_AUTHENTICATION_TOKEN>"
 
 # 并发数 & 轮询间隔
 concurrent: 10

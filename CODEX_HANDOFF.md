@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-09-01 10:48:05 +0800
+更新时间：2026-09-01 15:42:20 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -10,73 +10,89 @@
 
 ## 当前目标
 
-完善通用 Kubernetes Ingress 与 Ingress Controller 详细文档，解释是什么、为什么需要、如何部署使用，并用 Mermaid `sequenceDiagram` 展示配置生效和真实请求过程。
+整理一份 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收和回滚的详细流程文档，并使用 Mermaid `sequenceDiagram` 表达主要交互过程。
 
 ## 已确认事实
 
-- 已有同主题文档位于 `运维笔记/容器编排/Kubernetes-Ingress-部署与使用详解.md`，本次直接完善，没有创建重复笔记。
-- Ingress 是声明式 HTTP/HTTPS 路由规则；Ingress Controller 负责监听对象、调谐代理或负载均衡配置并实际接收流量。
-- Ingress API 仍为稳定 API但已冻结；Gateway API 是新建平台的优先评估方向。
-- Kubernetes 社区 `kubernetes/ingress-nginx` 已于 2026 年 3 月停止维护；F5/NGINX Ingress Controller 是不同项目。
-- `运维笔记/README.md` 已增加该文档入口。
+- 笔记库已有 GitLab Compose、Argo CD、海外弹性 Runner、GitLab CI 语法和 Deploy Recorder 示例，缺少一份贯穿三套系统的主流程。
+- GitLab 官方当前仍提供 Docker Compose 安装方式，并要求生产环境固定完整镜像版本；`config`、`logs`、`data` 需要持久化。
+- GitLab Runner 官方 Kubernetes Helm Chart 使用 `runnerToken`/Runner authentication token；旧 `runnerRegistrationToken` 工作流已不推荐。
+- 旧 Runner 文档中发现疑似真实 registration token，已从文档删除并替换为占位符；若该 Token 仍然有效，需要在对应 GitLab 实例旋转。
+- Argo CD 官方生产安装优先使用 HA 清单；非 HA `install.yaml` 适合学习和验证。
+- 新主文档已加入 `运维笔记/README.md` 的 CI-CD 分类索引。
 
 ## 基于证据的判断
 
-- 将“配置流”和“数据流”分成两张时序图，有助于避免把 `kubectl apply` 成功误认为业务请求已经可达。
-- 通用文档同时保留 Traefik 和 F5/NGINX 两种仍在维护的示例，并明确不同 Controller 的 IngressClass、注解、CRD 和默认行为不能直接互换。
-- Controller 的 Service 使用 `LoadBalancer`、NodePort 还是 MetalLB，必须根据公有云、裸金属或本地集群的入口能力选择。
+- 推荐部署顺序为 GitLab -> GitLab Runner -> Argo CD -> GitOps 仓库接入 -> 首次端到端验收。
+- CI 负责测试、BuildKit rootless 构建镜像和更新 GitOps 仓库；Argo CD 负责集群同步，可避免普通 CI Job 长期持有生产集群凭据。
+- 应使用源码仓库与 GitOps 仓库分离、Commit SHA/digest 镜像、最小 RBAC、保护分支/环境和短期 Token。
+- GitLab 19.1+ 可在严格 allowlist 和目标项目授权下使用跨项目 `CI_JOB_TOKEN` push；低版本应使用短期、最小权限的 Project Access Token。
 
 ## 尚未验证的可能性
 
-- 尚未在真实 Kubernetes 集群执行 Helm 安装、Ingress 应用和端到端请求验证。
-- Traefik 示例未固定通用 Chart 版本；生产部署必须根据目标 Kubernetes 版本选择并固定经测试的 Chart 和镜像版本。
-- Mermaid 已完成静态结构检查，但本机没有 `mmdc`，尚未执行渲染级验证。
+- 尚未在目标 GitLab、Registry 和 Kubernetes 集群执行部署。
+- 文档中的 GitLab、Runner Chart 和 Argo CD 版本使用待确认占位符，必须根据目标环境固定并测试。
+- BuildKit rootless 是否被目标集群 AppArmor、seccomp、Pod Security 或节点内核阻止，需要现场验证。
+- Mermaid 已完成结构检查，但未使用浏览器或 `mmdc` 做渲染级验证。
 
 ## 已完成
 
-- 在原有 20 章文档中补充“是什么、为什么、怎么用”的阅读目标和原理说明。
-- 新增 2 张 Mermaid `sequenceDiagram`：客户端请求数据流、Controller 配置调谐流。
-- 新增 Controller 选型表、Traefik Helm 安装、IngressClass 关系、裸金属入口提示和跨 Controller 迁移边界。
-- 更新官方资料日期和 Traefik/F5 官方参考链接。
-- 把文档加入容器编排分类 README 索引。
+- 新增 1153 行以上的 GitLab、Runner、Argo CD GitOps 主流程文档。
+- 增加部署顺序、Runner Job、日常发布、首次验收和回滚 5 张 Mermaid `sequenceDiagram`。
+- 覆盖部署前参数/网络规划、GitLab Compose 与 Registry TLS、Runner Token Secret 与 Helm、Argo CD 固定版本安装、Kustomize GitOps 结构、BuildKit rootless Pipeline、分层验收、回滚、故障定位和生产检查。
+- 在 Deploy Recorder 示例 README 增加主流程入口，避免把扩展示例误认为基础安装文档。
+- 更新海外弹性 Runner 文档的认证提示，删除疑似真实 Token，改用 `runnerToken` 占位符。
 
 ## 修改文件
 
-- `运维笔记/容器编排/Kubernetes-Ingress-部署与使用详解.md`
+- `运维笔记/CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md`
+- `运维笔记/CI-CD/gitlab-ci-argocd/README.md`
+- `运维笔记/CI-CD/海外弹性GitLab-Runner构建方案.md`
 - `运维笔记/README.md`
 - `CODEX_HANDOFF.md`
 
 ## 验证结果
 
-- 文档共 1569 行，142 个 Markdown 代码围栏成对。
-- 2 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。
-- 17 个 YAML 代码块通过 Ruby Psych 语法解析。
-- README 新增链接目标存在；全量 README 检查发现一个与本任务无关的既有缺失目录 `CI-CD/examples/gitlab-compose/`，未修改。
+- 主文档 110 个 Markdown 代码围栏成对。
+- 5 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。
+- 10 个 YAML 代码块通过 Ruby Psych 语法解析。
+- 主文档全部本地 Markdown 链接目标存在。
+- 已搜索并确认旧文档中的疑似真实 Runner Token 不再存在。
 - `git diff --check` 无错误。
-- 本任务未主动执行 Git 提交；工作期间仓库出现自动 `vault backup` 提交，最终状态仍以当前 `git status` 为准。
+- 没有执行真实安装、GitLab CI Lint、Helm render、Kubernetes server-side dry-run 或业务请求。
 
 ## 未解决问题
 
-- 需要在目标环境确认 Kubernetes 版本、已有 Controller、IngressClass、入口类型、DNS 和证书方案。
-- 需要在测试集群实际验证 `IngressClass -> Ingress -> Service -> EndpointSlice -> Pod`，并用正确 Host/SNI 发起请求。
-- 如果现网仍使用社区 ingress-nginx，需要先盘点专有注解和行为，再制定并行迁移和回切方案。
+- 需要确认目标 GitLab/Kubernetes 版本、域名、可信 CA、镜像仓库、IngressClass、StorageClass、网络策略、Runner 并发和资源额度。
+- 需要确认旧 Runner 文档中的 Token 是否对应仍在使用的 GitLab；若是，应立即旋转并检查异常 Runner。
+- 需要在测试环境完成真实 Git push、Runner Job、Registry push/pull、GitOps 提交、Argo CD Sync、业务请求和回滚演练。
 
 ## 下一步
 
-1. 在目标集群执行部署前只读检查，确认是否已经存在 Traefik、APISIX、云 Controller 或其他入口。
-2. 根据公有云、裸金属或本地集群选择 LoadBalancer、MetalLB、NodePort 或端口映射。
-3. 固定 Controller Chart 和镜像版本，在测试命名空间应用最小后端与 Ingress。
-4. 验证入口地址、Host/Path、TLS、Service、EndpointSlice、Pod 和 Controller 日志后，再进入生产变更流程。
+1. 收集目标环境参数，固定 GitLab、Runner Chart 和 Argo CD 版本。
+2. 若疑似泄露的旧 Runner Token 仍有效，先在 GitLab 旋转或删除对应 Runner。
+3. 在测试环境按主文档顺序部署，使用 CI Lint、Helm render 和 server-side dry-run 补足语义验证。
+4. 完成一次端到端发布和 Git revert 回滚，记录 Source Commit、Image digest、GitOps Commit、Argo CD revision 和业务结果。
 
 ## 重要命令
 
 ```bash
 git -C /Users/lijiaxuan/Documents/hermes status --short
 git -C /Users/lijiaxuan/Documents/hermes diff --check
-kubectl get ingressclass
-kubectl get ingress --all-namespaces
-kubectl get pods --all-namespaces | grep -Ei 'ingress|gateway|traefik|nginx|kong|haproxy'
+docker compose config
+helm search repo gitlab/gitlab-runner --versions
+kubectl -n gitlab-runner get pods
+kubectl -n argocd get deployment,statefulset,pod
+argocd app get demo-api-production
 ```
+
+## 既有阶段记录（2026-09-01，Kubernetes Ingress，保留）
+
+- 已完善 `运维笔记/容器编排/Kubernetes-Ingress-部署与使用详解.md`，README 已建立索引。
+- 文档区分 Ingress 声明式路由与 Ingress Controller 实际代理，增加客户端请求和配置调谐 2 张 Mermaid `sequenceDiagram`。
+- 增加 Traefik 与 F5/NGINX 示例、IngressClass、LoadBalancer/NodePort/MetalLB、TLS、验证和迁移边界。
+- 已完成 Markdown、Mermaid、YAML、本地链接和 `git diff --check` 静态检查；尚未在真实集群安装和执行端到端请求。
+- Kubernetes 社区 `kubernetes/ingress-nginx` 已于 2026 年 3 月停止维护，新部署应重新评估仍维护的 Controller 或 Gateway API。
 
 ## 既有阶段记录（2026-08-26，GitLab CI/CD，保留）
 
