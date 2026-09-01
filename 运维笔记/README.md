@@ -33,6 +33,7 @@
 - [k8s-常用操作手册.md](容器编排/k8s-常用操作手册.md)
 - [k8s-architecture.excalidraw.md](容器编排/k8s-architecture.excalidraw.md)
 - [K3s-部署指南.md](容器编排/K3s-部署指南.md)
+- [Kubernetes-Ingress-部署与使用详解.md](容器编排/Kubernetes-Ingress-部署与使用详解.md)
 - [Docker-Build从入门到高级.md](容器编排/Docker-Build从入门到高级.md)
 - [Helm-3-从入门到生产实践.md](容器编排/Helm-3-从入门到生产实践.md)
 - [Istio-服务网格详解.md](容器编排/Istio-服务网格详解.md)

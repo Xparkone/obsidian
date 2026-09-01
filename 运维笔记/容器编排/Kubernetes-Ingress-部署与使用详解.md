@@ -1,38 +1,46 @@
 # Kubernetes Ingress 部署与使用详解
 
 > 适用范围：Kubernetes 集群中的 HTTP、HTTPS 入口管理。  
-> 文档状态：按 2026 年 8 月的官方资料整理。  
+> 文档状态：按 2026 年 9 月 1 日的官方资料复核。  
 > 核心结论：Ingress API 仍是稳定 API，但功能已经冻结；新建平台优先评估 Gateway API。社区项目 `kubernetes/ingress-nginx` 已于 2026 年 3 月停止维护，不建议再用于新的生产环境。
+
+本文回答三个核心问题：
+
+- **是什么**：Ingress、IngressClass、Ingress Controller、Service 和 Pod 分别负责什么。
+- **为什么**：为什么只有 Service 不够，以及为什么创建 Ingress 后还必须安装 Controller。
+- **怎么用**：如何选择并部署 Controller、编写路由、配置 TLS、验证真实请求和定位故障。
 
 ## 1. Ingress 是什么
 
 Ingress 是 Kubernetes 中用于描述 HTTP 和 HTTPS 入站流量路由规则的 API 对象。它可以根据域名和 URL 路径，把集群外部请求转发到不同的 Service。
 
-典型流量路径如下：
+典型请求路径如下。这里展示的是数据流，客户端请求不会经过 Kubernetes API，也不会“流经” Ingress YAML：
 
-```text
-客户端
-  │
-  ▼
-DNS
-  │
-  ▼
-云负载均衡 / 裸金属负载均衡 / NodePort
-  │
-  ▼
-Ingress Controller
-  │  根据 Ingress 规则匹配 Host、Path、TLS
-  ▼
-Service
-  │
-  ▼
-EndpointSlice
-  │
-  ▼
-Pod
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as 客户端
+    participant DNS as DNS
+    participant Entry as 云LB/MetalLB/NodePort
+    participant Proxy as Ingress Controller 数据面
+    participant Discovery as Service/EndpointSlice
+    participant Pod as 后端 Pod
+
+    Client->>DNS: 查询 app.example.com
+    DNS-->>Client: 返回入口 IP 或负载均衡器域名
+    Client->>Entry: 发起 HTTP/HTTPS 请求
+    Entry->>Proxy: 把 80/443 流量送到入口数据面
+    Proxy->>Proxy: 匹配 SNI、Host、Path 和 TLS 规则
+    Proxy->>Discovery: 根据 Service 发现可用后端
+    Discovery-->>Proxy: 返回 Ready Pod 端点
+    Proxy->>Pod: 转发请求
+    Pod-->>Proxy: 返回应用响应
+    Proxy-->>Client: 返回 HTTP/HTTPS 响应
 ```
 
 Ingress 本身只是一份声明式路由配置，不负责实际转发流量。集群必须安装 Ingress Controller，规则才会生效。
+
+> 实际实现可能直接把请求转发到 Pod IP，也可能通过 Service ClusterIP 转发；这取决于 Controller 和配置。Service、EndpointSlice 在逻辑上负责服务发现，不一定都是数据包必经的独立网络跳点。
 
 ### 1.1 三个容易混淆的概念
 
@@ -51,6 +59,59 @@ Ingress 不直接提供以下能力：
 - 不会自动签发 TLS 证书，除非另行部署 cert-manager 等组件。
 - 不定义任意 TCP、UDP 转发；标准 Ingress API 面向 HTTP 和 HTTPS。
 - 不保证所有控制器都支持相同的注解和高级功能。
+
+### 1.3 为什么需要 Ingress
+
+没有 Ingress 时，也可以使用 `NodePort` 或为每个应用创建一个 `LoadBalancer` Service，但应用数量增加后通常会出现以下问题：
+
+- 每个应用分别占用端口、外部 IP 或云负载均衡器，入口分散且成本增加。
+- 域名、路径、TLS 证书、重定向和访问日志缺少统一管理位置。
+- 应用团队需要重复处理相同的七层代理配置。
+- 公网入口与后端工作负载耦合，变更和审计更困难。
+
+Ingress 把多个 HTTP/HTTPS 服务集中到少量入口地址上，通过 Host 和 Path 区分后端：
+
+```text
+app.example.com/       -> web-service:80
+app.example.com/api    -> api-service:8080
+admin.example.com/     -> admin-service:80
+```
+
+因此，Ingress 主要解决的是“如何声明七层路由”；Ingress Controller 解决的是“谁把声明转换成真实代理配置并接收流量”。如果只暴露一个 TCP/UDP 服务、无需 Host/Path 路由，直接使用 `LoadBalancer` 或其他四层入口可能更简单。
+
+### 1.4 Ingress Controller 如何让规则生效
+
+Controller 持续执行监听、比较和调谐。下面展示的是配置流，与前面的客户端请求数据流不同：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as 运维或应用团队
+    participant API as kube-apiserver
+    participant Controller as Ingress Controller
+    participant DataPlane as 代理或云负载均衡器
+
+    Operator->>API: kubectl apply Ingress
+    API-->>Operator: 保存对象并返回结果
+    API-->>Controller: Watch 到 Ingress 变更事件
+    Controller->>API: 读取 IngressClass、Service、EndpointSlice、Secret
+    Controller->>Controller: 校验类名、Host、Path、端口和证书引用
+    alt 规则有效
+        Controller->>DataPlane: 创建或更新路由配置
+        DataPlane-->>Controller: 配置已加载或资源已创建
+        Controller->>API: 更新 Ingress status 和事件
+    else 规则无效
+        Controller->>API: 记录拒绝原因或错误事件
+    end
+
+    Note over Controller,DataPlane: Traefik 等实现可把控制逻辑和代理数据面放在同一组 Pod 中
+    Note over Controller,DataPlane: 云 Controller 也可能在集群外创建托管负载均衡器
+```
+
+这解释了两个常见现象：
+
+- `kubectl apply` 成功只说明 API 对象已保存，不代表 Controller 已接受配置。
+- Ingress 显示正常也不等于业务已通，还要验证入口地址、Controller、Service、EndpointSlice 和 Pod 的完整路径。
 
 ## 2. 当前技术状态与选型建议
 
@@ -142,11 +203,96 @@ kubectl get pods --all-namespaces \
 
 ## 4. 部署一个仍在维护的 Ingress Controller
 
-以下以 F5/NGINX 的开源 NGINX Ingress Controller 为例，目的是演示完整安装流程。它不是已经停止维护的社区 `kubernetes/ingress-nginx`。
+Ingress Controller 不是 Kubernetes 内置的统一代理实现。应结合现有平台、协议需求、安全维护和迁移成本选择具体产品。
+
+### 4.1 常见选择
+
+| 场景 | 可评估的实现 | 说明 |
+|---|---|---|
+| 通用 Kubernetes、K3s、裸金属 | Traefik、HAProxy、Contour 等 | 先确认 Ingress API、Gateway API、TLS 和监控能力 |
+| 需要 API 网关能力 | Apache APISIX、Kong 等 | 通常还提供认证、限流、消费者和插件能力 |
+| 公有云托管集群 | 云厂商 Ingress/Gateway/负载均衡控制器 | 与云 LB、证书、WAF 和网络模型结合更紧密 |
+| 需要 NGINX 实现 | F5/NGINX Ingress Controller | 与已停止维护的社区 `kubernetes/ingress-nginx` 不是同一项目 |
+
+选型前至少确认：
+
+- 目标 Kubernetes 版本是否在兼容范围内。
+- 项目是否持续发布错误修复和安全补丁。
+- 是否支持标准 Ingress、Gateway API 或所需的自定义资源。
+- `IngressClass.spec.controller`、注解和 CRD 的实际含义。
+- TLS、WebSocket、gRPC、重写、限流、认证和真实客户端 IP 能力。
+- 高可用、扩缩容、监控、升级、回滚和许可证要求。
+
+### 4.2 使用 Traefik 快速部署
+
+Traefik 可以同时作为 Controller 和七层代理数据面。下面启用标准 Kubernetes Ingress provider，并显式创建非默认 `traefik` IngressClass，避免自动接管其他 Controller 的路由。
+
+先检查现有入口，避免重复安装：
+
+```bash
+kubectl get ingressclass
+kubectl get pods --all-namespaces \
+  | grep -Ei 'ingress|gateway|traefik|nginx|kong|haproxy'
+```
+
+添加官方 Helm 仓库并查看可用版本：
+
+```bash
+helm repo add traefik https://traefik.github.io/charts --force-update
+helm repo update
+helm search repo traefik/traefik --versions | head
+```
+
+测试环境可先按当前仓库版本安装；生产环境应在命令中增加经过验证的 `--version <CHART_VERSION>`：
+
+```bash
+helm upgrade --install traefik traefik/traefik \
+  --namespace traefik \
+  --create-namespace \
+  --set providers.kubernetesIngress.enabled=true \
+  --set ingressClass.enabled=true \
+  --set ingressClass.name=traefik \
+  --set ingressClass.isDefaultClass=false \
+  --set service.spec.type=LoadBalancer \
+  --wait \
+  --timeout 10m
+```
+
+检查实际对象，而不是只看 Helm 返回成功：
+
+```bash
+helm status traefik -n traefik
+kubectl get pods,service -n traefik -o wide
+kubectl get ingressclass traefik -o yaml
+kubectl get events -n traefik --sort-by=.lastTimestamp
+```
+
+关键关系应类似：
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+spec:
+  controller: traefik.io/ingress-controller
+```
+
+如果裸金属集群没有 MetalLB、硬件负载均衡器或云控制器，`LoadBalancer` 的外部地址可能一直是 `<pending>`。临时测试可以把上面安装参数改成：
+
+```bash
+--set service.spec.type=NodePort
+```
+
+生产裸金属环境通常应先设计 MetalLB、外部负载均衡器或其他稳定入口，而不是直接把随机 NodePort 当成最终方案。
+
+### 4.3 使用 F5/NGINX Ingress Controller
+
+以下以 F5/NGINX 的开源 NGINX Ingress Controller 为例演示另一种实现。它不是已经停止维护的社区 `kubernetes/ingress-nginx`。
 
 > 版本说明：示例固定 Helm Chart `2.6.4`，对应官方文档所示控制器 `5.5.4`。正式部署前应查看发布说明，在测试环境验证后再升级版本。
 
-### 4.1 使用 Helm 安装
+#### 使用 Helm 安装
 
 ```bash
 helm upgrade --install nginx-ingress \
@@ -182,7 +328,7 @@ kubectl get service -n nginx-ingress -w
 
 如果 `EXTERNAL-IP` 长时间为 `<pending>`，先确认集群是否具备 LoadBalancer 实现。
 
-### 4.2 使用自定义 values.yaml
+#### 使用自定义 values.yaml
 
 生产环境建议把安装参数放入版本管理，而不是堆叠大量 `--set`：
 
@@ -234,19 +380,18 @@ helm show values \
   --version 2.6.4
 ```
 
-### 4.3 关于其他控制器
+### 4.4 不同 Controller 的配置不能直接互换
 
-也可以选择 Traefik、HAProxy、Kong、Contour、Istio、云厂商控制器或其他 Gateway API 实现。选型时至少确认：
+不要因为不同产品都带有 NGINX、Ingress 或 Gateway 名称，就假设其配置可以互换。迁移或切换 Controller 时，必须逐项核对：
 
-- Kubernetes 版本兼容范围。
-- 是否同时支持 Ingress API 和 Gateway API。
-- 是否持续发布安全补丁。
-- `IngressClass.spec.controller` 的实际值。
-- TLS、WebSocket、gRPC、重写、限流、认证等功能如何配置。
-- 高可用、扩缩容、监控和升级方式。
-- 许可证与企业支持是否符合要求。
+- `ingressClassName` 和 `IngressClass.spec.controller`。
+- 专有注解及其默认值。
+- TLS Secret、证书选择和 HTTPS 重定向行为。
+- Path 匹配、正则表达式和 URL 重写。
+- gRPC、WebSocket、超时、请求体大小和缓冲策略。
+- 真实客户端 IP、Proxy Protocol 和可信代理范围。
 
-不要因为不同产品都带有 NGINX、Ingress 或 Gateway 名称，就假设其注解和配置可以互换。
+只修改 `ingressClassName`，无法保证专有功能保持原有语义。
 
 ## 5. 部署一个最小示例
 
@@ -1417,4 +1562,3 @@ kubectl get ingress --all-namespaces \
 - [cert-manager：Securing Ingress Resources](https://cert-manager.io/docs/usage/ingress/)
 - [F5 NGINX Ingress Controller：Helm 安装](https://docs.nginx.com/nginx-ingress-controller/install/helm/open-source/)
 - [Traefik：Kubernetes Quick Start](https://doc.traefik.io/traefik/getting-started/quick-start-with-kubernetes/)
-
