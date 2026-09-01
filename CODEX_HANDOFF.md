@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-09-01 19:29:13 +0800
+更新时间：2026-09-01 20:06:55 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -10,7 +10,7 @@
 
 ## 当前目标
 
-整理一份 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收、回滚和审计取证的详细流程文档，并使用 Mermaid `sequenceDiagram` 表达主要交互过程。
+整理 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收、回滚和审计取证的详细流程，并在现有 Deploy Recorder 基础上设计支持飞书、钉钉审批和多个 Argo CD 环境的发布编排与审计服务。
 
 ## 已确认事实
 
@@ -23,6 +23,9 @@
 - GitLab 审计事件、强制 MR/部署审批、实例级审计和外部审计流的能力会受版本与许可证影响，实施前必须按目标实例核对。
 - Kubernetes Audit Event 由 kube-apiserver 生成，与普通 Kubernetes Event 不同；托管集群通常需要通过云厂商控制台或 API 开启。
 - 现有 Deploy Recorder 可以关联 Pipeline、Deployment、Argo CD Sync 和 audit_logs，但没有独立不可变归档时不能单独作为防篡改审计系统。
+- 现有 Deploy Recorder 的部署接口可以直接创建部署记录，所有 API 共用静态 `X-API-Key`，Argo CD Webhook 按最近一条 pending/syncing 记录关联；它适合演示事后记录，不具备审批门禁、多 Argo CD 路由、细粒度授权和可靠幂等能力。
+- 飞书审批 v4 支持创建审批实例，并可使用 `uuid` 做调用方关联；审批事件需要完成应用事件订阅和指定审批定义订阅。回调不能只信任请求体，必须验签/解密并主动查询实例详情。
+- 钉钉开放平台同时存在新版工作流接口和旧版 OA 审批接口文档；目标企业应用实际可用接口必须以当前 API Explorer 和应用权限为准，不能混用 Token、字段和 SDK。
 
 ## 基于证据的判断
 
@@ -32,6 +35,9 @@
 - GitLab 19.1+ 可在严格 allowlist 和目标项目授权下使用跨项目 `CI_JOB_TOKEN` push；低版本应使用短期、最小权限的 Project Access Token。
 - 审计设计应以 Source Commit、Pipeline/Job、Image digest、GitOps Commit、Argo CD revision 和 Kubernetes auditID 为主键建立证据关系，而不是只保存页面截图。
 - 正式审计需要业务审计库、日志平台/SIEM 和独立 Object Lock/WORM 归档分层；数据库内哈希链只能辅助发现篡改，不能对抗同时控制数据库和哈希计算的管理员。
+- 新服务应采用“发布单不可变快照 + 审批适配器 + 持久化状态机 + Transactional Outbox + 环境注册表 + GitOps/Argo CD 适配器”，审批通过只是部署必要条件，部署前仍需复核 payload hash、目标集合、策略版本和环境状态。
+- 多 Argo CD 应使用“统一治理、分区执行”：生产/非生产、地域或安全域使用独立控制面，环境映射由服务端注册，调用方只提交 `environment_id`，不得传任意 Argo CD URL。
+- 生产优先在审批通过后合并或提交 GitOps 变更，再由目标 Argo CD 调谐；直接调用 Argo CD Sync 只用于明确关闭自动同步且 RBAC 受控的场景。
 
 ## 尚未验证的可能性
 
@@ -41,6 +47,9 @@
 - Mermaid 已完成结构检查，但未使用浏览器或 `mmdc` 做渲染级验证。
 - 审计留存期、不可变要求、职责分离和审计故障时是否阻断发布，仍需由安全、内审、法务或客户确认。
 - GitLab 审计功能、Kubernetes Audit Policy、Argo CD Notifications 和 Deploy Recorder 增强尚未在真实环境配置或验证。
+- 发布编排与审计服务目前仅完成设计，没有实现数据库迁移、API、Worker、审批适配器、GitOps/Argo CD 适配器和 Reconciler。
+- 尚未在真实飞书/钉钉租户创建审批实例，也未验证审批定义、表单字段、事件订阅、回调网络和目标租户的接口版本。
+- 尚未连接任何 Argo CD 实例验证环境路由、项目 Token、TLS、Application、revision 和多目标 wave。
 
 ## 已完成
 
@@ -51,6 +60,9 @@
 - 更新海外弹性 Runner 文档的认证提示，删除疑似真实 Token，改用 `runnerToken` 占位符。
 - 主文档新增审计落地章节，覆盖审计口径、证据关系、统一字段、GitLab/Runner/Registry/Argo CD/Kubernetes 采集、证据 JSON、dotenv/Artifact、Audit Policy、Deploy Recorder 增强、WORM 归档、职责分离、告警、每日对账和取证演练。
 - 增加第 6 张 Mermaid `sequenceDiagram`，描述从 MR、审批、构建、镜像、GitOps、Argo CD、Kubernetes 到 SIEM 和不可变归档的审计过程。
+- 新增 803 行《发布编排与审计服务设计：飞书、钉钉审批与多 Argo CD》，覆盖目标边界、不可绕过规则、组件、领域模型、状态机、多 Argo CD 环境路由、飞书/钉钉适配器、API、权限、审计、可靠性、故障行为和三阶段实施计划。
+- 新设计包含 3 张 Mermaid `sequenceDiagram`：审批到部署完整时序、Webhook 验签去重与主动确认、多 Argo CD 路由和失败保护。
+- 在总 README、GitOps 主流程和 Deploy Recorder README 增加新设计文档入口。
 
 ## 修改文件
 
@@ -58,6 +70,7 @@
 - `运维笔记/CI-CD/gitlab-ci-argocd/README.md`
 - `运维笔记/CI-CD/海外弹性GitLab-Runner构建方案.md`
 - `运维笔记/README.md`
+- `运维笔记/CI-CD/发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md`
 - `CODEX_HANDOFF.md`
 
 ## 验证结果
@@ -69,6 +82,8 @@
 - 已搜索并确认旧文档中的疑似真实 Runner Token 不再存在。
 - `git diff --check` 无错误。
 - 没有执行真实安装、GitLab CI Lint、Helm render、Kubernetes server-side dry-run 或业务请求。
+- 新设计文档 38 个 Markdown 代码围栏成对，5 个 JSON 代码块通过 JSON 解析，3 个 Mermaid 代码块均为 `sequenceDiagram` 且包含参与者。
+- 新增文档入口目标文件均存在；全库 README 的完整本地链接检查仍会命中既有缺失目录 `CI-CD/examples/gitlab-compose/`，该问题不是本阶段引入。
 
 ## 未解决问题
 
@@ -76,14 +91,16 @@
 - 需要确认旧 Runner 文档中的 Token 是否对应仍在使用的 GitLab；若是，应立即旋转并检查异常 Runner。
 - 需要在测试环境完成真实 Git push、Runner Job、Registry push/pull、GitOps 提交、Argo CD Sync、业务请求和回滚演练。
 - 需要确认适用审计制度、保留期限、GitLab 许可证、集群控制面权限、SIEM/对象存储目标、职责分离和 break-glass 流程。
+- 需要确认飞书或钉钉作为首个审批渠道、正式审批定义、审批人规则、是否允许一单多环境、生产 wave 和失败回滚策略。
+- 需要确认服务实现栈和队列：第一版建议延续 FastAPI/PostgreSQL，并增加独立 Worker 与 Outbox；长流程复杂后再评估 Temporal。
 
 ## 下一步
 
-1. 收集目标环境参数，固定 GitLab、Runner Chart 和 Argo CD 版本。
-2. 若疑似泄露的旧 Runner Token 仍有效，先在 GitLab 旋转或删除对应 Runner。
-3. 在测试环境按主文档顺序部署，使用 CI Lint、Helm render 和 server-side dry-run 补足语义验证。
-4. 完成一次端到端发布和 Git revert 回滚，记录 Source Commit、Image digest、GitOps Commit、Argo CD revision 和业务结果。
-5. 用测试应用完成一次审计取证演练，验证 GitLab Audit/Webhook、Argo CD Notifications、Kubernetes auditID、证据哈希和不可变归档。
+1. 确认首期范围：飞书或钉钉、目标 Argo CD 实例、环境表、审批规则、GitOps 模式和审计策略。
+2. 先设计 Alembic 数据库迁移与 OpenAPI，建立 `release_requests`、目标、审批、环境、事件、Webhook 和 Outbox 表。
+3. 实现发布状态机、幂等、非法跳转保护和 Reconciler，再接审批与部署适配器。
+4. 在测试环境演练审批通过、拒绝、撤回、超时、伪造/重复回调、服务重启、多目标 wave 和回滚。
+5. 完成一次真实 GitOps 发布和取证，记录 Source Commit、Image digest、payload hash、审批实例、GitOps Commit、Argo CD revision 和业务结果。
 
 ## 重要命令
 

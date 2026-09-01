@@ -1712,6 +1712,7 @@ helm -n gitlab-runner history gitlab-runner
 - [Helm 3 从入门到生产实践](../容器编排/Helm-3-从入门到生产实践.md)
 - [Kubernetes Ingress 部署与使用详解](../容器编排/Kubernetes-Ingress-部署与使用详解.md)
 - [GitLab CI + Argo CD Deploy Recorder 示例](gitlab-ci-argocd/README.md)
+- [发布编排与审计服务设计：飞书、钉钉审批与多 Argo CD](发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md)
 
 ## 19. 官方参考
 

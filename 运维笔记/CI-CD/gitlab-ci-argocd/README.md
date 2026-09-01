@@ -3,6 +3,8 @@
 > **目标**: 将 GitLab CI Pipeline 的每个阶段操作 + ArgoCD 的同步/健康检查事件，全部持久化到数据库，形成完整的部署追溯链。
 >
 > 本目录是部署记录器示例工程，不是 GitLab、GitLab Runner 与 Argo CD 的基础安装入口。三套系统从零部署、GitOps 仓库初始化、CI 构建和端到端验收请先阅读：[GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](../GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)。
+>
+> 如果需要把本示例升级为“审批通过后才能部署”的发布控制面，并接入飞书、钉钉及多个 Argo CD 环境，请阅读：[发布编排与审计服务设计](../发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md)。
 
 ---
 
