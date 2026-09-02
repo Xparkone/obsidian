@@ -48,6 +48,7 @@
 - [GitLab CICD YAML详细语法与使用方法.md](CI-CD/GitLab%20CICD%20YAML详细语法与使用方法.md)
 - [GitLab CICD 与 Gitea Actions 语法和使用指南.md](CI-CD/GitLab%20CICD%20与%20Gitea%20Actions%20语法和使用指南.md)
 - [GitLab 功能全景技术文档.md](CI-CD/GitLab%20功能全景技术文档.md)
+- [GitLab 审计日志详细配置与运维指南.md](CI-CD/GitLab%20审计日志详细配置与运维指南.md)
 - [GitLab 域名配置技术文档（自建 Omnibus）.md](CI-CD/GitLab%20域名配置技术文档（自建%20Omnibus）.md)
 - [GitLab 数据导入技术文档：场景分流与实操指南.md](CI-CD/GitLab%20数据导入技术文档：场景分流与实操指南.md)
 - [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md)
