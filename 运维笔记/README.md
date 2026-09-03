@@ -16,7 +16,7 @@
 | [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
 | [中间件](中间件/) | Nacos 注册配置中心、消息队列等 |
 | [安全](安全/) | RBAC、UFW、高防与 WAF |
-| [脚本与工具](脚本与工具/) | kubectl 快捷脚本（k / kf） |
+| [脚本与工具](脚本与工具/) | kubectl 快捷工具、Shell 命令审计与日志维护脚本 |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
 | [ai](ai/) | LLM / MCP / Skill / Hermes |
 | [go](go/) · [python](python/) · [javascript](javascript/) | 语言入门、运行环境、包管理和开发工具 |
@@ -140,8 +140,9 @@
 
 ### 脚本与工具
 
-- [kubectl-快捷工具-k.md](脚本与工具/kubectl-快捷工具-k.md) · [安装说明](脚本与工具/kubectl-快捷工具-k-安装说明.md)
-- [kubectl-交互式工具-kf.md](脚本与工具/kubectl-交互式工具-kf.md) · [安装说明](脚本与工具/kubectl-交互式工具-kf-安装说明.md)
+- [目录索引](脚本与工具/README.md)
+- [kubectl 工具](脚本与工具/kubectl/)：[`k`](脚本与工具/kubectl/kubectl-快捷工具-k.md) · [`kf`](脚本与工具/kubectl/kubectl-交互式工具-kf.md)
+- [Shell 命令审计](脚本与工具/shell-audit/)：Bash/Fish 部署、日志轮转与卸载
 
 ### 学习
 
