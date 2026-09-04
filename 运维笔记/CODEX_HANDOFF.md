@@ -136,6 +136,41 @@
 - 在目标 Linux/Kubernetes 环境启动 `python3 -m status_api`，验证真实 HTTP、RBAC 和采集数据。
 - 根据生产依赖约束决定是否增加 FastAPI/Uvicorn 适配层。
 
+## 本阶段：Status API 配置文件与服务探针（2026-09-04）
+
+### 当前目标
+
+允许 Go 和 Python 版本从独立环境文件读取 Token、Kubernetes 地址、业务服务地址和中间件地址。
+
+### 已确认事实
+
+- Go 和 Python 均自动读取运行目录的 `.env`，也支持 `STATUS_API_ENV_FILE` 指定其他文件。
+- 已实现环境变量优先级：进程环境变量覆盖 `.env` 文件中的同名键。
+- 新增 `STATUS_SERVICES` 业务服务探针配置和 `/api/v1/services` 接口；`STATUS_MIDDLEWARES` 继续用于中间件探针。
+- 新增 Go/Python 各自的 `.env.example`，不包含真实凭据。
+
+### 尚未验证的可能性
+
+- 尚未在真实 Linux/Kubernetes 环境验证 `.env` 文件权限、ServiceAccount、业务服务 DNS 和中间件地址连通性。
+- `.env` 解析器只支持简单 `KEY=VALUE`、单/双引号和注释，不支持 Shell 命令替换或变量展开。
+
+### 已完成
+
+- 完成 Go `env.go` 和 Python `dotenv.py` 配置文件加载。
+- 汇总接口同时返回 `services` 和 `middlewares` 两类探针结果。
+- 更新两个工程 README，说明 `.env`、自定义配置路径和地址配置格式。
+
+### 验证结果
+
+- Go：`go test ./...`、`go vet ./...` 通过。
+- Python：`unittest` 2 项测试通过，`compileall` 通过。
+- `git diff --check` 通过。
+
+### 下一步
+
+- 复制 `.env.example` 为 `.env`，填入测试环境的服务和中间件地址后做真实 HTTP 验证。
+- 生产部署时将 `.env` 替换为 Kubernetes Secret、Vault 或其他凭据管理方式，并设置 `chmod 600`。
+
 ## 本阶段：脚本与工具整理（2026-09-03）
 
 ### 当前目标

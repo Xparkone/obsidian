@@ -14,7 +14,7 @@ from .config import Settings
 def aggregate(data: dict[str, Any]) -> str:
     states = [data["host"].get("status"), data["kubernetes"].get("status"), data["pods"].get("status")]
     states.extend(item.get("status") for item in data["middlewares"])
-    states.extend(item.get("status") for item in data["services"])
+    states.extend(item.get("status") for item in data.get("services", []))
     if "unhealthy" in states:
         return "unhealthy"
     if any(state in {"degraded", "unknown"} for state in states):

@@ -99,6 +99,7 @@ curl -sS \
 GET /api/v1/host
 GET /api/v1/k8s
 GET /api/v1/k8s/pods
+GET /api/v1/services
 GET /api/v1/middlewares
 ```
 
