@@ -112,6 +112,124 @@ KUBERNETES_CA_FILE=/etc/status-api/ca.crt
 
 当前版本不会读取 `~/.kube/config`，也不会自动使用 `kubectl` 当前上下文。不要把管理员 Token 直接配置给 Status API；应创建独立的只读 ServiceAccount，并定期轮换 Token。
 
+#### 具体操作步骤
+
+1. 确认 `kubectl` 能访问目标集群，并记录 API Server 地址：
+
+   ```bash
+   kubectl cluster-info
+   kubectl get nodes
+   ```
+
+2. 创建专用 Namespace、ServiceAccount 和只读 RBAC。下面的 YAML 只授予 `get/list/watch`：
+
+   ```bash
+   kubectl apply -f - <<'EOF'
+   apiVersion: v1
+   kind: Namespace
+   metadata:
+     name: status-api
+   ---
+   apiVersion: v1
+   kind: ServiceAccount
+   metadata:
+     name: status-api-reader
+     namespace: status-api
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRole
+   metadata:
+     name: status-api-reader
+   rules:
+     - apiGroups: [""]
+       resources: ["nodes", "namespaces", "pods", "services", "endpoints"]
+       verbs: ["get", "list", "watch"]
+     - apiGroups: ["discovery.k8s.io"]
+       resources: ["endpointslices"]
+       verbs: ["get", "list", "watch"]
+     - apiGroups: ["apps"]
+       resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+       verbs: ["get", "list", "watch"]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRoleBinding
+   metadata:
+     name: status-api-reader
+   roleRef:
+     apiGroup: rbac.authorization.k8s.io
+     kind: ClusterRole
+     name: status-api-reader
+   subjects:
+     - kind: ServiceAccount
+       name: status-api-reader
+       namespace: status-api
+   EOF
+   ```
+
+3. 验证权限：
+
+   ```bash
+   kubectl auth can-i --as=system:serviceaccount:status-api:status-api-reader get nodes
+   kubectl auth can-i --as=system:serviceaccount:status-api:status-api-reader list pods --all-namespaces
+   kubectl auth can-i --as=system:serviceaccount:status-api:status-api-reader delete pods
+   ```
+
+   前两条应返回 `yes`，最后一条应返回 `no`。
+
+4. 生成短期 Kubernetes Token：
+
+   ```bash
+   kubectl -n status-api create token status-api-reader --duration=24h
+   ```
+
+   终端输出的整行内容就是 `KUBERNETES_API_TOKEN`，不要把它发到聊天中。
+
+5. 准备 CA 文件。如果 kubeconfig 中包含 `certificate-authority-data`：
+
+   ```bash
+   kubectl config view --raw --minify \
+     -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' \
+     | base64 -d > /tmp/status-api-ca.crt
+   chmod 644 /tmp/status-api-ca.crt
+   ```
+
+6. 创建 `.env`，填写实际 API 地址、Token 和 CA 路径：
+
+   ```dotenv
+   STATUS_API_HOST=0.0.0.0
+   STATUS_API_PORT=8080
+   STATUS_API_TOKEN=用于调用Status API的Token
+   KUBERNETES_API_URL=https://kubernetes.example.internal:6443
+   KUBERNETES_API_TOKEN=第4步生成的Kubernetes只读Token
+   KUBERNETES_CA_FILE=/tmp/status-api-ca.crt
+   ```
+
+   ```bash
+   chmod 600 .env
+   ```
+
+7. 验证 Kubernetes API：
+
+   ```bash
+   curl --silent --show-error --fail \
+     --cacert /tmp/status-api-ca.crt \
+     -H "Authorization: Bearer $KUBERNETES_API_TOKEN" \
+     "$KUBERNETES_API_URL/version"
+   ```
+
+8. 启动并调用 Python 版：
+
+   ```bash
+   python3 -m status_api
+   ```
+
+   另开终端调用：
+
+   ```bash
+   curl -sS -H "Authorization: Bearer <STATUS_API_TOKEN的值>" \
+     http://127.0.0.1:8080/api/v1/k8s/pods | python3 -m json.tool
+   ```
+
 ### 4.3 使用 `kubectl proxy` 临时验证
 
 如果只是验证 API 是否能读取集群数据，可以在一个终端运行：
@@ -127,6 +245,30 @@ KUBERNETES_API_URL=http://127.0.0.1:8001
 ```
 
 此时不需要填写 `KUBERNETES_API_TOKEN` 和 `KUBERNETES_CA_FILE`。`kubectl proxy` 必须保持运行，并且只建议用于临时测试，不建议作为长期服务认证方式。
+
+完整临时验证流程：
+
+```bash
+# 终端 1：保持运行
+kubectl proxy --address=127.0.0.1 --port=8001
+
+# 终端 2：在 Status API 工程目录执行
+cat > .env <<'EOF'
+STATUS_API_HOST=0.0.0.0
+STATUS_API_PORT=8080
+STATUS_API_TOKEN=local-dev-token
+KUBERNETES_API_URL=http://127.0.0.1:8001
+EOF
+chmod 600 .env
+python3 -m status_api
+```
+
+另开终端调用：
+
+```bash
+curl -sS -H 'Authorization: Bearer local-dev-token' \
+  http://127.0.0.1:8080/api/v1/k8s/pods | python3 -m json.tool
+```
 
 ## 5. 调用接口
 
