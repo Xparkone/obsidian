@@ -103,6 +103,37 @@
 - 接入 Node Exporter/Prometheus 或实现独立 Host Collector DaemonSet，补齐节点级主机状态。
 - 根据调用方需求增加 scope 权限、分页、缓存和 OpenAPI 文档。
 
+## 本阶段：Python Status API（2026-09-04）
+
+### 当前目标
+
+提供与 Go 版相同接口契约的 Python 实现，方便在没有 Go 运行环境时部署。
+
+### 已确认事实
+
+- 已新增 `python/status-api/`，使用 Python 标准库 `http.server`、`urllib`、`socket` 和 `/proc`，不依赖 FastAPI、Flask 或 psutil。
+- 已实现 Bearer Token 鉴权、主机状态、Kubernetes REST 采集、Pod 汇总、中间件 HTTP/HTTPS/TCP 探针。
+- 支持通过 `namespace` 查询参数限制 Kubernetes Pod 范围。
+
+### 尚未验证的可能性
+
+- 尚未在真实 Kubernetes 集群和 Linux 节点验证 Python 版本的 RBAC、ServiceAccount CA 和中间件探针。
+- 尚未实现 Prometheus/Node Exporter、缓存、JWT/OIDC、多集群和历史数据。
+
+### 已完成
+
+- 新增 `python/status-api/status_api/`、测试和 README。
+
+### 验证结果
+
+- `PYTHONPATH=. python3 -m unittest discover -s tests -v`：2 项测试通过。
+- `python3 -m compileall -q status_api`：通过。
+
+### 下一步
+
+- 在目标 Linux/Kubernetes 环境启动 `python3 -m status_api`，验证真实 HTTP、RBAC 和采集数据。
+- 根据生产依赖约束决定是否增加 FastAPI/Uvicorn 适配层。
+
 ## 本阶段：脚本与工具整理（2026-09-03）
 
 ### 当前目标
