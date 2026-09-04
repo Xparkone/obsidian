@@ -82,5 +82,6 @@ type StatusData struct {
 	Host        HostStatus         `json:"host"`
 	Kubernetes  KubernetesStatus   `json:"kubernetes"`
 	Pods        PodsSummary        `json:"pods"`
+	Services    []MiddlewareStatus `json:"services"`
 	Middlewares []MiddlewareStatus `json:"middlewares"`
 }

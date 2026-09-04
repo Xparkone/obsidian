@@ -12,9 +12,9 @@ import (
 
 type probeConfig struct{ name, kind, target string }
 
-func loadProbes() []probeConfig {
+func loadProbeConfigs(key string) []probeConfig {
 	var out []probeConfig
-	for _, item := range strings.Split(os.Getenv("STATUS_MIDDLEWARES"), ",") {
+	for _, item := range strings.Split(os.Getenv(key), ",") {
 		parts := strings.SplitN(strings.TrimSpace(item), "|", 3)
 		if len(parts) == 3 && parts[0] != "" {
 			out = append(out, probeConfig{name: parts[0], kind: parts[1], target: parts[2]})

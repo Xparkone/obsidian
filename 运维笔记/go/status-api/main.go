@@ -8,7 +8,10 @@ import (
 )
 
 func main() {
-	s := &server{token: os.Getenv("STATUS_API_TOKEN"), kube: newKubeClient(), probes: loadProbes()}
+	if err := loadConfiguredEnv(); err != nil {
+		log.Fatal(err)
+	}
+	s := &server{token: os.Getenv("STATUS_API_TOKEN"), kube: newKubeClient(), services: loadProbeConfigs("STATUS_SERVICES"), probes: loadProbeConfigs("STATUS_MIDDLEWARES")}
 	if s.token == "" {
 		log.Println("warning: STATUS_API_TOKEN is empty; protected endpoints will return 401")
 	}

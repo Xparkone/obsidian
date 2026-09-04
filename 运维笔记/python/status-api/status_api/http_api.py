@@ -14,6 +14,7 @@ from .config import Settings
 def aggregate(data: dict[str, Any]) -> str:
     states = [data["host"].get("status"), data["kubernetes"].get("status"), data["pods"].get("status")]
     states.extend(item.get("status") for item in data["middlewares"])
+    states.extend(item.get("status") for item in data["services"])
     if "unhealthy" in states:
         return "unhealthy"
     if any(state in {"degraded", "unknown"} for state in states):
@@ -41,7 +42,7 @@ class StatusHandler(BaseHTTPRequestHandler):
         namespace = query.get("namespace", [None])[0]
         if path.path == "/api/v1/status":
             kubernetes, pods = self.kube.collect(namespace)
-            data = {"host": host_status(), "kubernetes": kubernetes, "pods": pods, "middlewares": run_probes(self.settings.probes)}
+            data = {"host": host_status(), "kubernetes": kubernetes, "pods": pods, "services": run_probes(self.settings.services), "middlewares": run_probes(self.settings.probes)}
             self.send_json(200, {"schema_version": "v1", "request_id": str(time.time_ns()), "status": aggregate(data), "observed_at": now(), "data": data, "errors": []})
         elif path.path == "/api/v1/host":
             self.send_json(200, host_status())
@@ -51,6 +52,8 @@ class StatusHandler(BaseHTTPRequestHandler):
             self.send_json(200, self.kube.collect(namespace)[1])
         elif path.path == "/api/v1/middlewares":
             self.send_json(200, run_probes(self.settings.probes))
+        elif path.path == "/api/v1/services":
+            self.send_json(200, run_probes(self.settings.services))
         else:
             self.send_json(404, {"error": "not found"})
 

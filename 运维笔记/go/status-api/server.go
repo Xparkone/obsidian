@@ -11,9 +11,10 @@ import (
 )
 
 type server struct {
-	token  string
-	kube   *kubeClient
-	probes []probeConfig
+	token    string
+	kube     *kubeClient
+	services []probeConfig
+	probes   []probeConfig
 }
 
 func (s *server) routes() http.Handler {
@@ -30,6 +31,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/k8s", protected(s.handleK8s))
 	mux.HandleFunc("GET /api/v1/k8s/pods", protected(s.handlePods))
 	mux.HandleFunc("GET /api/v1/middlewares", protected(s.handleMiddlewares))
+	mux.HandleFunc("GET /api/v1/services", protected(s.handleServices))
 	return logging(mux)
 }
 
@@ -49,7 +51,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	ks, ps := s.kube.collect(ctx)
-	data := StatusData{Host: collectHost(ctx), Kubernetes: ks, Pods: ps, Middlewares: runProbes(ctx, s.probes)}
+	data := StatusData{Host: collectHost(ctx), Kubernetes: ks, Pods: ps, Services: runProbes(ctx, s.services), Middlewares: runProbes(ctx, s.probes)}
 	writeJSON(w, http.StatusOK, response(r, data))
 }
 func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +68,9 @@ func (s *server) handlePods(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleMiddlewares(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, runProbes(r.Context(), s.probes))
 }
+func (s *server) handleServices(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, runProbes(r.Context(), s.services))
+}
 
 func response(r *http.Request, data StatusData) StatusResponse {
 	status := Healthy
@@ -81,6 +86,13 @@ func response(r *http.Request, data StatusData) StatusResponse {
 		}
 	}
 	for _, m := range data.Middlewares {
+		if m.Status == Unhealthy {
+			status = Unhealthy
+		} else if m.Status == Degraded && status == Healthy {
+			status = Degraded
+		}
+	}
+	for _, m := range data.Services {
 		if m.Status == Unhealthy {
 			status = Unhealthy
 		} else if m.Status == Degraded && status == Healthy {

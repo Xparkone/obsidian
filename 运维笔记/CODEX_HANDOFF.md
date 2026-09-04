@@ -123,11 +123,13 @@
 ### 已完成
 
 - 新增 `python/status-api/status_api/`、测试和 README。
+- 扩充 `go/status-api/README.md`、`python/status-api/README.md` 的运行、Token、接口、配置、RBAC、安全和限制说明，并在根目录 `README.md` 增加两个工程入口。
 
 ### 验证结果
 
 - `PYTHONPATH=. python3 -m unittest discover -s tests -v`：2 项测试通过。
 - `python3 -m compileall -q status_api`：通过。
+- 两份 Status API README 各有 22 个代码围栏，均为成对围栏；`git diff --check`：通过。
 
 ### 下一步
 
