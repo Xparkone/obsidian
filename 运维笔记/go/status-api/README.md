@@ -32,7 +32,7 @@ sequenceDiagram
 ## 3. 本地启动
 
 ```bash
-cd "/Users/lijiaxuan/Documents/hermes/运维笔记/go/status-api"
+cd go/status-api
 ```
 
 设置 Token。`change-me` 只是示例值，可以替换成任意随机字符串：
@@ -77,9 +77,67 @@ GOCACHE=/tmp/status-api-gocache go run .
 
 服务默认监听 `http://127.0.0.1:8080`。
 
-## 4. 调用接口
+## 4. 部署位置和认证方式
 
-### 4.1 健康检查
+Status API 有以下几种运行方式：
+
+| 场景 | Kubernetes 地址 | 认证方式 | 是否适合生产 |
+|---|---|---|---|
+| 集群内运行 | `https://kubernetes.default.svc` | Pod 的 ServiceAccount Token 和 CA | 适合 |
+| VM/物理机外部长期运行 | 集群 API Server 地址 | 独立只读 Token + CA 文件 | 适合 |
+| VM/物理机临时验证 | `http://127.0.0.1:8001` | `kubectl proxy` 代为认证 | 不适合 |
+| 直接使用 `~/.kube/config` | kubeconfig 中的地址 | 当前版本未实现 | 暂不支持 |
+
+### 4.1 集群内运行
+
+Status API 作为 Pod 部署在 Kubernetes 集群内时，通常不需要手动创建 Token。Kubernetes 会将 ServiceAccount Token 和 CA 挂载到：
+
+```text
+/var/run/secrets/kubernetes.io/serviceaccount/token
+/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+```
+
+仍然必须为该 ServiceAccount 绑定只读 RBAC。此模式下不需要设置 `KUBERNETES_API_TOKEN`，默认地址 `kubernetes.default.svc` 即可使用。
+
+注意：API Pod 内直接读取 `/proc` 得到的是容器视角的 CPU、内存和磁盘数据，不等于 Kubernetes 节点数据。节点级数据应通过 Node Exporter/Prometheus 或独立 Host Collector 提供。
+
+### 4.2 VM 或物理机外部长期运行
+
+Status API 运行在 Kubernetes 集群外时，需要同时满足：
+
+1. 运行机器可以解析并访问 Kubernetes API Server 地址；
+2. 使用具有 `get/list/watch` 权限的只读 Token；
+3. 使用与 API Server 证书匹配的 CA 文件。
+
+`.env` 示例：
+
+```dotenv
+KUBERNETES_API_URL=https://kubernetes.example.internal:6443
+KUBERNETES_API_TOKEN=replace-with-a-read-only-token
+KUBERNETES_CA_FILE=/etc/status-api/ca.crt
+```
+
+当前版本不会读取 `~/.kube/config`，也不会自动使用 `kubectl` 当前上下文。不要把管理员 Token 直接配置给 Status API；应创建独立的只读 ServiceAccount，并定期轮换 Token。
+
+### 4.3 使用 `kubectl proxy` 临时验证
+
+如果只是验证 API 是否能读取集群数据，可以在一个终端运行：
+
+```bash
+kubectl proxy --address=127.0.0.1 --port=8001
+```
+
+然后在 `.env` 中设置：
+
+```dotenv
+KUBERNETES_API_URL=http://127.0.0.1:8001
+```
+
+此时不需要填写 `KUBERNETES_API_TOKEN` 和 `KUBERNETES_CA_FILE`。`kubectl proxy` 必须保持运行，并且只建议用于临时测试，不建议作为长期服务认证方式。
+
+## 5. 调用接口
+
+### 5.1 健康检查
 
 不需要 Token：
 
@@ -87,7 +145,7 @@ GOCACHE=/tmp/status-api-gocache go run .
 curl -sS http://127.0.0.1:8080/healthz
 ```
 
-### 4.2 汇总状态
+### 5.2 汇总状态
 
 ```bash
 curl -sS \
@@ -95,7 +153,7 @@ curl -sS \
   http://127.0.0.1:8080/api/v1/status | jq
 ```
 
-### 4.3 分模块查询
+### 5.3 分模块查询
 
 ```text
 GET /api/v1/host
@@ -115,7 +173,7 @@ curl -sS \
 
 状态值为 `healthy`、`degraded`、`unhealthy`、`unknown`。汇总接口包含 `schema_version`、`request_id`、`observed_at`、`data` 和 `errors` 字段。
 
-## 5. 环境变量
+## 6. 环境变量
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -139,7 +197,7 @@ GOCACHE=/tmp/status-api-gocache go run .
 
 业务服务和中间件分开配置，对应接口分别为 `/api/v1/services` 和 `/api/v1/middlewares`，汇总接口 `/api/v1/status` 会同时返回两类结果。
 
-## 6. Kubernetes 权限
+## 7. Kubernetes 权限
 
 服务只需要只读权限。建议允许 `get/list/watch` 访问以下资源：`nodes`、`namespaces`、`pods`、`services`、`endpoints`、`endpointslices`、`deployments`、`replicasets`、`statefulsets`、`daemonsets`。
 
@@ -157,7 +215,7 @@ KUBERNETES_CA_FILE=/etc/kubernetes/pki/ca.crt
 
 当前服务不会自动读取 `~/.kube/config`；如果 `kubectl` 使用的是客户端证书，还需要后续增加客户端证书配置。
 
-## 7. 安全边界
+## 8. 安全边界
 
 - 生产环境必须使用 HTTPS 或在 API Gateway 后面提供 HTTPS；
 - Token 不要提交到 Git、README 或日志；
@@ -165,7 +223,7 @@ KUBERNETES_CA_FILE=/etc/kubernetes/pki/ca.crt
 - 中间件目标只能来自服务端配置，不能由请求参数传入任意地址；
 - 当前 Token 是单一静态 Token，生产环境应替换为 Secret 管理或 JWT/OIDC。
 
-## 8. 测试
+## 9. 测试
 
 ```bash
 GOCACHE=/tmp/status-api-gocache go test ./...
@@ -174,7 +232,7 @@ GOCACHE=/tmp/status-api-gocache go vet ./...
 
 当前测试覆盖 Token 鉴权、健康检查和 Pod 状态汇总。尚未在真实 Kubernetes 集群、中间件和节点环境执行端到端验证。
 
-## 9. 当前限制
+## 10. 当前限制
 
 - 主机采集器直接读取当前进程所在环境的 `/proc`；部署在 Kubernetes Pod 内时是容器视角，不等于节点视角；
 - 尚未接入 Node Exporter/Prometheus、缓存、历史数据、JWT/OIDC、多集群和 OpenAPI；

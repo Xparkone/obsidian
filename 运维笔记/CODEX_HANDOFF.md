@@ -124,6 +124,7 @@
 
 - 新增 `python/status-api/status_api/`、测试和 README。
 - 扩充 `go/status-api/README.md`、`python/status-api/README.md` 的运行、Token、接口、配置、RBAC、安全和限制说明，并在根目录 `README.md` 增加两个工程入口。
+- 两份 README 已补充集群内运行、VM/物理机外部长期运行、`kubectl proxy` 临时验证和 kubeconfig 暂不支持的差异说明，并移除个人目录路径。
 
 ### 验证结果
 
