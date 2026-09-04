@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,7 +24,17 @@ func newKubeClient() *kubeClient {
 		base = "https://kubernetes.default.svc"
 	}
 	tokenBytes, _ := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
-	return &kubeClient{baseURL: base, token: strings.TrimSpace(string(tokenBytes)), client: &http.Client{Timeout: 4 * time.Second}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if caBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); err == nil {
+		pool, poolErr := x509.SystemCertPool()
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if poolErr == nil && pool.AppendCertsFromPEM(caBytes) {
+			transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+		}
+	}
+	return &kubeClient{baseURL: base, token: strings.TrimSpace(string(tokenBytes)), client: &http.Client{Timeout: 4 * time.Second, Transport: transport}}
 }
 
 func (k *kubeClient) get(ctx context.Context, path string, out any) error {

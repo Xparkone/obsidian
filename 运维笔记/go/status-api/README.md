@@ -36,6 +36,6 @@ go run .
 ## 当前边界
 
 - Kubernetes 未配置或不可访问时，Kubernetes 和 Pod 状态返回 `unknown`，不会阻塞主机接口。
-- Linux 主机从 `/proc` 和根文件系统读取负载、内存、磁盘；非 Linux 环境部分指标可能为 `unknown`。
+- 直接运行在 Linux 宿主机时，从 `/proc` 和根文件系统读取负载、内存、磁盘；如果 API 运行在 Kubernetes Pod 内，这些指标是容器视角，节点级数据应接入 Node Exporter/Prometheus 或部署独立的 Host Collector DaemonSet。
 - 中间件探针只使用服务端配置的目标，不接受请求方传入任意地址。
 - 当前为实时采集 MVP，尚未接入 Prometheus、历史存储、JWT/OIDC 和多集群配置。

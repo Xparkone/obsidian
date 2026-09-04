@@ -65,6 +65,44 @@
 - 不在交接文档中记录密码、Token、Cookie、完整认证 Header、云密钥或完整环境变量。
 - 不能把“进程健康、HTTP 200、日志文件存在”当作审计端到端成功；需要验证事件生成、落库/文件、外部送达和归档。
 
+## 本阶段：Status API MVP（2026-09-04）
+
+### 当前目标
+
+开发一个通过 Bearer Token 暴露服务器、Kubernetes、Pod 和中间件状态的只读 HTTP API。
+
+### 已确认事实
+
+- 原仓库只有 `go/todo-api/` 示例，没有现成状态服务；已新增独立工程 `go/status-api/`。
+- API 使用 Go 标准库，包含 `/api/v1/status`、`/api/v1/host`、`/api/v1/k8s`、`/api/v1/k8s/pods`、`/api/v1/middlewares`、`/healthz` 和 `/readyz`。
+- 受保护接口使用 `Authorization: Bearer <token>`，通过常量时间比较校验 token；未配置 token 时受保护接口全部返回 401。
+- Kubernetes 采集使用只读 REST API，读取 `/version`、节点和全命名空间 Pod 摘要；集群内自动读取 ServiceAccount token 和 CA。
+- 中间件探针支持 HTTP/HTTPS/TCP，以及以 TCP 方式检查 Redis、MySQL、Kafka；目标来自 `STATUS_MIDDLEWARES` 配置，不接受请求方任意地址。
+
+### 尚未验证的可能性
+
+- 尚未在真实 Kubernetes 集群中验证 ServiceAccount RBAC、API CA、节点和 Pod 数据返回。
+- 当前主机采集器读取运行进程所在环境的 `/proc`；API 运行在 Kubernetes Pod 内时不等同于节点级指标。
+- 尚未实现 Prometheus/Node Exporter 接入、缓存、JWT/OIDC、历史数据、多集群和完整中间件协议探针。
+
+### 已完成
+
+- 新增 `go/status-api/` 工程、README 和单元测试。
+- 实现统一状态模型、主机采集、Kubernetes REST 采集、Pod 汇总、中间件 HTTP/TCP 探针和 Bearer Token 鉴权。
+
+### 验证结果
+
+- `gofmt -w *.go`：通过。
+- `GOCACHE=/tmp/status-api-gocache go test ./...`：通过。
+- `GOCACHE=/tmp/status-api-gocache go vet ./...`：通过。
+- 使用真实监听端口的验证受当前沙箱禁止 bind 端口影响，已使用 `httptest` 覆盖健康检查和鉴权行为。
+
+### 下一步
+
+- 在 Linux 主机或测试集群启动服务，验证真实 HTTP 请求、Kubernetes RBAC 和中间件连通性。
+- 接入 Node Exporter/Prometheus 或实现独立 Host Collector DaemonSet，补齐节点级主机状态。
+- 根据调用方需求增加 scope 权限、分页、缓存和 OpenAPI 文档。
+
 ## 本阶段：脚本与工具整理（2026-09-03）
 
 ### 当前目标
