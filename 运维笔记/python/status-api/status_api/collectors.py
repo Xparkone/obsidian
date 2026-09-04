@@ -42,6 +42,12 @@ def host_status() -> dict[str, Any]:
     return result
 
 
+def pod_api_path(namespace: str | None = None) -> str:
+    if not namespace:
+        return "/api/v1/pods"
+    return f"/api/v1/namespaces/{urllib.parse.quote(namespace, safe='')}/pods"
+
+
 class KubernetesClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -65,11 +71,6 @@ class KubernetesClient:
                 raise urllib.error.HTTPError(request.full_url, response.status, response.reason, response.headers, None)
             return json.loads(response.read(8 * 1024 * 1024))
 
-
-def pod_api_path(namespace: str | None = None) -> str:
-    if not namespace:
-        return "/api/v1/pods"
-    return f"/api/v1/namespaces/{urllib.parse.quote(namespace, safe='')}/pods"
 
     def collect(self, namespace: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         started = time.monotonic()

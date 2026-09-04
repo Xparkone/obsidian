@@ -152,6 +152,7 @@
 - 新增 `KUBERNETES_API_TOKEN` 和 `KUBERNETES_CA_FILE`，支持服务运行在 Kubernetes 集群外时访问指定 API 地址。
 - Go/Python Pod 查询现在按 `namespace` 使用 Kubernetes namespaced API 路径；未指定时查询全部 Namespace，并区分 `NAMESPACE_NOT_FOUND`、`PODS_FORBIDDEN` 和一般不可用。
 - Go/Python Pod 汇总现在新增 `items`，返回所有已查询 Pod 的 Namespace、名称、Phase、Ready、重启次数和等待原因；`unhealthy` 保留为异常 Pod 子集。
+- 修复 Python `collectors.py` 中 `pod_api_path` 插入位置导致 `KubernetesClient.collect` 缩进到错误作用域的问题；该问题会使 `/api/v1/k8s/pods` 触发 `AttributeError` 并让客户端收到 Empty reply。
 - 新增 Go/Python 各自的 `.env.example`，不包含真实凭据。
 
 ### 尚未验证的可能性
@@ -169,7 +170,7 @@
 ### 验证结果
 
 - Go：`go test ./...`、`go vet ./...` 通过。
-- Python：`unittest` 3 项测试通过，`compileall` 通过。
+- Python：`py_compile`、`unittest` 3 项测试通过，`compileall` 通过。
 - `git diff --check` 通过。
 
 ### 下一步
