@@ -121,6 +121,16 @@ KUBERNETES_CA_FILE=/etc/status-api/ca.crt
    kubectl get nodes
    ```
 
+   也可以只读取当前 kubeconfig 上下文中的 API 地址（不会输出 Token）：
+
+   ```bash
+   kubectl config view --minify \
+     -o jsonpath='{.clusters[0].cluster.server}'
+   echo
+   ```
+
+   例如输出 `https://kubernetes.example.internal:6443`，就将它填写到 `KUBERNETES_API_URL`。不要把 `https://kubernetes.default.svc` 填到集群外运行的 VM 配置中，那个地址通常只在集群内部可解析。
+
 2. 创建专用 Namespace、ServiceAccount 和只读 RBAC。下面的 YAML 只授予 `get/list/watch`：
 
    ```bash
