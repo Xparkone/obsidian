@@ -147,12 +147,14 @@
 - Go 和 Python 均自动读取运行目录的 `.env`，也支持 `STATUS_API_ENV_FILE` 指定其他文件。
 - 已实现环境变量优先级：进程环境变量覆盖 `.env` 文件中的同名键。
 - 新增 `STATUS_SERVICES` 业务服务探针配置和 `/api/v1/services` 接口；`STATUS_MIDDLEWARES` 继续用于中间件探针。
+- 新增 `KUBERNETES_API_TOKEN` 和 `KUBERNETES_CA_FILE`，支持服务运行在 Kubernetes 集群外时访问指定 API 地址。
 - 新增 Go/Python 各自的 `.env.example`，不包含真实凭据。
 
 ### 尚未验证的可能性
 
 - 尚未在真实 Linux/Kubernetes 环境验证 `.env` 文件权限、ServiceAccount、业务服务 DNS 和中间件地址连通性。
 - `.env` 解析器只支持简单 `KEY=VALUE`、单/双引号和注释，不支持 Shell 命令替换或变量展开。
+- 尚未支持从 `~/.kube/config` 读取客户端证书；如果 kubectl 使用证书认证，需要后续增加客户端证书配置。
 
 ### 已完成
 

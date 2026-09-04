@@ -45,15 +45,16 @@ def host_status() -> dict[str, Any]:
 class KubernetesClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.token = ""
-        try:
-            with open("/var/run/secrets/kubernetes.io/serviceaccount/token", encoding="utf-8") as stream:
-                self.token = stream.read().strip()
-        except OSError:
-            pass
+        self.token = os.getenv("KUBERNETES_API_TOKEN", "").strip()
+        if not self.token:
+            try:
+                with open("/var/run/secrets/kubernetes.io/serviceaccount/token", encoding="utf-8") as stream:
+                    self.token = stream.read().strip()
+            except OSError:
+                pass
         self.context = ssl.create_default_context()
         try:
-            self.context.load_verify_locations("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+            self.context.load_verify_locations(os.getenv("KUBERNETES_CA_FILE", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"))
         except OSError:
             pass
 

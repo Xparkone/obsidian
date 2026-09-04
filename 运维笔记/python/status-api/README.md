@@ -54,6 +54,8 @@ STATUS_API_HOST=0.0.0.0
 STATUS_API_PORT=8080
 STATUS_API_TOKEN=replace-with-a-random-token
 KUBERNETES_API_URL=https://kubernetes.default.svc
+KUBERNETES_API_TOKEN=replace-with-a-read-only-token
+KUBERNETES_CA_FILE=/path/to/ca.crt
 STATUS_SERVICES=order-api|http|http://order-api.prod.svc:8080/health
 STATUS_MIDDLEWARES=redis-prod|redis|redis.prod.svc:6379
 ```
@@ -115,6 +117,8 @@ curl -sS \
 | `STATUS_API_TOKEN` | 空 | Bearer Token；为空时受保护接口返回 401 |
 | `STATUS_API_ENV_FILE` | `.env` | 自定义环境变量文件路径 |
 | `KUBERNETES_API_URL` | `https://kubernetes.default.svc` | Kubernetes API 地址 |
+| `KUBERNETES_API_TOKEN` | 空 | 集群外访问 Kubernetes 时使用的只读 Token |
+| `KUBERNETES_CA_FILE` | 集群内 CA | Kubernetes API 的 CA 文件路径 |
 | `STATUS_SERVICES` | 空 | 业务服务健康探针，格式为 `name|type|target` |
 | `STATUS_MIDDLEWARES` | 空 | `name|type|target` 逗号分隔 |
 
@@ -141,6 +145,16 @@ python3 -m status_api
 ```
 
 真实集群中的 ServiceAccount 和 RBAC 尚未在本地验证。
+
+如果服务运行在 Kubernetes 集群外，需要在 `.env` 中填写实际 API 地址，并提供只读 Token：
+
+```dotenv
+KUBERNETES_API_URL=https://apiserver.cluster.local:6443
+KUBERNETES_API_TOKEN=不要把真实值提交到 Git
+KUBERNETES_CA_FILE=/etc/kubernetes/pki/ca.crt
+```
+
+当前服务不会自动读取 `~/.kube/config`；如果 `kubectl` 使用的是客户端证书，还需要后续增加客户端证书配置。
 
 ## 7. 安全边界
 

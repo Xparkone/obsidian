@@ -23,9 +23,17 @@ func newKubeClient() *kubeClient {
 	if base == "" {
 		base = "https://kubernetes.default.svc"
 	}
-	tokenBytes, _ := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	token := strings.TrimSpace(os.Getenv("KUBERNETES_API_TOKEN"))
+	if token == "" {
+		tokenBytes, _ := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+		token = strings.TrimSpace(string(tokenBytes))
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if caBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); err == nil {
+	caPath := os.Getenv("KUBERNETES_CA_FILE")
+	if caPath == "" {
+		caPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	}
+	if caBytes, err := os.ReadFile(caPath); err == nil {
 		pool, poolErr := x509.SystemCertPool()
 		if pool == nil {
 			pool = x509.NewCertPool()
@@ -34,7 +42,7 @@ func newKubeClient() *kubeClient {
 			transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 		}
 	}
-	return &kubeClient{baseURL: base, token: strings.TrimSpace(string(tokenBytes)), client: &http.Client{Timeout: 4 * time.Second, Transport: transport}}
+	return &kubeClient{baseURL: base, token: token, client: &http.Client{Timeout: 4 * time.Second, Transport: transport}}
 }
 
 func (k *kubeClient) get(ctx context.Context, path string, out any) error {
