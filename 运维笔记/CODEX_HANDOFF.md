@@ -150,6 +150,8 @@
 - 已实现环境变量优先级：进程环境变量覆盖 `.env` 文件中的同名键。
 - 新增 `STATUS_SERVICES` 业务服务探针配置和 `/api/v1/services` 接口；`STATUS_MIDDLEWARES` 继续用于中间件探针。
 - 新增 `KUBERNETES_API_TOKEN` 和 `KUBERNETES_CA_FILE`，支持服务运行在 Kubernetes 集群外时访问指定 API 地址。
+- Go/Python Pod 查询现在按 `namespace` 使用 Kubernetes namespaced API 路径；未指定时查询全部 Namespace，并区分 `NAMESPACE_NOT_FOUND`、`PODS_FORBIDDEN` 和一般不可用。
+- Go/Python Pod 汇总现在新增 `items`，返回所有已查询 Pod 的 Namespace、名称、Phase、Ready、重启次数和等待原因；`unhealthy` 保留为异常 Pod 子集。
 - 新增 Go/Python 各自的 `.env.example`，不包含真实凭据。
 
 ### 尚未验证的可能性
@@ -167,7 +169,7 @@
 ### 验证结果
 
 - Go：`go test ./...`、`go vet ./...` 通过。
-- Python：`unittest` 2 项测试通过，`compileall` 通过。
+- Python：`unittest` 3 项测试通过，`compileall` 通过。
 - `git diff --check` 通过。
 
 ### 下一步

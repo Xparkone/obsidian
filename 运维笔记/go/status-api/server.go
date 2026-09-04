@@ -50,7 +50,8 @@ func (s *server) authenticate(next http.HandlerFunc) http.HandlerFunc {
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	ks, ps := s.kube.collect(ctx)
+	namespace := requestedNamespace(r)
+	ks, ps := s.kube.collect(ctx, namespace)
 	data := StatusData{Host: collectHost(ctx), Kubernetes: ks, Pods: ps, Services: runProbes(ctx, s.services), Middlewares: runProbes(ctx, s.probes)}
 	writeJSON(w, http.StatusOK, response(r, data))
 }
@@ -58,11 +59,11 @@ func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, collectHost(r.Context()))
 }
 func (s *server) handleK8s(w http.ResponseWriter, r *http.Request) {
-	ks, _ := s.kube.collect(r.Context())
+	ks, _ := s.kube.collect(r.Context(), requestedNamespace(r))
 	writeJSON(w, http.StatusOK, ks)
 }
 func (s *server) handlePods(w http.ResponseWriter, r *http.Request) {
-	_, ps := s.kube.collect(r.Context())
+	_, ps := s.kube.collect(r.Context(), requestedNamespace(r))
 	writeJSON(w, http.StatusOK, ps)
 }
 func (s *server) handleMiddlewares(w http.ResponseWriter, r *http.Request) {
@@ -100,6 +101,10 @@ func response(r *http.Request, data StatusData) StatusResponse {
 		}
 	}
 	return StatusResponse{SchemaVersion: "v1", RequestID: fmt.Sprintf("%d", time.Now().UnixNano()), Status: status, ObservedAt: time.Now().UTC(), Data: data, Errors: []string{}}
+}
+
+func requestedNamespace(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("namespace"))
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

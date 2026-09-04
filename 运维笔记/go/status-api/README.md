@@ -321,6 +321,16 @@ curl -sS \
   'http://127.0.0.1:8080/api/v1/k8s/pods?namespace=prod' | jq
 ```
 
+Namespace 名称必须使用 Kubernetes 中的真实名称。例如集群中是 `production` 时，应请求：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer $STATUS_API_TOKEN" \
+  'http://127.0.0.1:8080/api/v1/k8s/pods?namespace=production' | jq
+```
+
+不指定 `namespace` 查询全部 Namespace 下的全部 Pod。返回中的 `items` 数组包含每个 Pod 的 Namespace、名称、Phase、Ready、重启次数和等待原因；`unhealthy` 是异常 Pod 子集。指定的 Namespace 不存在时返回 `status=unknown`、`reason=NAMESPACE_NOT_FOUND`，无权限时返回 `reason=PODS_FORBIDDEN`。
+
 状态值为 `healthy`、`degraded`、`unhealthy`、`unknown`。汇总接口包含 `schema_version`、`request_id`、`observed_at`、`data` 和 `errors` 字段。
 
 ## 6. 环境变量

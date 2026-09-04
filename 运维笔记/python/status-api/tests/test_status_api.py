@@ -1,6 +1,6 @@
 import unittest
 
-from status_api.collectors import summarize_pods
+from status_api.collectors import pod_api_path, summarize_pods
 from status_api.http_api import aggregate
 
 
@@ -10,11 +10,16 @@ class StatusAPITest(unittest.TestCase):
         summarize_pods(summary, [{"metadata": {"namespace": "prod", "name": "api"}, "status": {"phase": "Running", "containerStatuses": [{"ready": False, "restartCount": 3, "state": {"waiting": {"reason": "CrashLoopBackOff"}}}]}}])
         self.assertEqual(summary["total"], 1)
         self.assertEqual(summary["status"], "degraded")
+        self.assertEqual(len(summary["items"]), 1)
         self.assertEqual(summary["unhealthy"][0]["reason"], "CrashLoopBackOff")
 
     def test_aggregate(self):
         data = {"host": {"status": "healthy"}, "kubernetes": {"status": "healthy"}, "pods": {"status": "healthy"}, "middlewares": [{"status": "unhealthy"}]}
         self.assertEqual(aggregate(data), "unhealthy")
+
+    def test_pod_api_path(self):
+        self.assertEqual(pod_api_path(), "/api/v1/pods")
+        self.assertEqual(pod_api_path("production"), "/api/v1/namespaces/production/pods")
 
 
 if __name__ == "__main__":

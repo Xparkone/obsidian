@@ -65,24 +65,41 @@ class KubernetesClient:
                 raise urllib.error.HTTPError(request.full_url, response.status, response.reason, response.headers, None)
             return json.loads(response.read(8 * 1024 * 1024))
 
+
+def pod_api_path(namespace: str | None = None) -> str:
+    if not namespace:
+        return "/api/v1/pods"
+    return f"/api/v1/namespaces/{urllib.parse.quote(namespace, safe='')}/pods"
+
     def collect(self, namespace: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         started = time.monotonic()
         cluster: dict[str, Any] = {"status": "healthy", "observed_at": now(), "node_count": 0, "ready_node_count": 0, "pod_count": 0}
         pods: dict[str, Any] = {"status": "healthy", "observed_at": now(), "total": 0, "running": 0, "pending": 0, "failed": 0, "succeeded": 0, "unknown": 0, "unhealthy": []}
+        if namespace:
+            pods["namespace"] = namespace
         try:
             cluster["version"] = self.get_json("/version").get("gitVersion", "")
             nodes = self.get_json("/api/v1/nodes").get("items", [])
             cluster["node_count"] = len(nodes)
             cluster["ready_node_count"] = sum(1 for node in nodes if any(c.get("type") == "Ready" and c.get("status") == "True" for c in node.get("status", {}).get("conditions", [])))
-            pod_path = f"/api/v1/namespaces/{urllib.parse.quote(namespace, safe='')}/pods" if namespace else "/api/v1/pods"
-            pod_items = self.get_json(pod_path).get("items", [])
+            try:
+                pod_items = self.get_json(pod_api_path(namespace)).get("items", [])
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404 and namespace:
+                    pods.update(status="unknown", reason="NAMESPACE_NOT_FOUND")
+                elif exc.code == 403:
+                    pods.update(status="unknown", reason="PODS_FORBIDDEN")
+                else:
+                    pods.update(status="degraded", reason="PODS_UNAVAILABLE")
+                pod_items = []
             summarize_pods(pods, pod_items)
             cluster["pod_count"] = pods["total"]
             if cluster["ready_node_count"] < cluster["node_count"]:
                 cluster.update(status="degraded", reason="NODE_NOT_READY")
         except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
             cluster.update(status="unknown", reason="KUBERNETES_UNAVAILABLE")
-            pods.update(status="unknown", reason="KUBERNETES_UNAVAILABLE")
+            if pods["status"] == "healthy":
+                pods.update(status="unknown", reason="KUBERNETES_UNAVAILABLE")
         latency = int((time.monotonic() - started) * 1000)
         cluster["latency_ms"] = latency
         pods["latency_ms"] = latency
@@ -100,9 +117,11 @@ def summarize_pods(summary: dict[str, Any], items: list[dict[str, Any]]) -> None
         ready = all(container.get("ready", False) for container in containers) if containers else False
         restarts = sum(int(container.get("restartCount", 0)) for container in containers)
         reason = next((container.get("state", {}).get("waiting", {}).get("reason") for container in containers if container.get("state", {}).get("waiting")), "")
+        pod_status = {"namespace": pod.get("metadata", {}).get("namespace", ""), "name": pod.get("metadata", {}).get("name", ""), "phase": phase, "ready": ready, "restart_count": restarts, "reason": reason}
+        summary.setdefault("items", []).append(pod_status)
         if (phase == "Running" and not ready) or phase == "Failed" or reason:
             if len(summary["unhealthy"]) < 50:
-                summary["unhealthy"].append({"namespace": pod.get("metadata", {}).get("namespace", ""), "name": pod.get("metadata", {}).get("name", ""), "phase": phase, "ready": ready, "restart_count": restarts, "reason": reason})
+                summary["unhealthy"].append(pod_status)
             summary.update(status="degraded", reason="POD_UNHEALTHY")
 
 

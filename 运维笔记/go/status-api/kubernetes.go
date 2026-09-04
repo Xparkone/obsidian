@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,13 @@ type kubeClient struct {
 	baseURL, token string
 	client         *http.Client
 }
+
+type kubeAPIError struct {
+	StatusCode int
+	Status     string
+}
+
+func (e *kubeAPIError) Error() string { return "kubernetes api returned " + e.Status }
 
 func newKubeClient() *kubeClient {
 	base := strings.TrimRight(os.Getenv("KUBERNETES_API_URL"), "/")
@@ -62,7 +70,7 @@ func (k *kubeClient) get(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("kubernetes api returned %s", resp.Status)
+		return &kubeAPIError{StatusCode: resp.StatusCode, Status: resp.Status}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(out)
 }
@@ -97,10 +105,18 @@ type kubePod struct {
 	} `json:"status"`
 }
 
-func (k *kubeClient) collect(ctx context.Context) (KubernetesStatus, PodsSummary) {
+func podAPIPath(namespace string) string {
+	if namespace == "" {
+		return "/api/v1/pods"
+	}
+	return "/api/v1/namespaces/" + url.PathEscape(namespace) + "/pods"
+}
+
+func (k *kubeClient) collect(ctx context.Context, namespace string) (KubernetesStatus, PodsSummary) {
 	started := time.Now()
 	ks := KubernetesStatus{ComponentStatus: ComponentStatus{Status: Healthy, ObservedAt: time.Now()}}
 	ps := PodsSummary{ComponentStatus: ComponentStatus{Status: Healthy, ObservedAt: time.Now()}}
+	ps.Namespace = namespace
 	var version kubeVersion
 	if err := k.get(ctx, "/version", &version); err != nil {
 		ks.Status, ks.Reason = Unknown, "KUBERNETES_UNAVAILABLE"
@@ -128,8 +144,16 @@ func (k *kubeClient) collect(ctx context.Context) (KubernetesStatus, PodsSummary
 		}
 	}
 	var pods kubeList
-	if err := k.get(ctx, "/api/v1/pods", &pods); err != nil {
+	if err := k.get(ctx, podAPIPath(namespace), &pods); err != nil {
 		ps.Status, ps.Reason = Degraded, "PODS_UNAVAILABLE"
+		if apiErr, ok := err.(*kubeAPIError); ok {
+			switch apiErr.StatusCode {
+			case http.StatusNotFound:
+				ps.Status, ps.Reason = Unknown, "NAMESPACE_NOT_FOUND"
+			case http.StatusForbidden:
+				ps.Status, ps.Reason = Unknown, "PODS_FORBIDDEN"
+			}
+		}
 	} else {
 		summarizePods(&ps, pods.Items)
 	}
@@ -169,9 +193,11 @@ func summarizePods(ps *PodsSummary, items []json.RawMessage) {
 				reason = c.State.Waiting.Reason
 			}
 		}
+		podStatus := PodStatus{Namespace: p.Metadata.Namespace, Name: p.Metadata.Name, Phase: p.Status.Phase, Ready: ready, RestartCount: restarts, Reason: reason}
+		ps.Items = append(ps.Items, podStatus)
 		if p.Status.Phase == "Running" && !ready || reason != "" || p.Status.Phase == "Failed" {
 			if len(ps.Unhealthy) < 50 {
-				ps.Unhealthy = append(ps.Unhealthy, PodStatus{Namespace: p.Metadata.Namespace, Name: p.Metadata.Name, Phase: p.Status.Phase, Ready: ready, RestartCount: restarts, Reason: reason})
+				ps.Unhealthy = append(ps.Unhealthy, podStatus)
 			}
 			ps.Status = Degraded
 		}

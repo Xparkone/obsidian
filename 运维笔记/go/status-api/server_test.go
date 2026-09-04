@@ -11,6 +11,15 @@ func testServer() *server {
 	return &server{token: "test-token", kube: &kubeClient{baseURL: "http://127.0.0.1:1", client: http.DefaultClient}}
 }
 
+func TestPodAPIPath(t *testing.T) {
+	if got := podAPIPath(""); got != "/api/v1/pods" {
+		t.Fatalf("all namespaces path = %q", got)
+	}
+	if got := podAPIPath("production"); got != "/api/v1/namespaces/production/pods" {
+		t.Fatalf("namespace path = %q", got)
+	}
+}
+
 func TestHealthzDoesNotRequireToken(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
@@ -47,7 +56,7 @@ func TestSummarizePods(t *testing.T) {
 	}
 	var got PodsSummary
 	summarizePods(&got, list.Items)
-	if got.Total != 2 || got.Running != 2 || len(got.Unhealthy) != 1 {
+	if got.Total != 2 || got.Running != 2 || len(got.Items) != 2 || len(got.Unhealthy) != 1 {
 		t.Fatalf("unexpected summary: %+v", got)
 	}
 }

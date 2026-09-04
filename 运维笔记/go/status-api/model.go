@@ -54,12 +54,14 @@ type PodStatus struct {
 
 type PodsSummary struct {
 	ComponentStatus
+	Namespace string      `json:"namespace,omitempty"`
 	Total     int         `json:"total"`
 	Running   int         `json:"running"`
 	Pending   int         `json:"pending"`
 	Failed    int         `json:"failed"`
 	Succeeded int         `json:"succeeded"`
 	Unknown   int         `json:"unknown"`
+	Items     []PodStatus `json:"items,omitempty"`
 	Unhealthy []PodStatus `json:"unhealthy,omitempty"`
 }
 
