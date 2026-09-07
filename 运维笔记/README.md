@@ -40,6 +40,7 @@
 - [Istio详细入门与实践指南.md](容器编排/Istio详细入门与实践指南.md)
 - [Argo-项目详解.md](容器编排/Argo-项目详解.md)
 - [Velero-Kubernetes备份恢复与迁移指南.md](容器编排/Velero-Kubernetes备份恢复与迁移指南.md)
+- [OpenKruise-原理作用使用与部署指南.md](容器编排/OpenKruise-原理作用使用与部署指南.md)
 
 ### CI-CD
 

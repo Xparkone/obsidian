@@ -65,6 +65,41 @@
 - 不在交接文档中记录密码、Token、Cookie、完整认证 Header、云密钥或完整环境变量。
 - 不能把“进程健康、HTTP 200、日志文件存在”当作审计端到端成功；需要验证事件生成、落库/文件、外部送达和归档。
 
+## 本阶段：OpenKruise 文档（2026-09-07）
+
+### 当前目标
+
+整理 OpenKruise 的定位、作用、核心资源、使用方式、Helm 部署、升级回滚、卸载和生产排障说明。
+
+### 已确认事实
+
+- 新文档归入 `容器编排/`，根目录 `README.md` 已增加索引。
+- 文档按 OpenKruise 官方 v1.9 文档核对，示例 Helm Chart 版本为 `1.9.0`。
+- 官方安装方式支持 Helm 3.5+，Chart 仓库为 `https://openkruise.github.io/charts/`；安装参数包含 `featureGates`、`installation.namespace`、manager 副本与资源、daemon 参数等。
+- OpenKruise 通过 CRD、Controller Manager、Admission Webhook 和可选 KruiseDaemon 扩展 Kubernetes；主要资源包含 CloneSet、Advanced StatefulSet、Advanced DaemonSet、SidecarSet、BroadcastJob、UnitedDeployment、ContainerRecreateRequest 和 PodUnavailableBudget。
+- 官方说明 OpenKruise 1.5 起不再支持 dockershim，较新版本对 Kubernetes 与 CRI 有兼容约束；自 1.7.3 起 Helm 卸载会检查是否仍存在 Kruise CR。
+
+### 尚未验证的可能性
+
+- 未在真实 Kubernetes 集群执行安装、Webhook 注入、原地升级、CRR、HPA/PUB 或卸载演练。
+- 目标集群版本、CRI、镜像仓库、网络策略、GitOps 工具和 FeatureGate 尚未确认；文档命令需按实际 CRD schema 和兼容矩阵调整。
+
+### 已完成
+
+- 新增 `容器编排/OpenKruise-原理作用使用与部署指南.md`，涵盖概念、资源选型、Helm 部署、CloneSet/StatefulSet/DaemonSet/SidecarSet/CRR/PUB 示例、GitOps/HPA 配合、升级回滚、卸载、故障排查和生产清单。
+- 更新根目录 `README.md` 的容器编排索引。
+
+### 验证结果
+
+- 新文档 Markdown 代码围栏共 74 个，数量为偶数。
+- 新文档内部相对链接未发现缺失目标。
+- `git diff --check` 通过（新文件未纳入 diff stat 时仍需以 `git diff --no-index /dev/null <file>` 或暂存后复核）。
+
+### 下一步
+
+- 如需落地，先执行文档第 5 节只读预检，再在测试集群按第 6 节部署并完成第 7 节最小验收。
+- 根据目标 Kubernetes/CRI 版本、镜像仓库和 GitOps 归属生成经过评审的 values 与 CR YAML。
+
 ## 本阶段：Status API MVP（2026-09-04）
 
 ### 当前目标
