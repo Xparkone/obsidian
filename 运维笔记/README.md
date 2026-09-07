@@ -107,6 +107,7 @@
 ### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md](监控/Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md)
 - [Grafana-Kubernetes与宿主机通用仪表盘模板说明.md](监控/Grafana-Kubernetes与宿主机通用仪表盘模板说明.md)
 - [Grafana-Node-Exporter-宿主机监控仪表盘.json](监控/Grafana-Node-Exporter-宿主机监控仪表盘.json)
 - [Grafana-Node-Exporter-宿主机性能深挖仪表盘.json](监控/Grafana-Node-Exporter-宿主机性能深挖仪表盘.json)
