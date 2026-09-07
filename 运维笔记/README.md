@@ -26,6 +26,7 @@
 ### 容器编排
 
 - [K8s-定义.md](容器编排/K8s-定义.md)
+- [Kubernetes-从入门到生产实践：组件资源与常用操作指南.md](容器编排/Kubernetes-从入门到生产实践：组件资源与常用操作指南.md)
 - [K8s-组件详解.md](容器编排/K8s-组件详解.md)
 - [K8s-资源全览.md](容器编排/K8s-资源全览.md)
 - [K8s-etcd详解.md](容器编排/K8s-etcd详解.md)
@@ -142,6 +143,7 @@
 ### 脚本与工具
 
 - [目录索引](脚本与工具/README.md)
+- [`top` 指标详解与性能排障指南](脚本与工具/top-命令指标详解与性能排障指南.md)
 - [kubectl 工具](脚本与工具/kubectl/)：[`k`](脚本与工具/kubectl/kubectl-快捷工具-k.md) · [`kf`](脚本与工具/kubectl/kubectl-交互式工具-kf.md)
 - [Shell 命令审计](脚本与工具/shell-audit/)：Bash/Fish 部署、日志轮转与卸载
 

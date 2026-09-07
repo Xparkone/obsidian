@@ -65,6 +65,46 @@
 - 不在交接文档中记录密码、Token、Cookie、完整认证 Header、云密钥或完整环境变量。
 - 不能把“进程健康、HTTP 200、日志文件存在”当作审计端到端成功；需要验证事件生成、落库/文件、外部送达和归档。
 
+## 本阶段：Kubernetes 总览与资源使用指南（2026-09-07）
+
+### 当前目标
+
+新增一篇按日常使用频率组织的 Kubernetes 中文总览文档，说明组件、资源、使用方式、使用后的效果、验证方法和常见排障路径，并同步容器编排索引。
+
+### 已确认事实
+
+- 新增 `容器编排/Kubernetes-从入门到生产实践：组件资源与常用操作指南.md`，覆盖控制平面、节点组件、CNI/CoreDNS/CSI/入口扩展，以及 Namespace、Pod、Deployment、ReplicaSet、Service、ConfigMap、Secret、Job、CronJob、StatefulSet、DaemonSet、EndpointSlice、Ingress/Gateway API、NetworkPolicy、PV/PVC/StorageClass、RBAC、Pod Security、Quota、HPA、PDB、调度、CRD、Node、Lease、APIService、Webhook 和 etcd。
+- 文档按“最常用 → 较少用”排序，包含完整发布示例、真实请求验收要求、Pending/ImagePullBackOff/CrashLoopBackOff/Service 不通的排障顺序和命令速查。
+- `README.md` 的“容器编排”索引已加入新文档；原工作区中其他文件的未提交变更未在本阶段处理。
+
+### 基于证据的判断
+
+- 现有仓库已经有组件、资源、Pod 生命周期、Ingress、etcd、Velero 等专题，因此新增文档作为入口和使用顺序说明，并通过专题链接避免重复维护。
+- Kubernetes 文档当前仍强调对象 `spec`/`status`、API Server、控制器、Namespace 和组件边界；文档明确区分 API 请求成功、对象状态正常和端到端业务请求成功。
+
+### 尚未验证的可能性
+
+- 未连接或修改任何真实 Kubernetes 集群；文档中的命令、镜像、域名、Controller、CNI、CSI、Metrics Server 和存储类均为通用示例。
+- 不同 Kubernetes 版本、发行版和扩展实现可能需要调整字段、注解、入口、网络策略和存储参数。
+
+### 已完成
+
+- 新增总览文档并按组件/资源使用频率组织内容。
+- 更新根 `README.md` 的容器编排索引。
+- 读取官方 Kubernetes 文档页面，核对组件、对象、Namespace、API 访问和版本边界说明。
+
+### 验证结果
+
+- 新文档 728 行；Markdown 围栏 88 个且成对。
+- 12 个 YAML 代码块通过 Ruby YAML 解析。
+- 新文档相对链接均解析到现有文件；`git diff --check` 通过。
+- 未执行集群部署、镜像拉取、HTTP 访问、RBAC、NetworkPolicy、CSI 或 HPA 的 live 验证。
+
+### 下一步
+
+- 若要落地到具体集群，先记录 Kubernetes 版本、发行版、当前 context、权限、CNI、CSI、入口 Controller、Metrics Server、镜像仓库和目标 Namespace。
+- 按文档第 11 节在隔离 Namespace 做最小 Deployment/Service 发布和真实请求验收，再按需扩展存储、权限、网络策略、入口和自动伸缩。
+
 ## 本阶段：OpenKruise 文档（2026-09-07）
 
 ### 当前目标
@@ -240,3 +280,36 @@
 ### 下一步
 
 - 若后续将 Markdown 中的脚本提取为独立 `.sh` 文件，需要另行确认命名、执行权限和发布方式；本阶段未做提取或执行验证。
+
+## 本阶段：top 命令指标与性能排障文档（2026-09-07）
+
+### 当前目标
+
+编写 `top` 命令常见指标、阅读方法和主机性能初步排障 Runbook，并补充分类索引。
+
+### 已确认事实
+
+- 文档归入 `脚本与工具/`，文件为 `脚本与工具/top-命令指标详解与性能排障指南.md`。
+- 内容覆盖 Linux `procps-ng` 常见摘要行（`load average`、Tasks、CPU、Mem、Swap）、进程列（`PID`、`PR`、`NI`、`VIRT`、`RES`、`SHR`、`S`、`%CPU`、`%MEM`、`TIME+`、`COMMAND`）、线程视图、容器/Kubernetes 差异及 CPU/I/O/内存排障场景。
+- 已在 `脚本与工具/README.md` 和根目录 `README.md` 增加入口；同时说明 macOS `top` 与 Linux 版本的参数和列名差异。
+
+### 尚未验证的可能性
+
+- 命令示例未在目标 Linux 主机、容器或 Kubernetes 集群现场执行；`top -o`、`ps --sort` 等参数需按发行版实现确认。
+- 文档中的阈值是排障经验起点，不是目标环境的正式告警规则。
+
+### 已完成
+
+- 新增 `top` 指标详解与性能排障文档，包含可复制的只读命令集和记录模板。
+- 更新脚本工具索引和根目录索引。
+
+### 验证结果
+
+- 新文档共 484 行，Markdown 代码围栏 54 个，数量为偶数。
+- 新文档、脚本工具 README 和根 README 的新增链接目标均存在。
+- `git diff --check` 通过；新文件使用 `git diff --no-index --check /dev/null <file>` 检查，无空白错误。
+
+### 下一步
+
+- 如需生产落地，先在目标主机按文档第 9 节执行只读采样，再结合 `vmstat`、`iostat`、`pidstat`、应用日志和业务指标确认根因。
+- 若需要监控告警，应根据 CPU 核数、业务延迟、容器 requests/limits 和历史基线单独制定阈值。

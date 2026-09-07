@@ -212,3 +212,273 @@ vmstat 1 5
 cat /proc/sys/vm/swappiness
 swapon --show
 ```
+
+## 4. 进程表：每一个常见列是什么意思
+
+Linux 常见进程表：
+
+```text
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+ 1234 app       20   0  4120m  820m  120m R  185.0  5.2   12:31.44 java
+```
+
+### 4.1 身份、调度与地址空间
+
+| 列 | 含义 | 如何使用 |
+|---|---|---|
+| `PID` | 进程 ID | 后续用 `ps`、`strace`、`lsof`、`jstack` 等定位目标 |
+| `USER` | 进程所属用户 | 判断权限边界、服务归属和异常账号 |
+| `PR` | 内核调度优先级显示值 | 普通进程常见为 20；实时任务会不同 |
+| `NI` | nice 值，范围通常为 -20～19 | 越小通常优先级越高；修改需要权限且可能影响其他任务 |
+| `VIRT` | 虚拟地址空间总量 | 包含代码、共享库、映射文件、保留地址和可能未驻留页面；不等于实际占用内存 |
+| `RES` | 当前驻留在物理内存的非 Swap 部分 | 估算单进程实际物理内存占用时比 `VIRT` 有用，但共享页会重复计数 |
+| `SHR` | `RES` 中可能与其他进程共享的部分 | 不能简单从 `RES` 减去 `SHR` 得到精确私有内存 |
+
+`VIRT` 很大并不自动表示内存泄漏。需要结合 `RES`/`PSS`、增长趋势和应用自身堆指标判断：
+
+```bash
+grep -E 'VmPeak|VmSize|VmRSS|RssAnon|RssFile|VmSwap' /proc/<PID>/status
+cat /proc/<PID>/smaps_rollup 2>/dev/null
+```
+
+### 4.2 状态、资源比例和累计时间
+
+| 列 | 含义 | 典型状态/解释 |
+|---|---|---|
+| `S` | 进程状态 | `R` 运行/就绪，`S` 可中断睡眠，`D` 不可中断睡眠，`T` 停止，`Z` 僵尸，`I` 空闲内核线程（版本相关） |
+| `%CPU` | 最近采样周期内的 CPU 使用率 | 多核系统单进程可能超过 100%；通常 100% 约等于占满一个逻辑 CPU |
+| `%MEM` | 进程 `RES` 占物理内存的比例 | 受共享页和采样影响，适合排序，不等于精确服务内存 |
+| `TIME+` | 进程累计消耗的 CPU 时间 | 不是墙上时间；长期运行服务自然可能很大 |
+| `COMMAND` | 进程名或命令行 | 按 `c` 查看完整参数；参数中可能出现敏感信息 |
+
+一些发行版还显示 `CODE`、`DATA`、`nTH`、`P`、`TIME`、`SWAP` 等列。先按 `f` 查看本机定义，不要假设所有列在每个系统都存在。
+
+### 4.3 线程视图
+
+进程总体 `%CPU` 正常，但应用响应变慢时，可能只有一个线程阻塞或打满 CPU：
+
+```bash
+top -H -p <PID>
+ps -L -p <PID> -o pid,tid,psr,stat,pcpu,pmem,time,comm
+```
+
+`TID` 是线程 ID，`psr` 是最近运行所在的 CPU。Java、Go、Python、数据库和代理程序都可能需要线程级定位，不能只看进程总量。
+
+## 5. 一套可复用的阅读流程
+
+### 第一步：确认采样范围和机器规模
+
+```bash
+date
+hostname
+nproc
+uptime
+top -b -n 1 | sed -n '1,8p'
+```
+
+记录主机、时间、逻辑 CPU 数量、运行时长和第一屏摘要。多次采样至少持续 30～60 秒，避免把瞬时尖峰当成持续故障。
+
+### 第二步：先判断是 CPU、I/O 还是内存
+
+| 现象 | 更可能的方向 | 下一步 |
+|---|---|---|
+| `us`/`sy` 高，`R` 任务多，`wa` 低 | CPU 竞争或计算密集 | 按 `P`，再用 `top -H -p`、`pidstat -u` 定位 |
+| `load average` 高，`wa` 高，`D` 任务多 | 存储/NFS/块设备等待 | `vmstat 1`、`iostat -xz 1`、检查磁盘和挂载 |
+| `avail Mem` 低，Swap 持续换入换出 | 内存压力 | `free -h`、`vmstat`、`/proc/<PID>/status`、OOM 日志 |
+| `st` 高，应用 CPU 并不高 | 虚拟机被宿主机抢占 | 查看云监控、实例规格和同节点资源竞争 |
+| 总体 CPU 不高，但单个核心 100% | 单线程瓶颈 | 按 `1` 看每核，`top -H -p` 看线程 |
+
+### 第三步：按资源排序定位候选进程
+
+```bash
+top -b -n 1 -o %CPU | sed -n '1,25p'
+top -b -n 1 -o %MEM | sed -n '1,25p'
+ps -eo pid,ppid,user,stat,pcpu,pmem,rss,vsz,etime,cmd --sort=-pcpu | head -n 20
+ps -eo pid,ppid,user,stat,pcpu,pmem,rss,vsz,etime,cmd --sort=-pmem | head -n 20
+```
+
+`top -o` 是实现相关参数，若不支持就进入交互界面按 `P`/`M`。命令行中的 `--sort=-pcpu` 也可能因 BSD/GNU `ps` 差异而不同，应先用 `ps --help` 或 `man ps` 确认。
+
+### 第四步：沿 PID 补充证据
+
+```bash
+PID=1234
+ps -p "$PID" -o pid,ppid,user,stat,pcpu,pmem,rss,vsz,etime,lstart,cmd
+readlink /proc/"$PID"/exe
+cat /proc/"$PID"/limits
+lsof -p "$PID" | sed -n '1,80p'
+```
+
+根据方向继续：
+
+```bash
+pidstat -p "$PID" -u -r -d -w 1 5   # CPU、缺页、I/O、上下文切换
+iostat -xz 1 5                      # 设备利用率、等待和队列
+vmstat 1 5                          # 运行队列、内存、换页、I/O、上下文切换
+```
+
+这些命令只读采集，但输出中可能包含路径、用户名和命令行，发送前要脱敏。
+
+## 6. 常见场景与判断方法
+
+### 6.1 CPU 使用率高
+
+现象：`us` 或 `sy` 持续高，某些进程 `%CPU` 排在前面。
+
+```bash
+top -H -p <PID>
+pidstat -p <PID> -t -u 1 5
+```
+
+判断要点：
+
+- 先区分用户态计算（`us`）和内核态/系统调用（`sy`）。
+- 多核机器单进程 200% 约表示占用两个逻辑 CPU，不是百分之二百的整机容量。
+- `TIME+` 大只说明累计消耗多，不能证明当前正在高 CPU；以连续采样 `%CPU` 为准。
+- 检查是否在备份、压缩、GC、批处理、加密、正则匹配或重试循环。
+
+### 6.2 Load 高但 CPU 使用率低
+
+常见原因是不可中断 I/O 等待：
+
+```bash
+top -H
+ps -eo pid,ppid,stat,wchan:32,pcpu,pmem,cmd | awk '$3 ~ /D/ {print}'
+iostat -xz 1 5
+```
+
+重点关注 `D` 状态数量、`await`、`%util`、设备队列、NFS/网络文件系统和云盘限速。`kill -9` 未必能立即结束处于内核不可中断路径的进程，需先解决底层 I/O 阻塞。
+
+### 6.3 内存看似快满
+
+先看 `avail Mem`，再看 Swap 和进程 RSS：
+
+```bash
+free -h
+vmstat 1 5
+ps -eo pid,user,stat,rss,pmem,cmd --sort=-rss | head -n 20
+```
+
+如果 `buff/cache` 大而 `avail Mem` 仍充足，通常是正常缓存；如果 `avail Mem` 低、Swap 活跃或内核日志出现 OOM，才需要沿进程、容器 limit、页缓存和应用堆继续查。
+
+### 6.4 Swap 已使用但业务正常
+
+内核可能把长期不活跃页面换出，Swap 占用不会自动归零。关注的是 `vmstat` 的 `si/so` 是否持续、延迟是否上升、`avail Mem` 是否紧张。不要只因为 `Swap used > 0` 就重启服务或清空 Swap。
+
+### 6.5 `%CPU` 低但服务变慢
+
+可能是锁等待、线程池耗尽、网络延迟、磁盘延迟、GC、外部依赖或连接数耗尽。`top` 只能排除一部分主机资源问题，应继续查看：
+
+```bash
+pidstat -p <PID> -w -d 1 5
+ss -s
+cat /proc/<PID>/status | grep -E 'Threads|State|voluntary_ctxt_switches|nonvoluntary_ctxt_switches'
+```
+
+并结合应用日志、请求延迟、数据库慢查询和队列指标，不要把“CPU 不高”当成服务健康证明。
+
+### 6.6 僵尸进程持续增加
+
+```bash
+ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print}'
+```
+
+记录僵尸的父 PID，检查父进程是否正确回收子进程。生产环境不要直接对未知服务执行 `kill -9`；先确认是否由 systemd、容器运行时、Deployment 或其他进程管理器托管。
+
+## 7. 容器和 Kubernetes 中的注意事项
+
+- 在容器内执行 `top`，看到的进程和 CPU/内存视图受 PID namespace、cgroup 及镜像工具影响；不一定等同于宿主机全局视图。
+- 宿主机 `top` 能看到容器进程，但要用容器运行时、Pod、Namespace 和 cgroup 信息映射回工作负载。
+- 容器 CPU 限额下，进程显示的 100% 常接近一个宿主机逻辑 CPU；如果容器只分配 `500m`，应用在配额内的“满载”与宿主机整体 100% 不是同一概念。
+- Kubernetes 资源排障要同时核对 `requests/limits`、cgroup throttling、Pod 重启、节点压力和应用指标。可用：
+
+```bash
+kubectl top pod -A
+kubectl top node
+kubectl describe pod <pod> -n <namespace>
+kubectl get pod <pod> -n <namespace> -o wide
+```
+
+`kubectl top` 依赖 Metrics Server，数据可能有延迟；它与节点上 `top` 的采样口径不同，不能机械比较数值。
+
+## 8. 建议的阈值与证据边界
+
+下面是排障时的经验起点，不是适用于所有业务的告警规则：
+
+| 指标 | 需要关注的起点 | 不能单独推出的结论 |
+|---|---|---|
+| `load average / nproc` | 持续接近或超过 1 | 不能单独证明 CPU 满载，可能是 I/O 等待 |
+| `us + sy` | 持续超过约 80% | 不能单独证明某个进程是根因 |
+| `wa` | 持续超过约 10% | 不能单独确定是哪块设备或哪类存储 |
+| `st` | 持续超过约 5% | 不能单独证明云厂商故障 |
+| `avail Mem` | 低于总内存约 10%～15% | 不能单独证明已经 OOM |
+| Swap `si/so` | 持续非零且伴随延迟/`wa` | `Swap used` 非零本身不等于故障 |
+| `zombie` | 数量持续增长 | 单个短暂僵尸不一定影响业务 |
+
+最终结论应包含时间窗口、重复采样、受影响进程、业务现象和至少一项独立证据（日志、I/O 统计、应用指标、内核事件或容器指标）。
+
+## 9. 最小只读命令集
+
+下面的命令适合在没有监控面板时快速留证：
+
+```bash
+# 主机规模与总体状态
+date; hostname; nproc; uptime
+top -b -n 1 | sed -n '1,8p'
+
+# CPU / 进程
+top -b -d 2 -n 5 -o %CPU | sed -n '1,35p'
+ps -eo pid,ppid,user,stat,pcpu,pmem,rss,vsz,etime,cmd --sort=-pcpu | head -n 20
+
+# 内存 / Swap
+free -h
+vmstat 1 5
+ps -eo pid,user,stat,rss,pmem,cmd --sort=-rss | head -n 20
+
+# I/O（若已安装 sysstat）
+iostat -xz 1 5
+
+# 指定 PID
+PID=<pid>
+ps -p "$PID" -o pid,ppid,user,stat,pcpu,pmem,rss,vsz,etime,cmd
+top -H -p "$PID"
+```
+
+`<pid>` 只是占位符，执行前替换为已确认的数字 PID。涉及 `kill`、`renice`、清理 Swap、重启服务或修改 cgroup 的命令不属于只读命令集，需要单独评审和授权。
+
+## 10. 记录模板
+
+排障记录至少保留以下信息：
+
+```text
+时间窗口：
+主机 / 容器 / Pod：
+逻辑 CPU 数：
+load average（1/5/15）：
+CPU（us/sy/ni/id/wa/hi/si/st）：
+内存（total/avail/buff-cache）：
+Swap（total/used，si/so）：
+Top CPU 进程及 PID：
+Top 内存进程及 PID：
+R/D/Z 状态数量：
+独立证据（日志、iostat、应用指标等）：
+已确认事实：
+基于证据的判断：
+尚未验证的可能性：
+下一步：
+```
+
+## 11. 结论
+
+`top` 的核心不是“找一个最高的百分比”，而是把系统压力拆成：
+
+```text
+负载是否变高 → CPU 是否真正执行 → 是否在等待 I/O → 内存是否有余量
+→ 哪个进程/线程对应 → 用独立工具确认根因
+```
+
+记住三个边界：
+
+1. `load average` 不是 CPU 百分比，可能包含 I/O 等待。
+2. `VIRT` 不是实际物理内存，Linux 内存余量优先看 `avail Mem` 和 Swap 活动。
+3. 一次 `top` 快照只能提供线索，不能替代趋势、应用指标和业务请求验证。
