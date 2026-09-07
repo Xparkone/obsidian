@@ -355,3 +355,93 @@
 
 - 如需生产落地，先在目标主机按文档第 9 节执行只读采样，再结合 `vmstat`、`iostat`、`pidstat`、应用日志和业务指标确认根因。
 - 若需要监控告警，应根据 CPU 核数、业务延迟、容器 requests/limits 和历史基线单独制定阈值。
+
+## 本阶段：Kubernetes Helm Prometheus、Grafana 与 Alertmanager 监控告警方案（2026-09-07）
+
+### 当前目标
+
+整理一套可落地的 Kubernetes Helm 监控 Runbook，覆盖 Prometheus、Grafana、Alertmanager 的部署、持久化、应用指标接入、告警规则、通知验收、升级回滚和常见排障。
+
+### 已确认事实
+
+- 仓库已有 `监控/Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md` 和根 README 入口；本阶段基于该完整文档补正当前 `kube-prometheus-stack` Chart 的默认规则键名。
+- `defaultRules.rules.kubeScheduler` 已调整为当前 Chart 使用的 `kubeSchedulerAlerting` 与 `kubeSchedulerRecording`；同时补齐 `configReloaders`、容器资源和 Pod owner 相关默认规则键。
+- 文档覆盖版本复核、`helm lint`、`helm template`、`kubectl apply --dry-run=server`、持久化 values、ServiceMonitor/PodMonitor、PrometheusRule、Alertmanager 路由/抑制/Secret、Grafana、HA、长期存储、离线镜像、升级回滚和验收清单。
+- 官方 Chart 资料确认：`kube-prometheus-stack` 集成 Prometheus Operator、Prometheus、Alertmanager、Grafana、kube-state-metrics、node-exporter、规则和仪表盘；Prometheus Adapter 与 Blackbox Exporter 需要单独部署。
+- 官方 Chart 资料确认：Prometheus 多副本通过普通 Service 查询不会自动去重，跨副本全局去重需要 Thanos Query 或其他具备去重能力的查询/存储层。
+
+### 尚未验证的可能性
+
+- 未连接或修改真实 Kubernetes 集群；未执行 Helm 拉取、Chart 渲染、CRD 安装、镜像拉取、PVC 绑定、目标抓取、Grafana 查询或 Alertmanager 通知。
+- values 中的 StorageClass、域名、Ingress、镜像仓库、应用指标名、通知平台协议和阈值仍是目标环境占位值，需要按实际 Chart 版本、Kubernetes 发行版和业务标签复核。
+- 文档示例使用 `url_file` 和 Webhook Secret；具体通知平台的签名、请求体和 TLS 要求需要通过测试告警确认。
+
+### 已完成
+
+- 完成并保留完整中文 Runbook，按当前笔记库的 `监控/` 分类组织；根 README 已有对应索引。
+- 修正 `defaultRules.rules` 中与当前官方 values 不一致的 `kubeScheduler` 键，避免直接复制到新 Chart 时被忽略或触发 schema 问题。
+- 文档明确区分静态模板、Pod Ready、HTTP 200、PromQL 有数据和真实告警 firing/resolved 通知验收。
+
+### 验证结果
+
+- 文档 1280 行，Markdown 代码围栏 84 个且成对。
+- 8 个 YAML 代码块通过 Ruby YAML 解析。
+- 新增/修改文档的相对链接检查通过，`git diff --check` 和文件差异空白检查通过。
+- 仅做静态文档检查；未宣称任何真实集群部署成功。
+
+### 下一步
+
+- 在目标测试集群先填写 `KPS_CHART_VERSION`、StorageClass、镜像仓库和 Secret，再按文档第 7 节执行渲染与服务端 dry-run。
+- 先验证 Prometheus Targets、`up`/业务指标查询，再执行临时 `vector(1)` 告警的 `pending -> firing -> resolved` 通知链路测试。
+- 生产启用前确认 GitOps 归属、CRD 升级策略、PVC 快照/远程存储、通知网关和数据保留容量。
+
+## 本阶段：网络基础与进阶文档（2026-09-07）
+
+### 当前目标
+
+新增一份面向已有少量网络基础读者的中文网络总览，按“数据包 → 链路层 → 网络层 → 传输层 → 应用层 → 云原生 → 生产排障”逐步讲清楚概念、工具和验证边界。
+
+### 已确认事实
+
+- 新增 `网络/网络基础与进阶：从数据包到生产排障.md`，归入现有 `网络/` 分类。
+- 文档覆盖帧/包/段、OSI 与 TCP/IP、MAC/交换机/ARP/VLAN、IPv4/CIDR/IPv6/路由、TCP/UDP/QUIC、DNS/HTTP/TLS、代理/负载均衡、NAT、Linux 网络命令、tcpdump、排障方法、防火墙/VPN/WAF、容器/Kubernetes 网络、MTU、VXLAN、BGP、ECMP 和生产检查清单。
+- 文档通过链接复用已有 DNS、VPN、Nginx、L4/L7、域名、tcpdump、SSH 隧道、iptables 和 Kubernetes Ingress 专题，未覆盖这些专题的全部细节。
+- `README.md` 的“网络”索引已加入新文档。
+
+### 基于证据的判断
+
+- 网络知识用“名称解析 → 路由选择 → 下一跳 MAC → 传输连接 → TLS/HTTP → 代理或后端”的请求主线组织，比按协议名堆叠概念更适合已有少量基础的读者。
+- 排障章节明确区分 `ping`、`nc`、HTTP 200、Pod Running、Ingress 地址和端到端业务成功，避免把单一健康信号当作完整证明。
+- Kubernetes 网络部分只作为总览入口，具体 Controller、CNI、Service、EndpointSlice 和 NetworkPolicy 仍需结合目标发行版和现有专题确认。
+
+### 尚未验证的可能性
+
+- 未在具体 Linux 主机、云 VPC、容器运行时或 Kubernetes 集群执行文档中的命令和实验。
+- 路由、MTU、NAT、CNI、负载均衡、IPv6、BGP 和防火墙行为会受发行版、云厂商、设备型号与部署拓扑影响；示例需要在目标环境复核。
+- Mermaid 图只做 Markdown 源码静态检查，未在当前环境使用 Mermaid 渲染器生成图片。
+
+### 已完成
+
+- 完成网络总览文档并按主题归档。
+- 更新根 `README.md` 网络索引。
+- 完成文档围栏、内部链接和差异空白检查。
+
+### 修改文件
+
+- `网络/网络基础与进阶：从数据包到生产排障.md`
+- `README.md`
+- `CODEX_HANDOFF.md`
+
+### 验证结果
+
+- 新文档 760 行，Markdown 代码围栏 62 个且成对。
+- 包含 1 个 `sequenceDiagram` Mermaid 时序图。
+- 新文档内部相对链接未发现缺失目标。
+- `git diff --no-index --check /dev/null 网络/网络基础与进阶：从数据包到生产排障.md` 通过；工作区差异空白检查通过。
+- 仅做静态文档验证，未宣称任何真实网络、HTTP、VPN、容器或集群操作成功。
+
+### 下一步
+
+- 如果要把文档用于实际环境，先记录目标主机/集群、网卡、地址、路由、DNS、入口 Controller、CNI、云安全组和防火墙管理方式。
+- 按第 9 节排障顺序在测试环境执行最小请求，保留 DNS、`ip route get`、`ss`、`curl -v` 和 tcpdump 证据，再针对现象扩展检查。
+- 生产变更前补充目标版本、拓扑、回滚路径、监控指标和具体授权边界。

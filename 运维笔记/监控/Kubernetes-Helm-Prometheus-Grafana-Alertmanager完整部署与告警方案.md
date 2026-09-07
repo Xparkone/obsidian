@@ -201,8 +201,15 @@ defaultRules:
   rules:
     alertmanager: true
     etcd: true
+    configReloaders: true
     general: true
-    k8s: true
+    k8sContainerCpuUsageSecondsTotal: true
+    k8sContainerMemoryCache: true
+    k8sContainerMemoryRss: true
+    k8sContainerMemorySwap: true
+    k8sContainerResource: true
+    k8sContainerMemoryWorkingSetBytes: true
+    k8sPodOwner: true
     kubeApiserverAvailability: true
     kubeApiserverBurnrate: true
     kubeApiserverHistogram: true
@@ -216,7 +223,8 @@ defaultRules:
     kubernetesResources: true
     kubernetesStorage: true
     kubernetesSystem: true
-    kubeScheduler: true
+    kubeSchedulerAlerting: true
+    kubeSchedulerRecording: true
     kubeStateMetrics: true
     network: true
     node: true
