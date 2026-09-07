@@ -157,6 +157,7 @@
 ### AI / 语言
 
 - [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
+- [LangChain 与 LangGraph 从入门到实战学习指南](ai/LangChain-LangGraph-从入门到实战学习指南.md)
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
 - [todo-api/](go/todo-api/) — Go Todo API 示例
 - [status-api/](go/status-api/) — Go 服务器、Kubernetes、Pod 和中间件状态 API

@@ -65,6 +65,48 @@
 - 不在交接文档中记录密码、Token、Cookie、完整认证 Header、云密钥或完整环境变量。
 - 不能把“进程健康、HTTP 200、日志文件存在”当作审计端到端成功；需要验证事件生成、落库/文件、外部送达和归档。
 
+## 本阶段：LangChain 与 LangGraph 学习文档（2026-09-07）
+
+### 当前目标
+
+新增一篇面向 Python 初学者到能做实战项目的 LangChain/LangGraph 中文学习文档，并同步 AI 分类索引。
+
+### 已确认事实
+
+- 新增 `ai/LangChain-LangGraph-从入门到实战学习指南.md`，以 LangChain v1、LangGraph v1、Python 3.10+ 为文档基线。
+- 文档覆盖模型与消息、Prompt/Runnable、工具、`create_agent`、结构化输出、StateGraph、节点/边/reducer、ToolNode、条件路由、持久化、thread、人工审批、流式输出、LangSmith、RAG、运维实战项目、测试、安全边界、六周路线和排障速查。
+- `README.md` 的“AI / 语言”索引已加入新文档。
+- 已对照 LangChain 官方安装、Agent、Tools、Structured Output 文档，以及 LangGraph 概览、Graph API、持久化、Streaming 和 v1 更新说明；文档明确标注旧 `create_react_agent` 的弃用边界。
+
+### 基于证据的判断
+
+- 学习路径应先从 LangChain 的模型/工具/Agent 开始，再下沉到 LangGraph 的显式状态机；固定流程不应默认交给 Agent 自主循环。
+- 运维场景优先实现只读 Kubernetes 故障分析助手，把写操作放在人工审批之后，并要求事实、判断、未验证可能性和证据分开。
+
+### 尚未验证的可能性
+
+- 未在真实模型账户、向量数据库、LangSmith、Kubernetes 集群或生产持久化后端执行文档中的示例。
+- 模型名称、供应商包、LangGraph 持久化后端和云部署能力会随版本与账号变化；落地前需要按目标环境做依赖锁定和集成测试。
+
+### 已完成
+
+- 新增 LangChain/LangGraph 学习文档并按 AI 分类归档。
+- 更新根 `README.md` 索引。
+- 更新本交接文档记录本阶段边界。
+
+### 验证结果
+
+- 文档 773 行，Markdown 代码围栏 44 个且成对。
+- 14 个 Python 代码块通过 `ast.parse` 语法检查。
+- 新文档内部相对链接未发现缺失目标。
+- `git diff --check` 和新文件差异空白检查通过。
+
+### 下一步
+
+- 在独立虚拟环境锁定依赖版本，先运行第 4、5 节最小示例。
+- 用 mock model 完成图和工具的单元测试，再接入真实模型。
+- 如用于运维，先接入只读 API 和脱敏日志，完成证据链验收后再设计人工审批和生产写操作。
+
 ## 本阶段：Kubernetes 总览与资源使用指南（2026-09-07）
 
 ### 当前目标
