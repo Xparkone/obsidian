@@ -1,6 +1,6 @@
 # Codex 工作交接
 
-更新时间：2026-09-01 20:06:55 +0800
+更新时间：2026-09-09 10:47:18 +0800
 
 当前主机：dpdeMacBook-Pro-86.local
 
@@ -9,6 +9,8 @@
 当前分支：main
 
 ## 当前目标
+
+在既有 GitLab CI、GitLab Runner、Argo CD GitOps 主流程和发布审计设计基础上，补充一份面向 GitLab CI + Argo CD + Harbor 的生产级 CI/CD 方案与实施验收 Runbook。
 
 整理 GitLab、GitLab Runner 与 Argo CD 从零部署到 GitOps 发布、验收、回滚和审计取证的详细流程，并在现有 Deploy Recorder 基础上设计支持飞书、钉钉审批和多个 Argo CD 环境的发布编排与审计服务。
 
@@ -53,6 +55,9 @@
 
 ## 已完成
 
+- 新增 `运维笔记/CI-CD/GitLab-ArgoCD-Harbor-生产级CICD方案与实施验收Runbook.md`，覆盖职责边界、生产基线、GitLab CI/Runner、Harbor、Argo CD、Kubernetes 安全、审计、可观测性、备份恢复、发布/回滚、实施阶段和验收清单。
+- 在 `运维笔记/README.md` 的 CI-CD 索引增加生产级方案入口。
+
 - 新增 1153 行以上的 GitLab、Runner、Argo CD GitOps 主流程文档。
 - 增加部署顺序、Runner Job、日常发布、首次验收和回滚 5 张 Mermaid `sequenceDiagram`。
 - 覆盖部署前参数/网络规划、GitLab Compose 与 Registry TLS、Runner Token Secret 与 Helm、Argo CD 固定版本安装、Kustomize GitOps 结构、BuildKit rootless Pipeline、分层验收、回滚、故障定位和生产检查。
@@ -66,6 +71,9 @@
 
 ## 修改文件
 
+- `运维笔记/CI-CD/GitLab-ArgoCD-Harbor-生产级CICD方案与实施验收Runbook.md`
+- `运维笔记/README.md`
+
 - `运维笔记/CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md`
 - `运维笔记/CI-CD/gitlab-ci-argocd/README.md`
 - `运维笔记/CI-CD/海外弹性GitLab-Runner构建方案.md`
@@ -74,6 +82,11 @@
 - `CODEX_HANDOFF.md`
 
 ## 验证结果
+
+- 新文档约 730 行，Markdown 代码围栏 26 个且数量为偶数，包含 1 个 Mermaid 架构图代码块。
+- 新文档内部没有发现缺失的本地链接；新增 README 入口目标存在。
+- `git diff --check` 通过。
+- 文档中的版本、域名、容量、许可证、RPO/RTO 和实际集群行为仍标记为需要目标环境确认；未执行真实 GitLab CI、Harbor、Argo CD 或 Kubernetes 联调。
 
 - 主文档 136 个 Markdown 代码围栏成对。
 - 6 个 Mermaid 代码块均为 `sequenceDiagram`，围栏闭合。

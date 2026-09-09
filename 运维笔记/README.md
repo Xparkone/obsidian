@@ -56,6 +56,7 @@
 - [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md)
 - [GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)
 - [发布编排与审计服务设计：飞书、钉钉审批与多 Argo CD](CI-CD/发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md)
+- [GitLab CI + Argo CD + Harbor 生产级 CI/CD 方案与实施验收 Runbook](CI-CD/GitLab-ArgoCD-Harbor-生产级CICD方案与实施验收Runbook.md)
 - [GitHub-Actions-配置语法.md](CI-CD/GitHub-Actions-配置语法.md)
 - [Jenkinsfile-配置语法.md](CI-CD/Jenkinsfile-配置语法.md)
 - [Drone-CI-配置语法.md](CI-CD/Drone-CI-配置语法.md)
