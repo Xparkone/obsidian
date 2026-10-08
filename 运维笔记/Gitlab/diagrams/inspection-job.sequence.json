@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "一次巡检任务时序",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1200, 640],
+    "views": [
+      {
+        "id": "accept-job",
+        "label": "受理任务",
+        "focus": ["caller", "api", "store"],
+        "note": "先落 InspectionJob 再返回 job_id，调用方不必同步等待全部 PromQL。"
+      },
+      {
+        "id": "query-and-judge",
+        "label": "取数与判定",
+        "focus": ["collector", "prometheus", "engine", "store"],
+        "note": "采集器只读 query，规则引擎比较阈值后写入 CheckResult。"
+      },
+      {
+        "id": "observe",
+        "label": "回看结果",
+        "focus": ["caller", "api", "store"],
+        "note": "GET /inspections/{id} 是结果的权威来源，通知只是旁路。"
+      }
+    ]
+  },
+  "participants": [
+    { "id": "caller", "type": "external", "label": "运维 / CI" },
+    { "id": "api", "type": "backend", "label": "FastAPI" },
+    { "id": "collector", "type": "backend", "label": "采集器" },
+    { "id": "prometheus", "type": "external", "label": "Prometheus" },
+    { "id": "engine", "type": "backend", "label": "规则引擎" },
+    { "id": "store", "type": "database", "label": "结果仓储" }
+  ],
+  "segments": [
+    { "from": 150, "to": 250, "label": "受理" },
+    { "from": 266, "to": 390, "label": "取数判定" },
+    { "from": 406, "to": 500, "label": "回看" }
+  ],
+  "messages": [
+    { "from": "caller", "to": "api", "y": 168, "label": "POST /inspections", "variant": "emphasis" },
+    { "from": "api", "to": "store", "y": 200, "label": "创建 InspectionJob" },
+    { "from": "api", "to": "caller", "y": 232, "label": "202 + job_id", "variant": "return" },
+    { "from": "api", "to": "collector", "y": 282, "label": "执行已启用规则", "variant": "emphasis" },
+    { "from": "collector", "to": "prometheus", "y": 314, "label": "GET /api/v1/query" },
+    { "from": "prometheus", "to": "collector", "y": 346, "label": "vector / matrix", "variant": "return" },
+    { "from": "engine", "to": "store", "y": 378, "label": "写入 CheckResult", "variant": "emphasis" },
+    { "from": "caller", "to": "api", "y": 428, "label": "GET /inspections/{id}" },
+    { "from": "api", "to": "store", "y": 460, "label": "读取任务与结果" },
+    { "from": "api", "to": "caller", "y": 492, "label": "200 JSON", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 162, "to": 240, "type": "backend" },
+    { "participant": "store", "from": 194, "to": 214, "type": "database" },
+    { "participant": "collector", "from": 276, "to": 354, "type": "backend" },
+    { "participant": "prometheus", "from": 308, "to": 354, "type": "external" },
+    { "participant": "engine", "from": 372, "to": 392, "type": "backend" },
+    { "participant": "store", "from": 372, "to": 392, "type": "database" },
+    { "participant": "api", "from": 422, "to": 500, "type": "backend" },
+    { "participant": "store", "from": 454, "to": 474, "type": "database" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "先落库再执行",
+      "items": [
+        "调用方立刻拿到 job_id，不必同步等完全部 PromQL"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "只读取数",
+      "items": [
+        "查询失败记 unknown，不能当成 healthy"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "通知是旁路",
+      "items": [
+        "回看一律走 GET /inspections/{id}"
+      ]
+    }
+  ]
+}

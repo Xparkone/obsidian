@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "FastAPI 自动巡检架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "inspect-path",
+        "label": "定时巡检主路径",
+        "focus": ["caller", "api", "scheduler", "collector", "prometheus", "engine", "store"],
+        "note": "运维触发或 cron 调度后，采集器只读查询 Prometheus，规则引擎落库。"
+      },
+      {
+        "id": "metrics-sources",
+        "label": "指标来源",
+        "focus": ["sources", "prometheus", "collector"],
+        "note": "GitLab Omnibus 与 kube-prometheus-stack 的 exporter 先被 Prometheus 抓取。"
+      },
+      {
+        "id": "alert-boundary",
+        "label": "巡检与实时告警边界",
+        "focus": ["prometheus", "alertmanager", "engine", "notify"],
+        "note": "Alertmanager 继续做秒级告警；巡检只发周期摘要，不替代 firing。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "caller",
+      "type": "external",
+      "label": "运维 / CI",
+      "sublabel": "手动 / cron",
+      "pos": [20, 300],
+      "size": [128, 64]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "/api/v1/inspections",
+      "brand": "fastapi",
+      "tag": "Bearer",
+      "pos": [222, 300],
+      "size": [150, 64]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "调度器",
+      "sublabel": "APScheduler",
+      "pos": [462, 300],
+      "size": [140, 64]
+    },
+    {
+      "id": "collector",
+      "type": "backend",
+      "label": "采集器",
+      "sublabel": "PromQL HTTP",
+      "pos": [682, 300],
+      "size": [140, 64]
+    },
+    {
+      "id": "prometheus",
+      "type": "external",
+      "label": "Prometheus",
+      "sublabel": "/api/v1/query",
+      "brand": "prometheus",
+      "tag": "monitoring",
+      "pos": [912, 300],
+      "size": [150, 64]
+    },
+    {
+      "id": "alertmanager",
+      "type": "external",
+      "label": "Alertmanager",
+      "sublabel": "实时告警",
+      "pos": [1152, 300],
+      "size": [150, 64]
+    },
+    {
+      "id": "sources",
+      "type": "external",
+      "label": "指标源",
+      "sublabel": "GitLab / node-exporter",
+      "brand": "gitlab",
+      "pos": [912, 100],
+      "size": [150, 64]
+    },
+    {
+      "id": "rules",
+      "type": "database",
+      "label": "规则仓库",
+      "sublabel": "YAML / Git",
+      "pos": [462, 480],
+      "size": [140, 64]
+    },
+    {
+      "id": "engine",
+      "type": "backend",
+      "label": "规则引擎",
+      "sublabel": "阈值 / 窗口",
+      "pos": [682, 480],
+      "size": [140, 64]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "结果仓储",
+      "sublabel": "SQLite MVP",
+      "pos": [912, 480],
+      "size": [150, 64]
+    },
+    {
+      "id": "notify",
+      "type": "messagebus",
+      "label": "通知",
+      "sublabel": "飞书 / 钉钉",
+      "pos": [682, 640],
+      "size": [140, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "巡检服务",
+      "wraps": ["api", "scheduler", "collector", "engine"]
+    },
+    {
+      "kind": "region",
+      "label": "已有 kube-prometheus-stack",
+      "wraps": ["prometheus", "alertmanager"]
+    },
+    {
+      "kind": "region",
+      "label": "指标源",
+      "wraps": ["sources"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "caller-to-api",
+      "from": "caller",
+      "to": "api",
+      "label": "HTTPS + Bearer",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-to-scheduler",
+      "from": "api",
+      "to": "scheduler",
+      "label": "POST /inspections"
+    },
+    {
+      "id": "scheduler-to-collector",
+      "from": "scheduler",
+      "to": "collector",
+      "label": "按 cron 执行"
+    },
+    {
+      "id": "collector-to-prometheus",
+      "from": "collector",
+      "to": "prometheus",
+      "label": "GET /api/v1/query",
+      "variant": "emphasis"
+    },
+    {
+      "id": "collector-to-engine",
+      "from": "collector",
+      "to": "engine",
+      "label": "samples",
+      "labelDy": 24
+    },
+    {
+      "id": "engine-to-rules",
+      "from": "engine",
+      "to": "rules",
+      "label": "读取 YAML"
+    },
+    {
+      "id": "engine-to-store",
+      "from": "engine",
+      "to": "store",
+      "label": "写入 CheckResult"
+    },
+    {
+      "id": "engine-to-notify",
+      "from": "engine",
+      "to": "notify",
+      "label": "失败摘要",
+      "variant": "dashed",
+      "labelDy": 24
+    },
+    {
+      "id": "sources-to-prometheus",
+      "from": "sources",
+      "to": "prometheus",
+      "label": "scrape /metrics",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 24
+    },
+    {
+      "id": "prometheus-to-alertmanager",
+      "from": "prometheus",
+      "to": "alertmanager",
+      "label": "实时告警",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "核心思路",
+      "items": [
+        "巡检是周期快照，不是 Alertmanager 的替代品",
+        "只读 Prometheus HTTP API，状态沿用四态枚举"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "复用现有工程",
+      "items": [
+        "在 fastapi-prometheus-status 上扩展，沿用 5 秒超时客户端",
+        "硬编码检查抽成 YAML；API 回看同一份结果仓储"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "落地约束",
+      "items": [
+        "MVP 用单进程 APScheduler + SQLite，避免多副本抢跑",
+        "缺指标记 unknown；GitLab 指标名需现场核对"
+      ]
+    }
+  ]
+}

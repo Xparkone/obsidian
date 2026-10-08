@@ -1,0 +1,8 @@
+venv/
+.venv/
+.git/
+.env
+__pycache__/
+*.pyc
+.dashboard.json
+*.md

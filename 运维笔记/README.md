@@ -16,7 +16,8 @@
 | [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
 | [中间件](中间件/) | Nacos 注册配置中心、消息队列等 |
 | [安全](安全/) | RBAC、UFW、高防与 WAF |
-| [脚本与工具](脚本与工具/) | kubectl 快捷工具、Shell 命令审计与日志维护脚本 |
+| [脚本与工具](脚本与工具/) | kubectl 快捷工具、Shell 命令审计、Linux 排查文档 |
+| [Gitlab](Gitlab/) | GitLab 巡检方案、HTTPS 部署与架构图 |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
 | [ai](ai/) | LLM / MCP / Skill / Hermes |
 | [go](go/) · [python](python/) · [javascript](javascript/) | 语言入门、运行环境、包管理和开发工具 |
@@ -32,6 +33,7 @@
 - [K8s-etcd详解.md](容器编排/K8s-etcd详解.md)
 - [K8s-Pod生命周期详解.md](容器编排/K8s-Pod生命周期详解.md)
 - [k8s-常用操作手册.md](容器编排/k8s-常用操作手册.md)
+- [K8s-排障进阶-5个冷门kubectl命令详解.md](容器编排/K8s-排障进阶-5个冷门kubectl命令详解.md)
 - [k8s-architecture.excalidraw.md](容器编排/k8s-architecture.excalidraw.md)
 - [K3s-部署指南.md](容器编排/K3s-部署指南.md)
 - [Kubernetes-Ingress-部署与使用详解.md](容器编排/Kubernetes-Ingress-部署与使用详解.md)
@@ -50,7 +52,7 @@
 - [GitLab CICD YAML详细语法与使用方法.md](CI-CD/GitLab%20CICD%20YAML详细语法与使用方法.md)
 - [GitLab CICD 与 Gitea Actions 语法和使用指南.md](CI-CD/GitLab%20CICD%20与%20Gitea%20Actions%20语法和使用指南.md)
 - [GitLab 功能全景技术文档.md](CI-CD/GitLab%20功能全景技术文档.md)
-- [GitLab 审计日志详细配置与运维指南.md](CI-CD/GitLab%20审计日志详细配置与运维指南.md)
+- [GitLab审计日志详细配置与运维指南.md](CI-CD/GitLab审计日志详细配置与运维指南.md)
 - [GitLab 域名配置技术文档（自建 Omnibus）.md](CI-CD/GitLab%20域名配置技术文档（自建%20Omnibus）.md)
 - [GitLab 数据导入技术文档：场景分流与实操指南.md](CI-CD/GitLab%20数据导入技术文档：场景分流与实操指南.md)
 - [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md)
@@ -66,7 +68,7 @@
 - [Skopeo-容器镜像检查复制与同步指南.md](CI-CD/Skopeo-容器镜像检查复制与同步指南.md)
 - [海外弹性GitLab-Runner构建方案.md](CI-CD/海外弹性GitLab-Runner构建方案.md)
 - [gitlab-ci-argocd/](CI-CD/gitlab-ci-argocd/) — GitLab CI + ArgoCD 示例工程
-- [examples/gitlab-compose/](CI-CD/examples/gitlab-compose/) — GitLab Docker Compose 示例
+- [gitlab-docker-compose-guide.md](CI-CD/gitlab-docker-compose-guide.md) — GitLab Docker Compose 部署指南
 
 ### 基础设施即代码
 
@@ -76,6 +78,8 @@
 
 - [主流云厂商产品分类.md](云服务/主流云厂商产品分类.md)
 - [私有云部署指南.md](云服务/私有云部署指南.md)
+- [Harvester-HCI超融合平台详解.md](云服务/Harvester-HCI超融合平台详解.md)
+- [Proxmox-VE虚拟化平台详解.md](云服务/Proxmox-VE虚拟化平台详解.md)
 - [pcluster-常用命令.md](云服务/pcluster-常用命令.md)
 - [AWS-AMI-清理脚本解析.md](云服务/AWS-AMI-清理脚本解析.md)
 - [KVM-详解与命令速查.md](云服务/KVM-详解与命令速查.md)
@@ -109,6 +113,7 @@
 ### 监控
 
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
+- [服务器与中间件巡检指标.md](监控/服务器与中间件巡检指标.md)
 - [Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md](监控/Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md)
 - [Grafana-Kubernetes与宿主机通用仪表盘模板说明.md](监控/Grafana-Kubernetes与宿主机通用仪表盘模板说明.md)
 - [Grafana-Node-Exporter-宿主机监控仪表盘.json](监控/Grafana-Node-Exporter-宿主机监控仪表盘.json)
@@ -147,8 +152,15 @@
 
 - [目录索引](脚本与工具/README.md)
 - [`top` 指标详解与性能排障指南](脚本与工具/top-命令指标详解与性能排障指南.md)
+- [Ubuntu-日志查看详解.md](脚本与工具/Ubuntu-日志查看详解.md)
 - [kubectl 工具](脚本与工具/kubectl/)：[`k`](脚本与工具/kubectl/kubectl-快捷工具-k.md) · [`kf`](脚本与工具/kubectl/kubectl-交互式工具-kf.md)
 - [Shell 命令审计](脚本与工具/shell-audit/)：Bash/Fish 部署、日志轮转与卸载
+
+### Gitlab
+
+- [自动巡检方案-FastAPI-Prometheus.md](Gitlab/自动巡检方案-FastAPI-Prometheus.md)
+- [mkcert-本机HTTPS与多端信任部署指南.md](Gitlab/mkcert-本机HTTPS与多端信任部署指南.md)
+- [diagrams/](Gitlab/diagrams/) — 巡检方案架构图（HTML / PNG）
 
 ### 学习
 
@@ -159,11 +171,12 @@
 
 ### AI / 语言
 
-- [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
+- [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [Skill-Tool-MCP-概念关系与使用指南.md](ai/Skill-Tool-MCP-概念关系与使用指南.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
 - [LangChain 与 LangGraph 从入门到实战学习指南](ai/LangChain-LangGraph-从入门到实战学习指南.md)
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
 - [todo-api/](go/todo-api/) — Go Todo API 示例
 - [status-api/](go/status-api/) — Go 服务器、Kubernetes、Pod 和中间件状态 API
 - [Python入门介绍.md](python/Python入门介绍.md) · [Python-列表-元组-字典详解.md](python/Python-列表-元组-字典详解.md)
 - [status-api/](python/status-api/) — Python 服务器、Kubernetes、Pod 和中间件状态 API
+- [fastapi-prometheus-status/](python/fastapi-prometheus-status/) — FastAPI + Prometheus 的 Kubernetes、节点与主机健康状态 API
 - [Node.js、npm、Vite 入门指南](javascript/Node.js-npm-Vite-入门指南.md)

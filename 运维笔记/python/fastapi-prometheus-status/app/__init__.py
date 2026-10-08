@@ -1,0 +1,1 @@
+"""FastAPI Prometheus status service."""

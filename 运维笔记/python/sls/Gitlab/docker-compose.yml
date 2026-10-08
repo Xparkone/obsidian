@@ -1,0 +1,13 @@
+name: sls-report
+
+services:
+  report:
+    build: .
+    image: sls-access-report:latest
+    ports:
+      - "8080:80"
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+    restart: unless-stopped

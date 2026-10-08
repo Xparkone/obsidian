@@ -445,3 +445,186 @@
 - 如果要把文档用于实际环境，先记录目标主机/集群、网卡、地址、路由、DNS、入口 Controller、CNI、云安全组和防火墙管理方式。
 - 按第 9 节排障顺序在测试环境执行最小请求，保留 DNS、`ip route get`、`ss`、`curl -v` 和 tcpdump 证据，再针对现象扩展检查。
 - 生产变更前补充目标版本、拓扑、回滚路径、监控指标和具体授权边界。
+
+## 本阶段：FastAPI + Prometheus Kubernetes 状态 API（2026-09-14）
+
+### 当前目标
+
+新增一个通过 FastAPI 查询 Prometheus 指标、判断 Kubernetes 节点与 Service Endpoint，并返回主机负载、内存和磁盘健康状态的只读示例。
+
+### 已确认事实
+
+- 新增独立工程 `python/fastapi-prometheus-status/`，未修改既有标准库版 `python/status-api/`。
+- API 使用 Prometheus `/api/v1/query`，支持 `/healthz`、`/api/v1/status`、`/api/v1/kubernetes/nodes`、`/api/v1/kubernetes/services` 和 `/api/v1/host`。
+- 指标依赖 kube-state-metrics 与 node-exporter；Prometheus 查询失败或指标缺失会返回 `unknown/degraded`，不会直接当作健康。
+- 阈值、Prometheus 地址、Token、Namespace、Service 和磁盘挂载点均通过环境变量配置。
+
+### 尚未验证的可能性
+
+- 当前环境未安装 FastAPI/httpx/uvicorn，未执行真实 HTTP 启动、Prometheus 联调或 Kubernetes 集群验证。
+- `kube_endpoint_address_available` 的指标名和标签需在目标 kube-state-metrics 版本中确认；如果实际 series 不同，需要调整 `service_checks` 的 PromQL。
+
+### 已完成
+
+- 完成 FastAPI 应用、配置、Prometheus 客户端、示例环境变量和中文 README。
+- 更新根 `README.md` 的 Python 索引。
+
+### 修改文件
+
+- `python/fastapi-prometheus-status/app/main.py`
+- `python/fastapi-prometheus-status/app/prometheus.py`
+- `python/fastapi-prometheus-status/app/config.py`
+- `python/fastapi-prometheus-status/app/__init__.py`
+- `python/fastapi-prometheus-status/app/__main__.py`
+- `python/fastapi-prometheus-status/requirements.txt`
+- `python/fastapi-prometheus-status/.env.example`
+- `python/fastapi-prometheus-status/README.md`
+- `README.md`
+
+### 验证结果
+
+- 所有 Python 文件通过 `ast.parse` 和 `python3 -m compileall`。
+- README Markdown 围栏数量为 6 且成对；`git diff --check` 通过。
+- 未进行真实 Prometheus、Kubernetes、节点或磁盘数据验证。
+
+### 下一步
+
+- 在具备网络的虚拟环境执行 `pip install -r requirements.txt`，启动 Uvicorn。
+- 先用 Prometheus UI/API 验证 README 中列出的基础 series、标签和时间窗口，再调用各 API。
+- 按实际节点规格调整负载、内存和磁盘阈值，并补充端到端业务探针。
+
+### 阶段补充（2026-09-14）
+
+- `app/config.py` 现在通过 `python-dotenv` 自动读取当前目录 `.env`，系统环境变量优先。
+- 新增本地占位配置 `python/fastapi-prometheus-status/.env`，不含真实 Token；README 启动命令不再需要 `source .env`。
+- 静态语法检查和差异空白检查仍通过；依赖未安装，未进行 live 启动验证。
+
+## 本阶段：Skill、Tool 与 MCP 概念关系文档（2026-09-23）
+
+### 当前目标
+
+编写一份中文详细文档，解释 Skill、Tool、MCP 的定义、层次关系、调用流程、使用方式、适用场景、安全边界和常见排障方法。
+
+### 已确认事实
+
+- 新增 `ai/Skill-Tool-MCP-概念关系与使用指南.md`，归入已有 `ai/` 分类。
+- 文档区分 Skill（工作流与指令）、Tool（可执行能力接口）、MCP（连接和发现外部能力的协议）以及 Plugin（可选打包分发层）。
+- 文档覆盖 MCP Host/Client/Server、Tools/Resources/Prompts、stdio/Streamable HTTP/HTTP-SSE、Skill + Tool + MCP 组合、Responses API 概念示例、适用场景、权限和审批边界。
+- 文档引用 OpenAI Developers 的 Skills、Plugin architecture 和 MCP servers 官方页面，并标注配置字段和调用方式需要以目标 Host 版本为准。
+- 根 `README.md` 的 AI 分类索引已加入新文档入口。
+
+### 基于证据的判断
+
+- 现有 `ai/Skill是什么.md` 与 `ai/MCP是什么.md` 可作为专题补充，但存在 Hermes 特定描述；新增文档作为跨宿主总览，避免把某个客户端的目录、命令或工具命名当成通用标准。
+- 只读诊断适合采用 Skill 编排受限 Tool；高风险写操作需要独立工具、最小权限和人工审批。
+
+### 尚未验证的可能性
+
+- 未在真实 MCP Server、Codex 插件、Responses API、GitLab、Prometheus 或 Kubernetes 环境执行连接和工具调用。
+- 文档中的 JSON、Python 和 MCP 配置均为概念性或示意示例；实际字段、认证和审批界面需按目标 Host、SDK 和 Server 版本确认。
+
+### 已完成
+
+- 新增 Skill/Tool/MCP 总览文档并更新根 README 索引。
+- 完成文档结构、概念关系、时序图、示例、场景和检查清单。
+
+### 修改文件
+
+- `ai/Skill-Tool-MCP-概念关系与使用指南.md`
+- `README.md`
+- `CODEX_HANDOFF.md`
+
+### 验证结果
+
+- 新文档 620 行左右，Markdown 代码围栏成对。
+- 包含 1 个 Mermaid `sequenceDiagram`。
+- 新文档中的本地相对链接均能解析到现有文件。
+- `git diff --check` 和新文件差异空白检查通过。
+- 仅完成静态文档验证，未宣称任何真实 MCP 连接、工具调用或外部系统状态成功。
+
+### 下一步
+
+- 若要落地到某个 Agent，先确认目标 Host 的 Skill 加载方式、MCP 配置格式、认证方案、工具审批策略和版本兼容性。
+- 先接入一个只读场景，完成握手、工具发现、最小调用、超时、错误和业务验收，再增加写操作。
+
+## 本阶段：Harvester HCI 专题文档（2026-09-29）
+
+### 当前目标
+
+回答“Harvester 是什么”，并按笔记库惯例新增一篇中文详解文档：定义、HCI 概念、架构、核心功能、管理面、Rancher 集成、安装要求、选型对比与排障方向。
+
+### 已确认事实
+
+- 新增 `云服务/Harvester-HCI超融合平台详解.md`（306 行），归入 `云服务/` 分类。
+- `README.md` 的“云服务”索引已加入新文档入口；`云服务/私有云部署指南.md` 第五章加入指向新文档的双链，原有内容未改动。
+- 文档按既有“详解”风格组织：ASCII 架构图、组件职责表、kubectl/YAML 示例、对比表、落地检查清单与排障方向。
+- Harvester 关键定位（SUSE/Rancher 开源 HCI，KVM VM 作为 K8s CRD 管理，基于 KubeVirt + Longhorn + Multus + 内嵌 RKE2/K3s）与官方公开资料一致；文档未写死“最新版本号”，以官方文档对应版本为准。
+
+### 尚未验证的可能性
+
+- 未在真实裸金属或嵌套虚拟化环境安装 Harvester；VM YAML、`virtctl` 命令、UI 流程、备份目标、PCIe/GPU 直通均未实测。
+- 官方文档/GitHub 版本页面在本机抓取失败（JS 渲染限制），硬件要求量级（8C/32G/250G 评估、16C/64G/500G 生产）为文档常见量级，落实前需按目标版本官方文档复核。
+- 功能边界（热插拔、LB 模式、直通支持）随版本演进，文档已标注以官方文档为准。
+
+### 修改文件
+
+- `云服务/Harvester-HCI超融合平台详解.md`（新增）
+- `README.md`
+- `云服务/私有云部署指南.md`
+- `CODEX_HANDOFF.md`
+
+### 验证结果
+
+- 新文档 Markdown 代码围栏 10 个，成对。
+- 1 个 YAML 代码块通过 Ruby psych 解析（kind=VirtualMachine）。
+- 6 个 Obsidian `[[双链]]` 目标文件均存在。
+- `git diff --check` 通过；新文件 `git diff --no-index --check /dev/null` 通过。
+- 仅静态文档验证，未宣称任何真实集群安装或 VM 运行成功。
+
+### 下一步
+
+- 如需落地：准备 ≥3 台支持 VT-x/AMD-V 的服务器或嵌套虚拟化评估环境，按官方当前版本 ISO 安装并核对硬件要求。
+- 实测创建 VM、VLAN 网络、Longhorn 备份到 NFS/S3，再决定是否纳入 Rancher 统一管理。
+
+### 阶段补充（同日）
+
+- 应后续提问“什么场景用这个方案”，`云服务/Harvester-HCI超融合平台详解.md` 第八节新增“典型使用场景”表（VMware 替代、VM+容器混跑、私有云交付 VM、边缘、GPU/AI、CI、Rancher 扩展共 7 类）；其余内容不变，`git diff --check` 通过。
+
+## 本阶段：Proxmox VE 专题文档（2026-09-29）
+
+### 当前目标
+
+回答“Proxmox 是什么”，按 Harvester 阶段同款结构新增中文详解文档：定位、架构、KVM/LXC、存储体系、核心功能、管理面、安装要求、选型对比与排障方向。
+
+### 已确认事实
+
+- 新增 `云服务/Proxmox-VE虚拟化平台详解.md`（272 行），归入 `云服务/` 分类。
+- `README.md`“云服务”索引已加入口；`云服务/私有云部署指南.md` 第三章加入指向新文档的双链，原有内容未改动。
+- Proxmox VE 关键定位（基于 Debian 的开源虚拟化管理平台，KVM 虚拟机 + LXC 容器，Web UI :8006，AGPLv3 开源加可选付费订阅）与官方公开资料一致；与既有 `私有云部署指南.md` 第三章内容保持口径一致。
+
+### 尚未验证的可能性
+
+- 未在真实主机安装 PVE、创建 VM/CT、配置集群/HA/Ceph/PBS；CLI 与 apt 源示例未实测。
+- 官方站点在本机未抓取核对当前版本细节；版本基线（7/8/9 对应 Debian 11/12/13）、企业源切换命令（8.x `.list` 与 9.x `.sources` 差异）、ESXi 导入向导可用版本均标注以官方文档为准。
+
+### 修改文件
+
+- `云服务/Proxmox-VE虚拟化平台详解.md`（新增）
+- `README.md`
+- `云服务/私有云部署指南.md`
+- `CODEX_HANDOFF.md`
+
+### 验证结果
+
+- 新文档 Markdown 代码围栏 8 个，成对。
+- 8 个 Obsidian `[[双链]]` 目标文件均存在。
+- `git diff --check` 通过；新文件 `git diff --no-index --check /dev/null` 无空白错误。
+- 仅静态文档验证，未宣称任何真实安装或集群运行成功。
+
+### 下一步
+
+- 如需落地：准备支持 VT-x/AMD-V 的机器（单机即可），按官方 ISO 安装后先完成 7.3 的免费源切换，再建 VM/CT；需要 HA 时按 3 节点或 2 节点 + QDevice 规划。
+
+### 阶段补充（同日）
+
+- 应后续提问“Proxmox 什么时候用”，`云服务/Proxmox-VE虚拟化平台详解.md` 第八节新增“快速决策”树（按机器数量/K8s 诉求/租户规模/预算分流到 PVE、Harvester、OpenStack、vSphere，并说明 PVE 与 K8s 可共存）；围栏 10 个成对，`git diff --check` 通过。
