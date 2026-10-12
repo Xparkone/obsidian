@@ -33,6 +33,7 @@
 - [K8s-etcd详解.md](容器编排/K8s-etcd详解.md)
 - [K8s-Pod生命周期详解.md](容器编排/K8s-Pod生命周期详解.md)
 - [k8s-常用操作手册.md](容器编排/k8s-常用操作手册.md)
+- [Docker-K8s-快捷批量操作手册.md](容器编排/Docker-K8s-快捷批量操作手册.md)
 - [K8s-排障进阶-5个冷门kubectl命令详解.md](容器编排/K8s-排障进阶-5个冷门kubectl命令详解.md)
 - [k8s-architecture.excalidraw.md](容器编排/k8s-architecture.excalidraw.md)
 - [K3s-部署指南.md](容器编排/K3s-部署指南.md)
