@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+agent/__init__.py
+agent/cli.py
+agent/config.py
+agent/server.py
+agent/agents/__init__.py
+agent/agents/echo.py
+agent/agents/task.py
+feishu_task_agent.egg-info/PKG-INFO
+feishu_task_agent.egg-info/SOURCES.txt
+feishu_task_agent.egg-info/dependency_links.txt
+feishu_task_agent.egg-info/entry_points.txt
+feishu_task_agent.egg-info/requires.txt
+feishu_task_agent.egg-info/top_level.txt

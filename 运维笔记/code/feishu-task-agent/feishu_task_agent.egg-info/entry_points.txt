@@ -1,0 +1,2 @@
+[console_scripts]
+feishu-task-agent = agent.cli:main

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "feishu-task-agent"
+version = "0.1.0"
+description = "飞书消息驱动的多 Agent 服务：feishu-task-agent start 一条命令启动"
+requires-python = ">=3.8"
+dependencies = ["lark-oapi>=1.4.0", "cryptography>=41"]
+
+[project.scripts]
+feishu-task-agent = "agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent*"]
