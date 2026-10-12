@@ -1,4 +1,5 @@
 import base64
+import binascii
 import json
 import os
 import re
@@ -112,7 +113,16 @@ def _master_key_system():
             "系统钥匙串中没有 lark-cli master.key。"
             "若弹出了钥匙串授权窗口请点击“始终允许”，或改用环境变量提供凭证"
         )
-    key = base64.b64decode(out.stdout.strip())
+    raw = out.stdout.strip()
+    # zalando/go-keyring 会在存储值外包一层编码前缀
+    if raw.startswith("go-keyring-base64:"):
+        raw = base64.b64decode(raw[len("go-keyring-base64:"):]).decode("utf-8")
+    elif raw.startswith("go-keyring-encoded:"):
+        raw = bytes.fromhex(raw[len("go-keyring-encoded:"):]).decode("utf-8")
+    try:
+        key = base64.b64decode(raw)
+    except (binascii.Error, ValueError) as e:
+        raise CredentialsError(f"master.key 解码失败: {e}")
     if len(key) != 32:
         raise CredentialsError("钥匙串中的 master.key 不是有效的 32 字节密钥")
     return key
