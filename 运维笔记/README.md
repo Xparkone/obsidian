@@ -174,6 +174,7 @@
 - [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [Skill-Tool-MCP-概念关系与使用指南.md](ai/Skill-Tool-MCP-概念关系与使用指南.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
 - [LangChain 与 LangGraph 从入门到实战学习指南](ai/LangChain-LangGraph-从入门到实战学习指南.md)
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
+- [Python与Go-标准开发流程详解.md](go/Python与Go-标准开发流程详解.md) — 从零开始的开发、测试、构建、CI/CD 与部署全流程
 - [todo-api/](go/todo-api/) — Go Todo API 示例
 - [status-api/](go/status-api/) — Go 服务器、Kubernetes、Pod 和中间件状态 API
 - [Python入门介绍.md](python/Python入门介绍.md) · [Python-列表-元组-字典详解.md](python/Python-列表-元组-字典详解.md)
