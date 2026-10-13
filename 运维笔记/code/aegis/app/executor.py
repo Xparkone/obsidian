@@ -48,5 +48,7 @@ class SSHExecutor:
             completed = subprocess.run(args, capture_output=True, text=True, timeout=self.timeout, check=False)
         except subprocess.TimeoutExpired:
             return ExecutionResult("failed", "ssh", "SSH 执行超时")
+        except OSError as exc:
+            return ExecutionResult("failed", "ssh", f"SSH 客户端不可用: {type(exc).__name__}")
         output = (completed.stdout or completed.stderr or "").strip()
         return ExecutionResult("completed" if completed.returncode == 0 else "failed", "ssh", output[:12000])

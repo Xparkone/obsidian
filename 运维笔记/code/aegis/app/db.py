@@ -20,9 +20,11 @@ class Database:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode = WAL")
         try:
             yield conn
             conn.commit()
@@ -37,6 +39,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE,
                     kind TEXT NOT NULL CHECK(kind IN ('user','ai')),
+                    key_prefix TEXT NOT NULL DEFAULT '',
                     key_hash TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'active',
                     created_at TEXT NOT NULL
@@ -78,6 +81,8 @@ class Database:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_principal_id ON audit_events(principal_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_principals_key_prefix ON principals(key_prefix);
                 """
             )
             self._ensure_columns(c, "servers", {
@@ -85,6 +90,9 @@ class Database:
                 "port": "INTEGER NOT NULL DEFAULT 22",
                 "known_hosts_path": "TEXT NOT NULL DEFAULT ''",
                 "credential_ref": "TEXT NOT NULL DEFAULT ''",
+            })
+            self._ensure_columns(c, "principals", {
+                "key_prefix": "TEXT NOT NULL DEFAULT ''",
             })
 
     @staticmethod
@@ -104,8 +112,9 @@ class Database:
             return [dict(row) for row in c.execute(sql, args).fetchall()]
 
     def row(self, sql: str, args: tuple[Any, ...] = ()) -> dict[str, Any] | None:
-        rows = self.rows(sql, args)
-        return rows[0] if rows else None
+        with self.connect() as c:
+            row = c.execute(sql, args).fetchone()
+            return dict(row) if row else None
 
     def seed(self, seed_rules: list[dict[str, str]], seed_demo: bool) -> None:
         for rule in seed_rules:

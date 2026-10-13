@@ -5,8 +5,16 @@ import hmac
 import secrets
 
 
+KEY_PREFIX_LENGTH = 22
+
+
 def issue_api_key() -> str:
     return "aegis_" + secrets.token_urlsafe(32)
+
+
+def api_key_prefix(api_key: str) -> str:
+    """Return the non-secret lookup prefix stored with a principal."""
+    return api_key[:KEY_PREFIX_LENGTH]
 
 
 def hash_api_key(api_key: str, salt: bytes | None = None) -> str:

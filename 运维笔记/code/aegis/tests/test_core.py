@@ -124,6 +124,53 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertIn("X-Aegis-Admin", response["error"])
 
+    def test_dispatch_rejects_non_object_request_body(self):
+        status, response = self.service.dispatch("POST", "/api/v1/principals", [], None, "test-admin")
+        self.assertEqual(status, 400)
+        self.assertEqual(response["error"], "请求体必须是 JSON 对象")
+
+    def test_access_grant_validates_ids_and_actions(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/access-grants",
+            {"principal_id": "invalid", "server_id": 1},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("必须是整数", response["error"])
+
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/access-grants",
+            {"principal_id": 999, "server_id": 999},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 404)
+        self.assertIn("身份不存在", response["error"])
+
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/access-grants",
+            {"principal_id": 1, "server_id": 1, "actions": "execute"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("actions", response["error"])
+
+    def test_duplicate_rule_returns_conflict(self):
+        duplicate = {
+            "id": "dangerous-filesystem",
+            "name": "duplicate",
+            "pattern": "duplicate",
+            "reason": "duplicate",
+        }
+        status, response = self.service.dispatch("POST", "/api/v1/rules", duplicate, None, "test-admin")
+        self.assertEqual(status, 409)
+        self.assertEqual(response["error"], "id 已存在")
+
 
 if __name__ == "__main__":
     unittest.main()

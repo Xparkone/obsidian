@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hmac
+import sqlite3
 import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -75,6 +76,8 @@ class AegisService:
 
     def dispatch(self, method: str, path: str, body: dict[str, Any], api_key: str | None, admin_key: str | None = None) -> tuple[int, dict[str, Any]]:
         self.counters["requests"] += 1
+        if not isinstance(body, dict):
+            return 400, {"error": "请求体必须是 JSON 对象"}
         route = urlparse(path).path
         principal = self.principal_from_key(api_key)
         is_admin = bool(admin_key and self.settings.admin_token and hmac.compare_digest(admin_key, self.settings.admin_token))
@@ -140,9 +143,24 @@ class AegisService:
         if route == "/api/v1/access-grants" and method == "POST":
             if not is_admin:
                 return 401, {"error": "管理接口需要 X-Aegis-Admin"}
-            if not body.get("principal_id") or not body.get("server_id"):
+            try:
+                principal_id = int(body.get("principal_id"))
+                server_id = int(body.get("server_id"))
+            except (TypeError, ValueError):
+                return 400, {"error": "principal_id 与 server_id 必须是整数"}
+            if principal_id <= 0 or server_id <= 0:
                 return 400, {"error": "principal_id 与 server_id 必填"}
-            self.db.insert("INSERT OR REPLACE INTO access_grants(principal_id,server_id,actions_json) VALUES(?,?,?)", (body["principal_id"], body["server_id"], json.dumps(body.get("actions", ["read"]))))
+            if not self.db.row("SELECT id FROM principals WHERE id=?", (principal_id,)):
+                return 404, {"error": "身份不存在"}
+            if not self.db.row("SELECT id FROM servers WHERE id=?", (server_id,)):
+                return 404, {"error": "服务器不存在"}
+            actions = body.get("actions", ["read"])
+            if not isinstance(actions, list) or not actions or any(not isinstance(action, str) or action not in {"read", "execute", "admin"} for action in actions):
+                return 400, {"error": "actions 必须是 read、execute 或 admin 的非空数组"}
+            try:
+                self.db.insert("INSERT OR REPLACE INTO access_grants(principal_id,server_id,actions_json) VALUES(?,?,?)", (principal_id, server_id, json.dumps(actions)))
+            except sqlite3.IntegrityError:
+                return 404, {"error": "身份或服务器不存在"}
             return 201, {"status": "granted"}
         if route == "/api/v1/rules" and method == "POST":
             if not is_admin:
@@ -154,7 +172,10 @@ class AegisService:
                 re.compile(body["pattern"])
             except re.error:
                 return 400, {"error": "pattern 不是有效正则"}
-            self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
+            try:
+                self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
+            except sqlite3.IntegrityError:
+                return 409, {"error": "id 已存在"}
             return 201, {"id": body["id"]}
         if route == "/api/v1/execute" and method == "POST":
             self.counters["commands"] += 1
@@ -221,7 +242,10 @@ def create_handler(service: AegisService, static_dir: Path):
             if length > 1_000_000:
                 raise ValueError("请求体过大")
             raw = self.rfile.read(length) if length else b"{}"
-            return json.loads(raw.decode() or "{}")
+            payload = json.loads(raw.decode() or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("请求体必须是 JSON 对象")
+            return payload
 
         def _key(self) -> str | None:
             return self.headers.get("X-Aegis-Key") or self.headers.get("Authorization", "").removeprefix("Bearer ").strip() or None
