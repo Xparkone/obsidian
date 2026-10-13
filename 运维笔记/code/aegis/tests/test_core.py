@@ -62,6 +62,17 @@ class AegisCoreTest(unittest.TestCase):
         self.assertTrue(verify_api_key(key, encoded))
         self.assertFalse(verify_api_key("aegis_other", encoded))
 
+    def test_new_principal_stores_only_a_lookup_prefix(self):
+        status, created = self.service.dispatch(
+            "POST", "/api/v1/principals", {"name": "prefix-agent", "kind": "ai"}, None, "test-admin"
+        )
+        self.assertEqual(status, 201)
+        stored = self.service.db.row("SELECT key_prefix,key_hash FROM principals WHERE id=?", (created["id"],))
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["key_prefix"], created["api_key"][:22])
+        self.assertNotIn(created["api_key"], stored["key_hash"])
+        self.assertEqual(self.service.principal_from_key(created["api_key"])["id"], created["id"])
+
     def test_rule_blocks_command_and_writes_audit(self):
         status, created = self.service.dispatch("POST", "/api/v1/principals", {"name": "agent-1", "kind": "ai"}, None, "test-admin")
         self.assertEqual(status, 201)
@@ -150,10 +161,16 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("身份不存在", response["error"])
 
+        _, principal = self.service.dispatch(
+            "POST", "/api/v1/principals", {"name": "grant-test", "kind": "user"}, None, "test-admin"
+        )
+        _, server = self.service.dispatch(
+            "POST", "/api/v1/servers", {"name": "grant-test", "address": "10.0.0.9"}, None, "test-admin"
+        )
         status, response = self.service.dispatch(
             "POST",
             "/api/v1/access-grants",
-            {"principal_id": 1, "server_id": 1, "actions": "execute"},
+            {"principal_id": principal["id"], "server_id": server["id"], "actions": "execute"},
             None,
             "test-admin",
         )
@@ -170,6 +187,47 @@ class AegisCoreTest(unittest.TestCase):
         status, response = self.service.dispatch("POST", "/api/v1/rules", duplicate, None, "test-admin")
         self.assertEqual(status, 409)
         self.assertEqual(response["error"], "id 已存在")
+
+    def test_new_rule_is_used_without_restarting_service(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "deny-echo", "name": "禁止 echo", "pattern": r"\becho\b", "reason": "测试规则"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 201)
+
+        _, principal = self.service.dispatch(
+            "POST", "/api/v1/principals", {"name": "rule-test", "kind": "ai"}, None, "test-admin"
+        )
+        _, server = self.service.dispatch(
+            "POST", "/api/v1/servers", {"name": "rule-test", "address": "10.0.0.10"}, None, "test-admin"
+        )
+        self.service.dispatch(
+            "POST",
+            "/api/v1/access-grants",
+            {"principal_id": principal["id"], "server_id": server["id"], "actions": ["execute"]},
+            None,
+            "test-admin",
+        )
+
+        status, response = self.service.dispatch(
+            "POST", "/api/v1/execute", {"server_id": server["id"], "command": "echo hello"}, principal["api_key"]
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(response["rule_id"], "deny-echo")
+
+    def test_new_rule_is_compiled_once_and_used_for_evaluation(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "deny-test-command", "name": "测试规则", "pattern": r"\bforbidden\b", "reason": "测试阻断"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(self.service.evaluate("echo forbidden")[1:], ("deny-test-command", "测试阻断", "critical"))
 
 
 if __name__ == "__main__":

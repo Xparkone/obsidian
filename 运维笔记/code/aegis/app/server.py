@@ -5,18 +5,17 @@ import re
 import hmac
 import sqlite3
 import uuid
-from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 from .config import Settings
 from .db import Database, utc_now
 from .executor import DryRunExecutor, SSHExecutor
 from .notify import WebhookNotifier
 from .rules import built_in_rules
-from .security import hash_api_key, issue_api_key, verify_api_key
+from .security import api_key_prefix, hash_api_key, issue_api_key, verify_api_key
 
 
 class AegisService:
@@ -27,30 +26,53 @@ class AegisService:
         self.notifier = WebhookNotifier({"feishu": settings.feishu_webhook, "dingtalk": settings.dingtalk_webhook, "wecom": settings.wecom_webhook})
         self.executor = SSHExecutor(settings.ssh_timeout) if settings.executor_mode == "ssh" else DryRunExecutor()
         self.counters = {"requests": 0, "commands": 0, "blocked": 0, "alerts": 0}
+        self._compiled_rules: tuple[tuple[str, re.Pattern[str], str, str], ...] = ()
+        self.refresh_rules()
 
     def principal_from_key(self, api_key: str | None) -> dict[str, Any] | None:
         if not api_key:
             return None
-        for principal in self.db.rows("SELECT * FROM principals WHERE status='active'"):
+        prefix = api_key_prefix(api_key)
+        candidates = self.db.rows("SELECT * FROM principals WHERE status='active' AND key_prefix=?", (prefix,))
+        # Principals created before key_prefix was added retain an empty prefix.
+        if not candidates:
+            candidates = self.db.rows("SELECT * FROM principals WHERE status='active' AND key_prefix=''")
+        for principal in candidates:
             if verify_api_key(api_key, principal["key_hash"]):
                 return principal
         return None
 
+    def refresh_rules(self) -> None:
+        compiled: list[tuple[str, re.Pattern[str], str, str]] = []
+        for row in self.db.rows("SELECT id,pattern,reason,severity FROM rules WHERE enabled=1 ORDER BY id"):
+            try:
+                compiled.append((row["id"], re.compile(row["pattern"], flags=re.IGNORECASE), row["reason"], row["severity"]))
+            except (re.error, TypeError):
+                # Invalid legacy data should not take down the whole service.
+                continue
+        self._compiled_rules = tuple(compiled)
+
     def visible_servers(self, principal_id: int | None = None) -> list[dict[str, Any]]:
+        public_columns = "id,name,address,environment,tags_json,status,username,port,created_at"
         if principal_id is None:
-            servers = self.db.rows("SELECT * FROM servers ORDER BY id")
+            servers = self.db.rows(f"SELECT {public_columns} FROM servers ORDER BY id")
         else:
-            servers = self.db.rows("SELECT s.* FROM servers s JOIN access_grants g ON g.server_id=s.id WHERE g.principal_id=? ORDER BY s.id", (principal_id,))
+            scoped_columns = ",".join(f"s.{column}" for column in public_columns.split(","))
+            servers = self.db.rows(f"SELECT {scoped_columns} FROM servers s JOIN access_grants g ON g.server_id=s.id WHERE g.principal_id=? ORDER BY s.id", (principal_id,))
         for server in servers:
-            server["tags"] = json.loads(server.pop("tags_json", "[]"))
+            try:
+                tags = json.loads(server.pop("tags_json", "[]"))
+            except (TypeError, json.JSONDecodeError):
+                tags = []
+            server["tags"] = tags if isinstance(tags, list) else []
             server.pop("credential_ref", None)
             server.pop("known_hosts_path", None)
         return servers
 
     def evaluate(self, command: str) -> tuple[bool, str | None, str | None, str]:
-        for row in self.db.rows("SELECT * FROM rules WHERE enabled=1 ORDER BY id"):
-            if re.search(row["pattern"], command, flags=re.IGNORECASE):
-                return False, row["id"], row["reason"], row["severity"]
+        for rule_id, pattern, reason, severity in self._compiled_rules:
+            if pattern.search(command):
+                return False, rule_id, reason, severity
         return True, None, None, "info"
 
     def audit(self, principal_id: int | None, server_id: int | None, action: str, command: str | None, decision: str, rule_id: str | None = None, reason: str | None = None, metadata: dict[str, Any] | None = None) -> int:
@@ -110,20 +132,23 @@ class AegisService:
         if route == "/api/v1/principals" and method == "POST":
             if not is_admin:
                 return 401, {"error": "管理接口需要 X-Aegis-Admin"}
-            if not body.get("name") or body.get("kind") not in {"user", "ai"}:
+            name = body.get("name")
+            kind = body.get("kind")
+            if not isinstance(name, str) or not name.strip() or kind not in {"user", "ai"}:
                 return 400, {"error": "name 与 kind(user|ai) 必填"}
             key = issue_api_key()
             try:
-                principal_id = self.db.insert("INSERT INTO principals(name,kind,key_hash,created_at) VALUES(?,?,?,?)", (body["name"], body["kind"], hash_api_key(key), utc_now()))
+                principal_id = self.db.insert("INSERT INTO principals(name,kind,key_prefix,key_hash,created_at) VALUES(?,?,?,?,?)", (name.strip(), kind, api_key_prefix(key), hash_api_key(key), utc_now()))
             except Exception:
                 return 409, {"error": "name 已存在"}
-            return 201, {"id": principal_id, "name": body["name"], "kind": body["kind"], "api_key": key, "warning": "密钥只在本次响应显示，请立即保存"}
+            return 201, {"id": principal_id, "name": name.strip(), "kind": kind, "api_key": key, "warning": "密钥只在本次响应显示，请立即保存"}
         if route == "/api/v1/servers" and method == "POST":
             if not is_admin:
                 return 401, {"error": "管理接口需要 X-Aegis-Admin"}
-            if not body.get("name") or not body.get("address"):
+            if not isinstance(body.get("name"), str) or not body["name"].strip() or not isinstance(body.get("address"), str) or not body["address"].strip():
                 return 400, {"error": "name 与 address 必填"}
-            address = str(body["address"]).strip()
+            name = body["name"].strip()
+            address = body["address"].strip()
             username = str(body.get("username", "")).strip()
             try:
                 port = int(body.get("port", 22))
@@ -136,27 +161,26 @@ class AegisService:
             if not 1 <= port <= 65535:
                 return 400, {"error": "port 必须在 1 到 65535 之间"}
             try:
-                server_id = self.db.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,known_hosts_path,credential_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (body["name"], address, body.get("environment", "production"), json.dumps(body.get("tags", [])), username, port, str(body.get("known_hosts_path", "")), str(body.get("credential_ref", "")), utc_now()))
+                server_id = self.db.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,known_hosts_path,credential_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (name, address, body.get("environment", "production"), json.dumps(body.get("tags", [])), username, port, str(body.get("known_hosts_path", "")), str(body.get("credential_ref", "")), utc_now()))
             except Exception:
                 return 409, {"error": "name 已存在"}
-            return 201, {"id": server_id, "name": body["name"]}
+            return 201, {"id": server_id, "name": name}
         if route == "/api/v1/access-grants" and method == "POST":
             if not is_admin:
                 return 401, {"error": "管理接口需要 X-Aegis-Admin"}
-            try:
-                principal_id = int(body.get("principal_id"))
-                server_id = int(body.get("server_id"))
-            except (TypeError, ValueError):
+            principal_id = body.get("principal_id")
+            server_id = body.get("server_id")
+            if isinstance(principal_id, bool) or not isinstance(principal_id, int) or isinstance(server_id, bool) or not isinstance(server_id, int):
                 return 400, {"error": "principal_id 与 server_id 必须是整数"}
             if principal_id <= 0 or server_id <= 0:
                 return 400, {"error": "principal_id 与 server_id 必填"}
+            actions = body.get("actions", ["read"])
+            if not isinstance(actions, list) or not actions or any(not isinstance(action, str) or action not in {"read", "execute", "admin"} for action in actions):
+                return 400, {"error": "actions 必须是 read、execute 或 admin 的非空数组"}
             if not self.db.row("SELECT id FROM principals WHERE id=?", (principal_id,)):
                 return 404, {"error": "身份不存在"}
             if not self.db.row("SELECT id FROM servers WHERE id=?", (server_id,)):
                 return 404, {"error": "服务器不存在"}
-            actions = body.get("actions", ["read"])
-            if not isinstance(actions, list) or not actions or any(not isinstance(action, str) or action not in {"read", "execute", "admin"} for action in actions):
-                return 400, {"error": "actions 必须是 read、execute 或 admin 的非空数组"}
             try:
                 self.db.insert("INSERT OR REPLACE INTO access_grants(principal_id,server_id,actions_json) VALUES(?,?,?)", (principal_id, server_id, json.dumps(actions)))
             except sqlite3.IntegrityError:
@@ -166,16 +190,17 @@ class AegisService:
             if not is_admin:
                 return 401, {"error": "管理接口需要 X-Aegis-Admin"}
             required = [body.get(k) for k in ("id", "name", "pattern", "reason")]
-            if not all(required):
+            if not all(isinstance(value, str) and value.strip() for value in required):
                 return 400, {"error": "id/name/pattern/reason 必填"}
             try:
                 re.compile(body["pattern"])
-            except re.error:
+            except (re.error, TypeError):
                 return 400, {"error": "pattern 不是有效正则"}
             try:
                 self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
             except sqlite3.IntegrityError:
                 return 409, {"error": "id 已存在"}
+            self.refresh_rules()
             return 201, {"id": body["id"]}
         if route == "/api/v1/execute" and method == "POST":
             self.counters["commands"] += 1

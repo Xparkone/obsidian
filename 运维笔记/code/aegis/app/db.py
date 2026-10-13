@@ -24,7 +24,6 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA journal_mode = WAL")
         try:
             yield conn
             conn.commit()
@@ -33,6 +32,7 @@ class Database:
 
     def init_schema(self) -> None:
         with self.connect() as c:
+            c.execute("PRAGMA journal_mode = WAL")
             c.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS principals (
@@ -82,7 +82,6 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_audit_principal_id ON audit_events(principal_id, id DESC);
-                CREATE INDEX IF NOT EXISTS idx_principals_key_prefix ON principals(key_prefix);
                 """
             )
             self._ensure_columns(c, "servers", {
@@ -94,6 +93,7 @@ class Database:
             self._ensure_columns(c, "principals", {
                 "key_prefix": "TEXT NOT NULL DEFAULT ''",
             })
+            c.execute("CREATE INDEX IF NOT EXISTS idx_principals_key_prefix ON principals(key_prefix)")
 
     @staticmethod
     def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
