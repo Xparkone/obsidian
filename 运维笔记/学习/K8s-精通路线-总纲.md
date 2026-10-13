@@ -75,7 +75,7 @@
 | 2 | `K8s-调度器深入.md` | scheduler 架构、Scheduling Framework 18 个扩展点、打分插件、PreBinding→Binding、抢占机制源码视角、descheduler 策略、自定义调度器、批调度（Volcano/Kueue 简介） | 第 1 章 | 写一个寄存式打分插件（或 descheduler 策略实验） | ✅ |
 | 3 | `K8s-网络原理详解.md` | K8s 网络模型三原则、CNI 规范、Flannel/Calico/IPIP-BGP/Cilium(eBPF&hubble) 对比、kube-proxy iptables vs IPVS 抓链验证、CoreDNS 原理与排障、NetworkPolicy 加固、Gateway API 完整实战 | 无 | `iptables -t nat -L` 对照 Service；Cilium demo；tcpdump 追包 | ✅ |
 | 4 | `K8s-存储深入.md` | CSI 两组件架构（Controller/Node service）、PV-PVC 绑定/回收/Retain-Delete 语义、静态 vs 动态供给、StorageClass 参数含义、扩容/克隆、VolumeSnapshot API、本地存储与拓扑感知 | 无 | CSI driver demo（如 csi-driver-host-path）；快照实验 | ✅ |
-| 5 | `K8s-安全加固详解.md` | PSA 实战（enforce/audit/warn）、Mutating/Validating webhook 开发与故障尾、OPA/Gatekeeper、Kyverno、Secret 静态加密（EncryptionConfiguration+KMS）、Vault/ESO 集成、audit policy、镜像签名（cosign）、CIS 基准 | 第 1 章 | 起一台 webhook server 拦截 Deployment；conftest 离线校验 | ⬜ |
+| 5 | `K8s-安全加固详解.md` | PSA 实战（enforce/audit/warn）、Mutating/Validating webhook 开发与故障尾、OPA/Gatekeeper、Kyverno、Secret 静态加密（EncryptionConfiguration+KMS）、Vault/ESO 集成、audit policy、镜像签名（cosign）、CIS 基准 | 第 1 章 | 起一台 webhook server 拦截 Deployment；conftest 离线校验 | ✅ |
 | 6 | `K8s-Operator开发实战.md` | CRD 进阶（structural schema / 多版本 / conversion webhook）、controller-runtime 架构、reconcile 幂等性、Informer vs Watch、finalizer、kubebuilder 上手、Go 写一个最小应用型 Operator（部署 + 观测 + 重启自愈） | 第 1、2 章 | `kubebuilder init && make run` 全流程 | ⬜ |
 | 7 | `K8s-生产集群运维手册.md` | kubeadm 搭集群（v1.37、containerd、etcd 外部/堆叠选型）、升级流程（kubeadm upgrade + drain）、CA/证书轮转（1.35+ 自动轮转行为）、节点自运维（node-problem-detector、draino）、etcd/apiserer/scheduler 性能调优参数、LIMIT ranger/ResourceQuota 治理、大规模集群设计约束 | 第 1 章 | 见下方实验 L2 / L3 | ⬜ |
 | 8 | `K8s-故障排查方法论.md` | 分域排障树：控制面 / 节点 / 调度 / Pod-容器 / 网络-DNS / 存储 / 证书七大域；每域「症状→工具→修复」；kubectl debug/ephemeral/nsenter/tcpdump 组合技；kubelet 日志读法；真实事故复盘模板；收敛 `排障进阶-5个冷门kubectl命令` 等内容做成一本通 | 第 1~4、7 章 | 实验 L3 破坏-恢复演练是本篇的实战战场 | ⬜ |
@@ -115,7 +115,7 @@
 第 2 章 调度器                 ✅ 2026-10-13 → 容器编排/K8s-调度器深入.md
 第 3 章 网络原理               ✅ 2026-10-13 → 容器编排/K8s-网络原理详解.md
 第 4 章 存储深入               ✅ 2026-10-13 → 容器编排/K8s-存储深入.md
-第 5 章 安全加固               ⬜
+第 5 章 安全加固               ✅ 2026-10-13 → 容器编排/K8s-安全加固详解.md
 第 6 章 Operator 开发          ⬜
 第 7 章 生产集群运维           ⬜
 第 8 章 故障排查方法论         ⬜
