@@ -42,7 +42,7 @@ class AegisCoreTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         try:
             root = Path(temporary.name)
-            (root / ".env").write_text("AEGIS_ADMIN_TOKEN=from-dotenv\nAEGIS_DATA_DIR=./local-data\n", encoding="utf-8")
+            (root / ".env").write_text("export AEGIS_ADMIN_TOKEN=from-dotenv # local\nAEGIS_DATA_DIR=./local-data\n", encoding="utf-8")
             os.chdir(root)
             os.environ.pop("AEGIS_ADMIN_TOKEN", None)
             os.environ.pop("AEGIS_DATA_DIR", None)

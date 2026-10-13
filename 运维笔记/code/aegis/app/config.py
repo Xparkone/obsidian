@@ -21,7 +21,7 @@ class Settings:
 
 
 def _load_local_env() -> None:
-    """读取项目目录 .env；不覆盖已经由 shell 或容器注入的变量。"""
+    """读取项目目录 .env；非空 shell/container 环境变量优先。"""
     env_file = Path.cwd() / ".env"
     if not env_file.is_file():
         return
@@ -31,12 +31,18 @@ def _load_local_env() -> None:
         return
     for raw_line in lines:
         line = raw_line.strip()
+        if line.startswith("export "):
+            line = line[7:].lstrip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        value = value.strip()
+        if value[:1] in {'"', "'"} and value[-1:] == value[:1]:
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].strip()
+        if key and not os.environ.get(key):
             os.environ[key] = value
 
 

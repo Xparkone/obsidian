@@ -81,7 +81,7 @@ class AegisService:
         if route == "/healthz":
             return 200, {"status": "ok"}
         if route == "/readyz":
-            return 200, {"status": "ready", "db": str(self.settings.db_path)}
+            return 200, {"status": "ready", "db": str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "executor_mode": self.settings.executor_mode}
         if route == "/api/v1/dashboard" and method == "GET":
             return 200, self.dashboard(principal, is_admin)
         if route == "/api/v1/servers" and method == "GET":
