@@ -14,7 +14,7 @@ from .config import Settings
 from .db import Database, utc_now
 from .executor import DryRunExecutor, SSHExecutor
 from .notify import WebhookNotifier
-from .rules import built_in_rules
+from .rules import MAX_ENABLED_RULES, RegexValidationError, built_in_rules, compile_rule_pattern
 from .security import api_key_prefix, hash_api_key, issue_api_key, verify_api_key
 
 
@@ -27,6 +27,7 @@ class AegisService:
         self.executor = SSHExecutor(settings.ssh_timeout) if settings.executor_mode == "ssh" else DryRunExecutor()
         self.counters = {"requests": 0, "commands": 0, "blocked": 0, "alerts": 0}
         self._compiled_rules: tuple[tuple[str, re.Pattern[str], str, str], ...] = ()
+        self._rules_error: str | None = None
         self.refresh_rules()
 
     def principal_from_key(self, api_key: str | None) -> dict[str, Any] | None:
@@ -44,13 +45,22 @@ class AegisService:
 
     def refresh_rules(self) -> None:
         compiled: list[tuple[str, re.Pattern[str], str, str]] = []
-        for row in self.db.rows("SELECT id,pattern,reason,severity FROM rules WHERE enabled=1 ORDER BY id"):
+        rows = self.db.rows("SELECT id,pattern,reason,severity FROM rules WHERE enabled=1 ORDER BY id")
+        if len(rows) > MAX_ENABLED_RULES:
+            self._compiled_rules = ()
+            self._rules_error = f"启用规则数量超过上限 {MAX_ENABLED_RULES}"
+            return
+        for row in rows:
             try:
-                compiled.append((row["id"], re.compile(row["pattern"], flags=re.IGNORECASE), row["reason"], row["severity"]))
-            except (re.error, TypeError):
-                # Invalid legacy data should not take down the whole service.
-                continue
+                compiled.append((row["id"], compile_rule_pattern(row["pattern"]), row["reason"], row["severity"]))
+            except RegexValidationError as exc:
+                # Do not silently skip an invalid enabled rule: allowing a
+                # command while policy data is malformed would be a bypass.
+                self._compiled_rules = ()
+                self._rules_error = f"规则 {row['id']} 无法加载：{exc}"
+                return
         self._compiled_rules = tuple(compiled)
+        self._rules_error = None
 
     def visible_servers(self, principal_id: int | None = None) -> list[dict[str, Any]]:
         public_columns = "id,name,address,environment,tags_json,status,username,port,created_at"
@@ -70,6 +80,8 @@ class AegisService:
         return servers
 
     def evaluate(self, command: str) -> tuple[bool, str | None, str | None, str]:
+        if self._rules_error:
+            return False, "__rules_invalid__", self._rules_error, "critical"
         for rule_id, pattern, reason, severity in self._compiled_rules:
             if pattern.search(command):
                 return False, rule_id, reason, severity
@@ -193,9 +205,12 @@ class AegisService:
             if not all(isinstance(value, str) and value.strip() for value in required):
                 return 400, {"error": "id/name/pattern/reason 必填"}
             try:
-                re.compile(body["pattern"])
-            except (re.error, TypeError):
-                return 400, {"error": "pattern 不是有效正则"}
+                compile_rule_pattern(body["pattern"])
+            except RegexValidationError as exc:
+                return 400, {"error": str(exc)}
+            enabled_count = self.db.row("SELECT count(*) AS count FROM rules WHERE enabled=1")["count"]
+            if enabled_count >= MAX_ENABLED_RULES:
+                return 400, {"error": f"启用规则数量不能超过 {MAX_ENABLED_RULES}"}
             try:
                 self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
             except sqlite3.IntegrityError:

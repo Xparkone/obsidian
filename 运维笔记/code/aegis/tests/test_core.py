@@ -8,6 +8,7 @@ from pathlib import Path
 from app.config import Settings, load_settings
 from app.db import Database
 from app.executor import SSHExecutor
+from app.rules import MAX_RULE_PATTERN_LENGTH, built_in_rules, compile_rule_pattern
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
 
@@ -261,6 +262,54 @@ class AegisCoreTest(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         self.assertEqual(self.service.evaluate("echo forbidden")[1:], ("deny-test-command", "测试阻断", "critical"))
+
+    def test_new_rule_rejects_regex_backtracking_shapes(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "redos", "name": "危险正则", "pattern": r"(a+)+$", "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("重复结构", response["error"])
+
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "backref", "name": "反向引用", "pattern": r"(a)\\1", "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("反向引用", response["error"])
+
+    def test_new_rule_rejects_oversized_pattern(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "long-pattern", "name": "超长正则", "pattern": "a" * (MAX_RULE_PATTERN_LENGTH + 1), "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn(str(MAX_RULE_PATTERN_LENGTH), response["error"])
+
+    def test_built_in_rules_pass_regex_safety_validation(self):
+        for rule in built_in_rules():
+            compile_rule_pattern(rule.pattern)
+
+    def test_invalid_enabled_legacy_rule_fails_closed(self):
+        self.service.db.insert(
+            "INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)",
+            ("legacy-redos", "旧危险正则", r"(a+)+$", "测试", "critical", "now"),
+        )
+        self.service.refresh_rules()
+        allowed, rule_id, reason, severity = self.service.evaluate("uname -a")
+        self.assertFalse(allowed)
+        self.assertEqual(rule_id, "__rules_invalid__")
+        self.assertIn("legacy-redos", reason)
+        self.assertEqual(severity, "critical")
 
 
 if __name__ == "__main__":

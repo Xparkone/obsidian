@@ -5,6 +5,130 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 
+# The service evaluates every enabled rule for every command.  Keep the
+# expression and rule set bounded because ``re`` from the standard library
+# has no per-match timeout and can exhibit catastrophic backtracking for
+# user-supplied patterns.
+MAX_RULE_PATTERN_LENGTH = 512
+MAX_ENABLED_RULES = 256
+
+
+class RegexValidationError(ValueError):
+    """Raised when a rule pattern is too expensive or cannot be compiled."""
+
+
+@dataclass
+class _GroupState:
+    has_unbounded_quantifier: bool = False
+    has_branch: bool = False
+
+
+def _has_dangerous_quantifier(pattern: str) -> bool:
+    """Detect unbounded repetition of a quantified or branched group.
+
+    This deliberately stays a small, conservative scanner instead of relying
+    on ``sre_parse`` (a deprecated private parser).  It understands escapes,
+    character classes and nested groups well enough to reject the classic
+    ``(a+)+``/``([a-z]*){2,}`` and ``(a|aa)+`` ReDoS shapes while keeping
+    ordinary shell rules such as ``[^\n|;&]*`` valid.  Bounded outer repeats
+    and optional groups are allowed because they cannot grow the backtracking
+    tree without bound (for example the built-in ``(-[rf]+\s+)?`` rule).
+    """
+    groups: list[_GroupState] = []
+    closed_group_has_unbounded_quantifier = False
+    closed_group_has_branch = False
+    in_class = False
+    escaped = False
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if in_class:
+            if char == "]":
+                in_class = False
+            index += 1
+            continue
+        if char == "[":
+            in_class = True
+            index += 1
+            continue
+        if char == "(":
+            groups.append(_GroupState())
+            index += 1
+            continue
+        if char == ")" and groups:
+            state = groups.pop()
+            closed_group_has_unbounded_quantifier = state.has_unbounded_quantifier
+            closed_group_has_branch = state.has_branch
+            if groups and state.has_unbounded_quantifier:
+                # The parent now contains a quantified sub-expression.  If a
+                # quantifier follows the parent's closing ``)``, the pair is
+                # nested even when the inner quantifier was in a child group.
+                groups[-1].has_unbounded_quantifier = True
+            if groups and state.has_branch:
+                groups[-1].has_branch = True
+            index += 1
+            continue
+        if char == "|" and groups:
+            groups[-1].has_branch = True
+            index += 1
+            continue
+        if char in "*+?" or char == "{":
+            # ``{`` only denotes a quantifier when it closes with ``}`` and
+            # starts with a decimal bound.  Invalid forms are left to re.
+            is_quantifier = char != "{" or bool(re.match(r"\{\d+(?:,\d*)?\}", pattern[index:]))
+            if is_quantifier:
+                unbounded = char in "*+"
+                if char in "*+?" and index + 1 < len(pattern) and pattern[index + 1] == "?":
+                    # Lazy suffix; it is part of the same quantifier.
+                    index += 1
+                if char == "{" and "}" in pattern[index:]:
+                    bound = pattern[index : pattern.index("}", index) + 1]
+                    unbounded = bound.endswith(",}")
+                    index = pattern.index("}", index)
+                if (closed_group_has_unbounded_quantifier or closed_group_has_branch) and unbounded:
+                    return True
+                if groups:
+                    groups[-1].has_unbounded_quantifier |= unbounded
+                closed_group_has_unbounded_quantifier = False
+                closed_group_has_branch = False
+            index += 1
+            continue
+        # Any ordinary token means a following quantifier applies to this
+        # token, not to the group closed earlier.
+        closed_group_has_unbounded_quantifier = False
+        closed_group_has_branch = False
+        index += 1
+    return False
+
+
+def compile_rule_pattern(pattern: str) -> re.Pattern[str]:
+    """Validate and compile a user supplied case-insensitive rule pattern."""
+    if not isinstance(pattern, str) or not pattern.strip():
+        raise RegexValidationError("pattern 必须是非空字符串")
+    if len(pattern) > MAX_RULE_PATTERN_LENGTH:
+        raise RegexValidationError(f"pattern 长度不能超过 {MAX_RULE_PATTERN_LENGTH}")
+    # Backreferences make the matching cost difficult to bound and are not
+    # needed for command deny rules.  Reject them explicitly before compile so
+    # legacy data follows the same safety policy as newly created rules.
+    if re.search(r"\\(?:[1-9][0-9]*|g<[^>]+>|k<[^>]+>)", pattern):
+        raise RegexValidationError("pattern 不支持反向引用")
+    try:
+        compiled = re.compile(pattern, flags=re.IGNORECASE)
+    except (re.error, TypeError) as exc:
+        raise RegexValidationError("pattern 不是有效正则") from exc
+    if _has_dangerous_quantifier(pattern):
+        raise RegexValidationError("pattern 含有可能导致匹配超时的重复结构")
+    return compiled
+
+
 @dataclass(frozen=True)
 class RuleDecision:
     allowed: bool
