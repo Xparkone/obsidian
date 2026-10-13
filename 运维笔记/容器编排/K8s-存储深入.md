@@ -175,7 +175,7 @@ kube-controller-manager 里的 PV controller（`pkg/controller/volume/persistent
 ### 2.3 「预留」与「预绑」：两个加速手法（都核对官方）
 
 - **预绑（用户侧点名）**：PVC 写 `spec.volumeName: foo-pv`，直接绑定。**控制面不查 nodeAffinity**，但**仍会校验 storageClass、accessModes、请求尺寸**。官方原话：“The control plane still checks that storage class, access modes, and requested storage size are valid.”——点名绑定绕不过 class/模式/尺寸这三道校验。
-- **预留（资源侧锁定）**：PV 先写 `spec.claimRef` 指名它只服务某 ns 的某 PVC，则别的 PVC 即使字段全匹配也绑不进它。常食用法：手动型 Retain 回收后想让「下一个重建的 PVC」精准接住这个带数据的 PV。
+- **预留（资源侧锁定）**：PV 先写 `spec.claimRef` 指名它只服务某 ns 的某 PVC，则别的 PVC 即使字段全匹配也绑不进它。常见用法：手工 Retain 回收后，想让「下一个重建的 PVC」精准接住这份带数据的 PV。
 
 两句配合的常见约束：两边都不写 storageClass（或都显式 `""`），否则会被 DefaultStorageClass 准入器/retroactive 默认类（Stable v1.28，「晚创建的默认类会追填没写 storageClassName 的存量 PVC」）横插一脚。
 
@@ -187,9 +187,9 @@ kube-controller-manager 里的 PV controller（`pkg/controller/volume/persistent
 | `Delete`（动态供给默认） | 后端盘被真删，PV 对象随后消失 | 日常块存储、临时分析盘 | 回收顺序由 finalizer 守护（§2.5）；误删 PVC 等于删盘——**备份先行** |
 | `Recycle` | `rm -rf /thevolume/*` 后回 `Available` | 历史包袱 | **已废弃**（官方建议用动态供给）；v1.37 只剩 `nfs`、`hostPath` 还支持——擦洗式回收对多 tenant 数据继承不安全、对块盘无意义 |
 
-**为什么 Recycle 死了**：它承诺「洗掉即复用」，但有一个多 tenant 注记共享 NFS 场景的经典数据回简历——前租户的数据残影给了后租户。动态供给（Delete + 新盘）用一点点供给时间换掉了整张正确性论证。
+**为什么 Recycle 死了**：它承诺「洗掉即复用」，但共享存储场景里最经典的事故正是这个——`rm -rf` 受权限、挂载点布局、`..?*` 类通配兜底的影响，谁也不能形式化论证「洗完干净了」；前租户的数据残影会被下一家看到。动态供给（Delete + 新盘）用一点点供给时间，换掉了整张正确性论证。
 
-Released-state 的盘在 Retain 下还有个长尾巴问题（PV 残留、盘泄漏乱数）——§2.8 介绍 v1.31+ 起的一套修复。
+三条策略之外，Delete 还有一条「删除顺序」带来的泄漏尾巴——先删 PV 再删 PVC 时老逻辑会漏掉 reclaim——§2.8 讲 v1.31+（GA 于 v1.33）修掉它的那套机制。
 
 ### 2.5 存储域 finalizer 清单（第 1 章 §4.3 概念的直接应用）
 
@@ -255,7 +255,7 @@ KEP-2644 揭了一个经典坑（官方 KEP 源码注释佐证）：
 
 KEP-2644 的修法：
 
-- CSI 卷：复用 `external-provisioner.volume.kubernetes.io/finalizer`（§2.5），external-provisioner 把它「**不关是动态还是静态，统统加到**」，PV 对象在它的看守下，只有后端真删了它才摘——于是顺序收敛为「先删后端，再释放对象」。
+- CSI 卷：复用 `external-provisioner.volume.kubernetes.io/finalizer`（§2.5），external-provisioner 把它「**不管是动态还是静态供给，统统加上**」，PV 对象在它的看守下，只有后端真删了它才摘——于是顺序收敛为「先删后端，再释放对象」。
 - in-tree 卷：补一个 `kubernetes.io/pv-controller` finalizer，处理逻辑对称（只加在动态供给的 in-tree PV 上）。
 - `deleteVolumeOperation` 的调整：开了门控之后**忽略旧 `DeletionTimestamp` 判断**，以「PV 是否 Released」为触发点执行任务。
 
@@ -299,7 +299,7 @@ CSI 规范把一个驱动拆成三个能力面，每个面对着 K8s 里不同�
 | Service | 对外的关键 RPC | K8s 里谁调它（以何种方式） |
 |---------|---------------|---------------------------|
 | **Identity** | `GetPluginInfo`（报驱动名）、`GetPluginCapabilities`、`Probe`（健康） | 启动期 bootstrap 端、livenessprobe sidecar |
-| **Controller** | `CreateVolume`/`DeleteVolume`（供给）、`ControllerPublishVolume`/`ControllerUnpublishVolume`（attach/detach）、`ControllerExpandVolume`、`CreateSnapshot`/`DeleteSnapshot`、`ModifyVolume`（VAC） | external-provisioner / external-attacher / external-resizer / external-snapshotter sidecar（都跑在和 controller plugin 同 Pod 中，看上 unix socket） |
+| **Controller** | `CreateVolume`/`DeleteVolume`（供给）、`ControllerPublishVolume`/`ControllerUnpublishVolume`（attach/detach）、`ControllerExpandVolume`、`CreateSnapshot`/`DeleteSnapshot`、`ModifyVolume`（VAC） | external-provisioner / external-attacher / external-resizer / external-snapshotter sidecar（与 controller plugin 同 Pod，经同 unix socket 调它） |
 | **Node** | `NodeGetInfo`（registrar 问）、`NodeStageVolume`/`NodeUnstageVolume`（节点级挂载）、`NodePublishVolume`/`NodeUnpublishVolume`（Pod 级 bind）、`NodeExpandVolume`、`NodeGetVolumeStats`、`NodeGetCapabilities` | **kubelet 直接调**（通过 unix socket；socket 位置由注册机制发现）；node-driver-registrar 启动期问一遍 |
 
 ### 3.2 一次「动态供给 + Pod 挂载」的完整链路
@@ -390,7 +390,7 @@ reconciler 每 ~100ms 逐条比对两个世界，把差异打包成操作丢进 
 
 对应的防护行为也就不同：attach 出问题 → VolumeAttachment 卡住 / FailedAttachVolume 事件 / 调度端 NodeVolumeLimits 提前截胡（这就是「attach 上限要被 scheduler 先考虑」的原因）；mount 出问题 → kubelet 退避重挂 + FailedMount 事件。
 
-纯本地驱动（盘上根本没有「挂到 VM」这一步）**可以直接在 CSIDriver 对象里写 `spec.attachRequired: false`**，A/D controller 就不造 VolumeAttachment，跳过整个 attach 环节（实验 4.1 的 hostpath 为了演示把 attachRequired 留成 true，你能看到完整的 attach 事件链——只是它的「云 API」是个 mock）。
+纯本地驱动（盘上根本没有「挂到 VM」这一步）**可以直接在 CSIDriver 对象里写 `spec.attachRequired: false`**，A/D controller 就不造 VolumeAttachment，跳过整个 attach 环节。（实验 4.1 的 hostpath 默认部署没这么写，所以你能完整看到 attach 事件链——虽然它的「云 API」只是个 mock。）
 
 ### 3.6 fsGroup 与 SELinux 的两次进化（都核对官方 security-context 页 + 源码 gate 表）
 
@@ -528,10 +528,10 @@ spec:
         → 在线把文件系统扩到满盘（仅支持 XFS/ext3/ext4，官方核对）
 ```
 
-- 两级拆开的原因：云盘上「改元数据」与「节点上 resize2fs」耗时、幂等性质完全不同；同一卷被 RWX 多节点共用时还要对 driver 的 `NodeExpansionRequired=false` 特判（v1.31 起 KEP-1790 侧针对 RWX 加了 `volume.kubernetes.io/node-expansion-not-required` 注解，kubelet 直接跳 Node 扩容只记账）。
+- 两级拆开的原因：云盘上「改元数据」与「节点上 resize2fs」耗时、幂等性质完全不同；同一卷被 RWX 多节点共用时还要对 driver 的 `NodeExpansionRequired=false` 特判。较新版本的 external-resizer 针对「RWX 且控制面扩完即完事」的卷会给 PVC 打 `volume.kubernetes.io/node-expansion-not-required` 注解，kubelet 见到它就跳过 Node 扩容、只把新大小记进 ASW（KEP-1790 实现细节有写）。
 - 文件系统扩容时刻（官方原文）：「要么在 Pod 启动时做，要么在 Pod 运行中且底层文件系统支持在线扩容时做」。**没有任何 Pod 用这 PVC 时，Node 扩容没人做**——起个 Pod 让它跑一段（这就是「In-use PVC 扩容 v1.24 起 Stable」的语义边界）。
 - in-tree 类型里 CSI 迁移过的 EBS/PD 等都支持扩（v1.24 起 CSI 扩容 Stable）。
-- RWX 且 driver 明示不需要节点扩的场景（如 EFS/网络 FS 只做控制面），K8s 1.31+ 打 `node-expansion-not-required` 注解后不会傻等。
+- RWX 且 driver 明示不需要节点扩的场景（网络 FS 只有控制面增长是常态），带前述注解后 kubelet 不会傻等 Node 扩容。
 
 ### 5.2 PVC status 的读法（KEP-1790 定形的字段族）
 
@@ -565,11 +565,11 @@ KEP-1790 的通道：
 ❗ 实务两条：
 
 - 「重置后还是失败」最常见的两个根因是 SC 不接受这么大块、或后端配额——读事件 + `csi_sidecar_operations_seconds{method_name="/csi.v1.Controller/ControllerExpandVolume"}`（resizer 侧）/ `storage_operation_duration_seconds{operation_name=volume_fs_resize}`（kubelet 侧）定位。
-- KEP 也兜了一句极端形态：扩容**控制面已成功、仅是节点侧失败**（NodeResizePending/NodeResizeFailed 卡住）时，**出于 quota 保护不许你往小改**（VOLUME 已真实变大）——这时老老实实修节点侧（文件系统错误、驱动 fs 支持），或者 kubelet 的 storage_operation 指标走一波。
+- KEP 也兜了一句极端形态：扩容**控制面已成功、仅是节点侧失败**（NodeResizePending/NodeResizeFailed 卡住）时，**出于 quota 保护不许你往小改**（盘在控制面已经变大了）——这时老老实实修节点侧（文件系统错误、驱动 fs 支持），或者 kubelet 的 `storage_operation_duration_seconds{operation_name="volume_fs_resize"}` 指标走一波。
 
 ### 5.4 在线扩容的现状边界
 
-v1.24 起「正在使用的 PVC」就能扩，不用重建 Pod；但**全部完成需要节点侧有人在线跑这个 Pod**——也就是：长期闲置的 PVC，先起个 Pod 用它（不挂载或 mount 也行，只要引用），Node 扩容推一把后 capacity 正式生效。offline-only 该用得更像运维仪式（`describe pvc` 的 conditions 告诉你差哪一步）。
+v1.24 起「正在使用的 PVC」就能扩，不用重建 Pod；但**全部完成需要节点侧有人在线跑这个 Pod**——也就是：长期闲置的 PVC，先起个引用它的 Pod（Pod spec 挂载/引用即可，应用不写数据也行），Node 扩容推一把后 capacity 正式生效。offline-only 的扩容该用得更像运维仪式（`describe pvc` 的 conditions 告诉你差哪一步）。
 
 另一个边界：文件系统支持面官方只认 XFS/ext3/ext4，**裸 Block 卷模式下没有 FS 扩容这一说**——底层块变大后怎么消化（LVM 通知、应用层重做）是应用的事。
 
@@ -586,7 +586,7 @@ dataSource:
 | 维度 | 克隆 | 快照 + 恢复 |
 |------|------|------------|
 | 步骤 | 一步到位（驱动一次性做完） | 两个对象两步，中途可跨人协作 |
-| 源后能不能删 | 克隆发出即独立；源的责任随即解除 | 恢复卷在生成期间依赖快照对象存活（`volumesnapshot-as-source-protection` 类似机制的反射） |
+| 源后能不能删 | 克隆完成即彼此独立 | 恢复进行中快照对象不能先死——由 `snapshot.storage.kubernetes.io/volumesnapshot-bound-protection` 撑住（§2.5） |
 | 跨版本/演练 | 适合「同集群复制一份试跑」（金丝雀数据库验证） | 适合「找个时间点备份、之后随时回来」 |
 | 拓扑 | 同源同域；驱动决定 CoW 或全复制 | 快照的拓扑可用范围经过 Content.nodeAffinity 一路传递 |
 | 可用性 | 源卷必须存在、可访问（官方文档：仅 CSI 驱动支持克隆） | 快照可供远端/多层恢复 |
@@ -599,7 +599,7 @@ dataSource:
 
 ### 6.1 local PV：「我的盘就在节点上」的正确打开方式
 
-官方定位（核对过的硬事实）：`local` 卷**只支持静态供给**，**PV 上 nodeAffinity 必填**——这就是它区别于 hostPath 的地方：能不能被调度到对的节点是声明在 PV 里的，调度器读它而不是嘴上说得好听。
+官方定位（核对过的硬事实）：`local` 卷**只支持静态供给**，**PV 上 nodeAffinity 必填**——这就是它区别于 hostPath 的地方：能不能被调度到对的节点是**写进对象**的，调度器认对象，不认部署文档里的口头约定。
 
 ```yaml
 apiVersion: v1
@@ -643,7 +643,7 @@ CSI 驱动按「storageClass × topology 段」产出 `CSIStorageCapacity` 对�
 | 方案 | 一句话 | 规模姿势 |
 |------|--------|---------|
 | **local-path-provisioner**（Rancher） | 极简单机目录型动态供给器：只在节点上 mkdir 出目录映射进 PVC，像「可声明的 hostPath」 | 单节点/边缘/开发环境；放弃节点故障数据可用性 |
-| **TopoLVM**（CYBIRD） | 基于 LVM thin 的本地盘 CSI：容量账、调度器扩展/定制打分、LV 快照扩细 | 生产级裸金属/LVM 本地高性能 |
+| **TopoLVM**（Cybozu） | 基于 LVM thin 的本地盘 CSI：容量账、调度器扩展/定制打分、LV 快照/克隆/扩容三件套 | 生产级裸金属/LVM 本地高性能 |
 | **OpenEBS**（LocalPV/ZFS/LVM 引擎系） | 模块化的容器附加存储：全 CSI，有 Mayastor（NVMe-oF 复制）、LocalPV 分档 | 要本地性能也要可选复制/跨节点时更全家桶 |
 
 共同底线：都是 Kubernetes 原生 CSI 接入，可被 §3 的所有机制（快照、扩容、拓扑）恰好装上——这就是 CSI 化最大的生态红利。
@@ -654,12 +654,12 @@ CSI 驱动按「storageClass × topology 段」产出 `CSIStorageCapacity` 对�
 
 | # | 症状 | 根因链 | 排查动作 | 处置 |
 |---|------|--------|---------|------|
-| 7.1 | PVC 一直 `Pending` | 四选一：① SC 名错/没有（Annotation/provisioner 引发不是）② 没 provisioner 监听（CSI driver 没装/挂了）③ parameters 配额错（接口返 provisioning失败）④ WFFC 在等首个消费者 Pod（「等 Pod 先调度」是有意行为，不是 bug）；另查 ResourceQuota（`spec.resources.requests.storage` 和 PVC 数额度） | `kubectl describe pvc <name>` 读 events：`waiting for a volume to be created` / `failed to provision volume with StorageClass` / `waiting for first consumer`；再 `kubectl get pods -n <driver-ns>` 看 provisioner sidecar | 按 event 说话：SC 名→改 PVC/SC；provisioner 挂→拉起来；参数配额→去后端/云查配额；WFFC→把 Pod 起来再走（§2.7） |
-| 7.2 | `Multi-Attach error for volume ... is already used by pod(s) ...` | RWO 卷被 Pod 从旧节点迁到新节点，旧节点的 attach 没清完（Pod 被强删 / 节点 NotReady 未了）——K8s 的 A/D 模型和 CSI 的 publish 都在「保守防双写」那一侧 | `kubectl get volumeattachment` 看旧 VA 还在；`kubectl describe pod` 确认迁移事件；`kubectl get node` 看旧节点状态 | 节点已死：等 toleration/默认约 6 分钟强制摘除或确认节点永不回来再清理旧 VA（**不要在新旧节点都可能活着时强清，双写就完了**）；节点活着：查旧 Pod 为什么没真退出（kubelet 未响应 drain） |
+| 7.1 | PVC 一直 `Pending` | 四选一：① SC 名写错或不存在（provisioner 没人认领）② provisioner 不见（CSI driver 没装/挂了）③ parameters 或后端配额错（供给返回失败）④ WFFC 在等首个消费者 Pod（「等 Pod 先调度」是有意行为，不是 bug）；另查 ResourceQuota（PVC 数与 `requests.storage` 额度） | `kubectl describe pvc <name>` 读 events：`waiting for a volume to be created` / `failed to provision volume with StorageClass` / `waiting for first consumer`；再 `kubectl get pods -n <driver-ns>` 看 provisioner sidecar | 按 event 说话：SC 名→改 PVC/SC；provisioner 挂→拉起来；参数配额→去后端/云查配额；WFFC→把 Pod 起来再走（§2.7） |
+| 7.2 | `Multi-Attach error for volume ... is already used by pod(s) ...` | RWO 卷被 Pod 从旧节点迁到新节点，旧节点的 attach 没清完（Pod 被强删 / 节点 NotReady 未了）——K8s 的 A/D 模型和 CSI 的 publish 都站在「保守防双写」一侧 | `kubectl get volumeattachment` 看旧 VA 还在；`kubectl describe pod` 确认迁移事件；`kubectl get node` 看旧节点状态 | **节点已死**：等默认 toleration 期满（约 6 分钟）系统强摘，或确认节点永不回来再手工清旧 VA（**不要在新旧节点都可能活着时强清，双写就完了**）；节点活着：查旧 Pod 为什么没真退出（kubelet 未响应 drain） |
 | 7.3 | attach 超时/`FailedAttachVolume` 反复 | 云 API 限流/超时最常见（provisioner/attacher 到云的链路）；其次是 attach 容量上限（NodeVolumeLimits 调度时没拦住，A/D 还是被拒） | external-attacher 日志 + 云配额看板；`kubectl get csinode <node> -o yaml` 看 `spec.drivers[].allocatable.count` 与已占用 | 限流→云侧调配额/重试窗口；attach 上限→扩容节点或让 Driver 合法抬上限（很多驱动 48/64 上限可调） |
 | 7.4 | 扩容 patch 了 PVC，capacity 不涨 | 三级查：SC.allowVolumeExpansion=false（apis 拒绝）；后端不支持或配额不够（ControllerResizeFailed）；节点侧没人用 PVC 或文件系统不支持（NodeResizePending 卡着） | `kubectl get pvc <p> -o jsonpath='{.status.allocatedResourceStatuses}'` + conditions + events 三方读 | 失败→§5.3 的「改到可行值重试」流程；等待 NodeResizePending → 起个 Pod 用它；FS 不支持（非 xfs/ext3/ext4）→ 换设计 |
-| 7.5 | Pod 启动极慢，挂载阶段卡几十秒~几分钟，卷文件数很多 | **fsGroup 整卷 chown/chmod**（§3.6）或 **SELinux 递归重打标**在跑——都是「改几十万 inode」需要的时间 | `kubectl describe pod` 看卡在挂载侧；`ls -l <node>` 挂卷 inode 数；司机未声明 VOLUME_MOUNT_GROUP / seLinuxMount | 优先级：fsGroupChangePolicy: OnRootMismatch（v1.23 GA）→ 让驱动实现 VOLUME_MOUNT_GROUP（v1.26 GA）→ SELinux 集群按 §3.6 接入 SELinuxMount 系列（v1.37 GA） |
-| 7.6 | Pod 删了，PV 却留在 `Released`，盘也不见少 | reclaim=Retain 的预期行为（设计上不自动）；或 finalizer 卡住（provisioner 删后端失败，§2.5） | `kubectl get pv <pv>` 看 phase/Reclaim Policy/finalizers；`kubectl describe pv` 读 finalizer+events | Retain：按 §2.4 手工四步；.finalizer 卡住：按第 1 章纪律先修「后端为什么删不掉」（凭据/驱动挂），别强摘 |
+| 7.5 | Pod 启动极慢，挂载阶段卡几十秒~几分钟，卷文件数很多 | **fsGroup 整卷 chown/chmod**（§3.6）或 **SELinux 递归重打标**在跑——都是「改几十万 inode」需要的时间 | `kubectl describe pod` 看卡在挂载侧；sh 进节点挂卷目录估 inode 数；查驱动是否声明 VOLUME_MOUNT_GROUP / seLinuxMount | 优先级：fsGroupChangePolicy: OnRootMismatch（v1.23 GA）→ 让驱动实现 VOLUME_MOUNT_GROUP（v1.26 GA）→ SELinux 集群按 §3.6 接入 SELinuxMount 系列（v1.37 GA） |
+| 7.6 | Pod 删了，PV 却留在 `Released`，盘也不见少 | reclaim=Retain 的预期行为（设计上就不自动）；或 finalizer 卡住（provisioner 删后端失败，§2.5） | `kubectl get pv <pv>` 看 phase/Reclaim Policy/finalizers；`kubectl describe pv` 读 finalizer+events | Retain：按 §2.4 手工四步；finalizer 卡住：按第 1 章纪律先修「后端为什么删不掉」（凭据/驱动挂），别强摘 |
 | 7.7 | 「我删了 Bound 的 PV，盘实际被回收了」 | v1.33 起 **HonorPVReclaimPolicy GA** 后的正常行为——先删 PV 也会真删后端盘（§2.8）。很多老集群的脑内模型还停在「这样删会泄漏」 | 查操作审计；`kubectl get pv -o yaml` 看 finalizer；云侧查盘是否存在 | 认知升级优先：生产上把「删 Bound PV」列为正式操作；要救盘：Retain 策略 + 快照先行 |
 | 7.8 | VolumeSnapshot 建好 readyToUse 总 false / 恢复出的卷是空 | 三类：① 快照 CRD/snapshot-controller/snapshotter 缺失或撞默认类（同 driver 两个默认 VSC 会失败，官方原文）② 快照还没 readyToUse 就被恢复引用（恢复出的卷=空）③ 跨 driver/zone 不可达（拓扑未跟随） | `kubectl get volumesnapshotclasses,content,snapshots`；`kubectl describe volumesnapshot <name>` 的 message | 先让 readyToUse=true 再恢复；默认类唯一化；跨域恢复走 §4.5/§4.7 拓扑通道与多副本手段 |
 
@@ -885,7 +885,7 @@ kubectl get pv $(kubectl get pvc wffc-pvc -o jsonpath='{.spec.volumeName}') -o j
 kubectl get pod wffc-app
 ```
 
-> ❗ 答注里的 `volume.kubernetes.io/selected-node: <node>` 是「Pod 落点已选」的合同信号——这比第 2 章 §5 的讲解更直观：先 Pod 后盘。`nodeAffinity` 内容取决于驱动是否开 topology 上报；hostpath 的默认部署主要以「供给瞬间锚定节点」演示 WFFC 的链，没有拓扑键也属正常（部署了 distributed 形态则能看到 topology.hostpath.csi/node 键）。
+> ❗ 注解里的 `volume.kubernetes.io/selected-node: <node>` 是「Pod 落点已选」的合同信号——这比第 2 章 §5 的讲解更直观：先 Pod 后盘。`nodeAffinity` 内容取决于驱动是否开 topology 上报；hostpath 的默认部署主要以「供给瞬间锚定节点」演示 WFFC 的链，没有拓扑键也属正常（部署了 distributed 形态则能看到 topology.hostpath.csi/node 键）。
 
 **清理（全部实验）**
 
@@ -907,7 +907,7 @@ rm -rf /tmp/csi-driver-host-path
 | PVC 卡 Pending | `describe pvc` 读 events → 四类根因（SC/provisioner/参数/等消费者，§7.1） |
 | 预绑/预留 | `pvc.spec.volumeName` 点名 PV（不查 nodeAffinity，仍校验类/模式/大小）；`pv.spec.claimRef` 定向预留 |
 | reclaim | Retain 手工四步 / Delete 默认 / Recycle 已废弃（1.37 仅 nfs+hostPath） |
-| finalizer 三件套 | `kubernetes.io/pv|c-protection` + v1.31+ 的 `external-provisioner.volume.kubernetes.io/finalizer`、`kubernetes.io/pv-controller` |
+| finalizer 全景 | 对象保护：`kubernetes.io/pv-protection`、`kubernetes.io/pvc-protection`；后端删除保护（v1.31+）：`external-provisioner.volume.kubernetes.io/finalizer`、`kubernetes.io/pv-controller`；快照域：`snapshot.storage.kubernetes.io/*-protection`（§2.5） |
 | 供给分流 | SC.provisioner；`kubernetes.io/no-provisioner` 只绑不供；多默认类取最新 |
 | 拓扑联动 | `volumeBindingMode: WaitForFirstConsumer`；`selected-node` 注解；PV.spec.nodeAffinity；CSIDriver.spec.storageCapacity + CSIStorageCapacity |
 | attach/mount 链 | VolumeAttachment{attacher,nodeName,source.persistentVolumeName} → status.attached；目录：`plugins/kubernetes.io/csi/pv/<pv>/globalmount` → `pods/<uid>/volumes/kubernetes.io~csi/<vol>/mount`；注册目录 `/var/lib/kubelet/plugins_registry` |
@@ -927,11 +927,11 @@ rm -rf /tmp/csi-driver-host-path
 1. K8s 存储=「**供给（PV/PVC/SC）、挂载（CSI attach/mount）、数据生命（reclaim/快照/扩容/克隆）**」三事；PV/PVC 是资源域↔需求域的 1:1 双向锁定，动态供给不过让 provisioner 替管理员填 PV。
 2. 绑定只按**类相等 → 标签 → volumeMode → accessModes → 容量足则取最小**筛，认领后写 claimRef；`volumeName` 预绑绕过匹配但不绕过类/模式/尺寸校验；accessMode 是声明不是执行体——只有 `ReadWriteOncePod`（GA v1.29）真强制单 Pod。
 3. Reclaim：Retain=手工四步且不自动再绑；Delete=后端真删；Recycle 已废弃——**v1.37 只见于 nfs/hostPath**。
-4. 删除保护三段时间：v1.13-ish 的 in-use 保护（pv/pvc-protection）防「对象先没」；**v1.31+ 加 backend 保护 finalizer**（`external-provisioner.../finalizer` 或 `kubernetes.io/pv-controller`）保「后端先于对象死」；**HonorPVReclaimPolicy（GA v1.33，v1.36 移除 gate）**让「先删 PV 再删 PVC」不再泄漏——v1.37 已默认生效，先删 Bound PV 现在一定真删盘。
+4. 删除保护三段时间：最早的 in-use 保护（pv/pvc-protection）防「对象先于使用消失」；**v1.31+ 加的 backend 保护 finalizer**（`external-provisioner.../finalizer` 或 `kubernetes.io/pv-controller`）保「后端先于对象死」；**HonorPVReclaimPolicy（GA v1.33，v1.36 移除 gate）**让「先删 PV 再删 PVC」不再泄漏——v1.37 已默认生效，先删 Bound PV 现在一定真删盘。
 5. CSIMigration（Stable v1.25）是**重定向**不是转换：老 YAML 照读、操作转发给 CSI；EBS/AzureDisk v1.27、GCE PD v1.28、cephfs/rbd v1.31 源码移除，azureFile/cinder/vSphere/Portworx 在 v1.37 全默认重定向——集群必须装对 CSI 驱动。
 6. CSI 三分法：Identity/Controller/Node；挂载完整序=`CreateVolume`→PV Bound→`VolumeAttachment`+`ControllerPublishVolume`（attach，云 API 层）→`NodeStageVolume`（节点级一次）→`NodePublishVolume`（Pod 级 bind）——**attach 与 mount 的分离是云盘时代的根本设计**，也是 multi-attach、attach 超时、NodeVolumeLimits 这些问题的发源地。
 7. sidecar 分工一句话：provisioner 守 PVC 造/删 PV（并管 backend finalizer）；attacher 守 VolumeAttachment；resizer 守 spec.resources 与 volumeAttributesClassName 的变化；snapshotter 守 **VolumeSnapshotContent**（VolumeSnapshot 归集群级 snapshot-controller）；registrar 守 kubelet 注册目录 + CSINode。
-8. 快照对称 PV 族（GA v1.20）；恢复走 `dataSource`，**快照不是备份**（同存储域、跨 driver/zone 受限）；group snapshot（GA v1.36）用 label selector 圈多卷保证写序一点。
+8. 快照对称 PV 族（GA v1.20）；恢复走 `dataSource`，**快照不是备份**（同存储域、跨 driver/zone 受限）；group snapshot（GA v1.36）用 label selector 圈多盘，让后端以一次原子动作产出一组同一时点的快照。
 9. 扩容两级（Controller→Node）、能扩不能缩；`allocatedResources/allocatedResourceStatuses` 是状态机，quota 按 max 计——KEP-1790（GA v1.34）的最终救援语义是「改小到仍 > status.capacity 重试」，quota 从不吃亏。
 10. WFFC=「先 Pod 后盘」：SC mode + 调度器 selected-node 注解 + provisioner 按拓扑供给；**Pod 直写 spec.nodeName 会绕过调度器让 WFFC 死等**（用 nodeSelector 代替）；local PV 只静态供给 + nodeAffinity 必填，节点坏则卷不可用——应用必须自承副本或重算能力。
 
