@@ -139,7 +139,7 @@ class AegisService:
             key = issue_api_key()
             try:
                 principal_id = self.db.insert("INSERT INTO principals(name,kind,key_prefix,key_hash,created_at) VALUES(?,?,?,?,?)", (name.strip(), kind, api_key_prefix(key), hash_api_key(key), utc_now()))
-            except Exception:
+            except sqlite3.IntegrityError:
                 return 409, {"error": "name 已存在"}
             return 201, {"id": principal_id, "name": name.strip(), "kind": kind, "api_key": key, "warning": "密钥只在本次响应显示，请立即保存"}
         if route == "/api/v1/servers" and method == "POST":
@@ -162,7 +162,7 @@ class AegisService:
                 return 400, {"error": "port 必须在 1 到 65535 之间"}
             try:
                 server_id = self.db.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,known_hosts_path,credential_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (name, address, body.get("environment", "production"), json.dumps(body.get("tags", [])), username, port, str(body.get("known_hosts_path", "")), str(body.get("credential_ref", "")), utc_now()))
-            except Exception:
+            except sqlite3.IntegrityError:
                 return 409, {"error": "name 已存在"}
             return 201, {"id": server_id, "name": name}
         if route == "/api/v1/access-grants" and method == "POST":
@@ -206,10 +206,15 @@ class AegisService:
             self.counters["commands"] += 1
             if not principal:
                 return 401, {"error": "需要在 Authorization 或 X-Aegis-Key 提供密钥"}
-            try:
-                server_id = int(body.get("server_id"))
-            except (ValueError, TypeError):
+            server_id = body.get("server_id")
+            if isinstance(server_id, bool) or not isinstance(server_id, int):
                 return 400, {"error": "server_id 必须是整数"}
+            raw_command = body.get("command")
+            if not isinstance(raw_command, str):
+                return 400, {"error": "command 必须是字符串"}
+            command = raw_command.strip()
+            if not command or len(command) > 4096:
+                return 400, {"error": "command 必填且长度不能超过 4096"}
             server = self.db.row("SELECT * FROM servers WHERE id=?", (server_id,))
             if not server:
                 return 404, {"error": "服务器不存在"}
@@ -223,9 +228,6 @@ class AegisService:
                 event_id = self.audit(principal["id"], server_id, "execute", body.get("command"), "blocked", reason="授权不允许执行命令", metadata={"actions": actions})
                 self.counters["blocked"] += 1
                 return 403, {"error": "授权不允许执行命令", "audit_id": event_id}
-            command = str(body.get("command", "")).strip()
-            if not command or len(command) > 4096:
-                return 400, {"error": "command 必填且长度不能超过 4096"}
             allowed, rule_id, reason, severity = self.evaluate(command)
             if not allowed:
                 event_id = self.audit(principal["id"], server_id, "execute", command, "blocked", rule_id, reason, {"severity": severity})

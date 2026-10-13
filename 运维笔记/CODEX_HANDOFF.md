@@ -628,3 +628,33 @@
 ### 阶段补充（同日）
 
 - 应后续提问“Proxmox 什么时候用”，`云服务/Proxmox-VE虚拟化平台详解.md` 第八节新增“快速决策”树（按机器数量/K8s 诉求/租户规模/预算分流到 PVE、Harvester、OpenStack、vSphere，并说明 PVE 与 K8s 可共存）；围栏 10 个成对，`git diff --check` 通过。
+
+## 本阶段：笔记库索引整理（2026-10-13）
+
+### 当前目标
+
+整理笔记仓库结构：对照磁盘文件逐一核对根 `README.md` 索引，补登未索引笔记，修补子索引，清理杂项文件；不改动任何笔记内容。
+
+### 已确认事实
+
+- 根 `README.md` 此前未索引 13 篇笔记：监控 3 篇（Victoria 全栈生产级监控方案、Zabbix、K3s 监控流程与方案）、CI-CD 3 篇（Argo-CD 部署与使用详解、Argocd 触发 webhook gitlab、Dockerfile 构建镜像详细指南）、python/fastapi 2 篇、python/sls 1 篇、脚本与工具 2 篇（Rancher 部署文档、一键部署脚本）、安全 1 篇、存储分类整类（RAID）缺失。
+- 两份 K8s Helm 监控方案不是重复文档：`Kubernetes-Helm生产级监控方案.md` 为 VictoriaMetrics/VictoriaLogs/VictoriaTraces 栈，另一篇为 Prometheus kube-prometheus-stack，均已索引。
+- 删除 `python/sls/.DS_Store`（macOS 元数据垃圾文件）；`.env` 文件未触碰，仍受 `.gitignore` 保护。
+- 未移动、未重命名任何笔记文件，Obsidian `[[双链]]` 不受影响；`监控/175.27.144.105-K3s监控流程与方案.md` 的文件名含环境 IP，暂保留原样。
+
+### 已完成
+
+- 重写根 `README.md`：目录表新增“存储”“code”分类，补登全部未索引笔记，更新监控/安全/脚本工具分类描述。
+- `脚本与工具/README.md` 新增“Rancher 部署”小节，子索引与磁盘一致。
+- 本交接文件追加本阶段记录。
+
+### 验证结果
+
+- 根 `README.md` 163 个链接、子索引 12 个链接全部解析到现有文件（脚本校验，broken: 0）。
+- 用空格安全的脚本复查磁盘 Markdown 与索引逐一比对，无遗漏（排除 code/ 与示例工程自带 README）。
+
+### 未处理 / 下一步
+
+- `python/fastapi/` 目录名与其中两篇通用 Python 文档内容不完全匹配，如需可改名为 `python/web/` 或归入 `python/` 根，需同步检查双链引用。
+- `监控/175.27.144.105-...` 若要脱去环境 IP 需先全文检索引用再重命名。
+- 根目录 `hermes.base`、`数据库/gpt数据库.base` 为 Obsidian/插件数据文件，未作处理。

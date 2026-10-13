@@ -6,21 +6,23 @@
 
 | 分类 | 说明 |
 |------|------|
-| [容器编排](容器编排/) | Docker / K8s / K3s / Helm / Istio / Argo |
+| [容器编排](容器编排/) | Docker / K8s / K3s / Helm / Istio / Argo / Singularity |
 | [CI-CD](CI-CD/) | 流水线语法、GitLab、镜像构建、示例工程 |
 | [基础设施即代码](基础设施即代码/) | Terraform、IaC、State、Module 与基础设施自动化 |
+| [存储](存储/) | RAID 原理、选型与运维 |
 | [云服务](云服务/) | 公有云 / 私有云 / 虚拟化 / GPU 硬件 / ParallelCluster |
 | [网络](网络/) | DNS、VPN、Nginx、代理、抓包、域名 |
 | [数据库](数据库/) | MySQL / PostgreSQL / MongoDB / Redis |
-| [监控](监控/) | Prometheus / Grafana / Jaeger / Tempo / Loki / VictoriaLogs / DeepFlow |
+| [监控](监控/) | Prometheus / Grafana / VictoriaMetrics / Zabbix / Jaeger / Tempo / Loki / VictoriaLogs / DeepFlow |
 | [自动化](自动化/) | Ansible、Rundeck、知识库工作流与示例 |
 | [中间件](中间件/) | Nacos 注册配置中心、消息队列等 |
-| [安全](安全/) | RBAC、UFW、高防与 WAF |
-| [脚本与工具](脚本与工具/) | kubectl 快捷工具、Shell 命令审计、Linux 排查文档 |
+| [安全](安全/) | RBAC、iptables / UFW、高防与 WAF、入侵排查实录 |
+| [脚本与工具](脚本与工具/) | kubectl 快捷工具、Shell 命令审计、Rancher 部署、Linux 排查文档 |
 | [Gitlab](Gitlab/) | GitLab 巡检方案、HTTPS 部署与架构图 |
 | [学习](学习/) | 学习路线、每日计划、资源汇总 |
 | [ai](ai/) | LLM / MCP / Skill / Hermes |
 | [go](go/) · [python](python/) · [javascript](javascript/) | 语言入门、运行环境、包管理和开发工具 |
+| [code](code/) | aegis、feishu-task-agent 等配套小工程 |
 
 ---
 
@@ -45,6 +47,7 @@
 - [Argo-项目详解.md](容器编排/Argo-项目详解.md)
 - [Velero-Kubernetes备份恢复与迁移指南.md](容器编排/Velero-Kubernetes备份恢复与迁移指南.md)
 - [OpenKruise-原理作用使用与部署指南.md](容器编排/OpenKruise-原理作用使用与部署指南.md)
+- [Singularity-HPC容器平台详解.md](容器编排/Singularity-HPC容器平台详解.md)
 
 ### CI-CD
 
@@ -60,10 +63,13 @@
 - [GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)
 - [发布编排与审计服务设计：飞书、钉钉审批与多 Argo CD](CI-CD/发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md)
 - [GitLab CI + Argo CD + Harbor 生产级 CI/CD 方案与实施验收 Runbook](CI-CD/GitLab-ArgoCD-Harbor-生产级CICD方案与实施验收Runbook.md)
+- [Argo-CD-部署与使用详解.md](CI-CD/Argo-CD-部署与使用详解.md)
+- [Argocd 触发 webhook gitlab.md](CI-CD/Argocd%20触发%20webhook%20gitlab.md)
 - [GitHub-Actions-配置语法.md](CI-CD/GitHub-Actions-配置语法.md)
 - [Jenkinsfile-配置语法.md](CI-CD/Jenkinsfile-配置语法.md)
 - [Drone-CI-配置语法.md](CI-CD/Drone-CI-配置语法.md)
 - [CircleCI-配置语法.md](CI-CD/CircleCI-配置语法.md)
+- [Dockerfile-构建镜像详细指南.md](CI-CD/Dockerfile-构建镜像详细指南.md)
 - [Docker镜像构建流程.md](CI-CD/Docker镜像构建流程.md)
 - [Kaniko-容器镜像构建工具.md](CI-CD/Kaniko-容器镜像构建工具.md)
 - [Skopeo-容器镜像检查复制与同步指南.md](CI-CD/Skopeo-容器镜像检查复制与同步指南.md)
@@ -74,6 +80,10 @@
 ### 基础设施即代码
 
 - [Terraform-入门到实战.md](基础设施即代码/Terraform-入门到实战.md)
+
+### 存储
+
+- [RAID-原理选型与运维指南.md](存储/RAID-原理选型与运维指南.md)
 
 ### 云服务
 
@@ -116,6 +126,9 @@
 - [Prometheus-Grafana-Alertmanager-入门介绍.md](监控/Prometheus-Grafana-Alertmanager-入门介绍.md)
 - [服务器与中间件巡检指标.md](监控/服务器与中间件巡检指标.md)
 - [Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md](监控/Kubernetes-Helm-Prometheus-Grafana-Alertmanager完整部署与告警方案.md)
+- [Kubernetes-Helm生产级监控方案.md](监控/Kubernetes-Helm生产级监控方案.md) — VictoriaMetrics / VictoriaLogs / VictoriaTraces 全栈（Prometheus 栈见上一篇）
+- [Zabbix-完善部署与使用运维指南.md](监控/Zabbix-完善部署与使用运维指南.md)
+- [175.27.144.105-K3s监控流程与方案.md](监控/175.27.144.105-K3s监控流程与方案.md)
 - [Grafana-Kubernetes与宿主机通用仪表盘模板说明.md](监控/Grafana-Kubernetes与宿主机通用仪表盘模板说明.md)
 - [Grafana-Node-Exporter-宿主机监控仪表盘.json](监控/Grafana-Node-Exporter-宿主机监控仪表盘.json)
 - [Grafana-Node-Exporter-宿主机性能深挖仪表盘.json](监控/Grafana-Node-Exporter-宿主机性能深挖仪表盘.json)
@@ -148,12 +161,14 @@
 - [ufw-usage-guide.md](安全/ufw-usage-guide.md)
 - [iptables-从入门到生产实践.md](安全/iptables-从入门到生产实践.md)
 - [高防与WAF技术说明.md](安全/高防与WAF技术说明.md)
+- [挖矿木马入侵排查与清除实录.md](安全/挖矿木马入侵排查与清除实录.md)
 
 ### 脚本与工具
 
 - [目录索引](脚本与工具/README.md)
 - [`top` 指标详解与性能排障指南](脚本与工具/top-命令指标详解与性能排障指南.md)
 - [Ubuntu-日志查看详解.md](脚本与工具/Ubuntu-日志查看详解.md)
+- [Rancher部署文档.md](脚本与工具/Rancher部署文档.md) · [`sh/一键部署 Rancher脚本.md`](脚本与工具/sh/一键部署%20Rancher脚本.md)
 - [kubectl 工具](脚本与工具/kubectl/)：[`k`](脚本与工具/kubectl/kubectl-快捷工具-k.md) · [`kf`](脚本与工具/kubectl/kubectl-交互式工具-kf.md)
 - [Shell 命令审计](脚本与工具/shell-audit/)：Bash/Fish 部署、日志轮转与卸载
 
@@ -174,11 +189,15 @@
 
 - [LLM-架构原理与实现.md](ai/LLM-架构原理与实现.md) · [Skill-Tool-MCP-概念关系与使用指南.md](ai/Skill-Tool-MCP-概念关系与使用指南.md) · [MCP是什么.md](ai/MCP是什么.md) · [Skill是什么.md](ai/Skill是什么.md)
 - [LangChain 与 LangGraph 从入门到实战学习指南](ai/LangChain-LangGraph-从入门到实战学习指南.md)
+- [Hermes-Agent-架构图.excalidraw](ai/hermes/Hermes-Agent-架构图.excalidraw) — Hermes Agent 架构图源文件
 - [Go语言入门介绍.md](go/Go语言入门介绍.md) · [Go-vs-Python-适用场景.md](go/Go-vs-Python-适用场景.md)
 - [Python与Go-标准开发流程详解.md](go/Python与Go-标准开发流程详解.md) — 从零开始的开发、测试、构建、CI/CD 与部署全流程
 - [todo-api/](go/todo-api/) — Go Todo API 示例
 - [status-api/](go/status-api/) — Go 服务器、Kubernetes、Pod 和中间件状态 API
 - [Python入门介绍.md](python/Python入门介绍.md) · [Python-列表-元组-字典详解.md](python/Python-列表-元组-字典详解.md)
+- [Python基础数据结构学习指南.md](python/fastapi/Python基础数据结构学习指南.md) · [Python常见Web框架对比与选型指南.md](python/fastapi/Python常见Web框架对比与选型指南.md)
 - [status-api/](python/status-api/) — Python 服务器、Kubernetes、Pod 和中间件状态 API
 - [fastapi-prometheus-status/](python/fastapi-prometheus-status/) — FastAPI + Prometheus 的 Kubernetes、节点与主机健康状态 API
+- [sls/](python/sls/) — SLS 相关脚本与查询工具（含 [cost-estimate.md](python/sls/cost-estimate.md)）
 - [Node.js、npm、Vite 入门指南](javascript/Node.js-npm-Vite-入门指南.md)
+- [aegis/](code/aegis/README.md) · [feishu-task-agent/](code/feishu-task-agent/README.md) — code/ 下配套小工程

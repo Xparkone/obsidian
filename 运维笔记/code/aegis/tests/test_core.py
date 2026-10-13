@@ -1,10 +1,12 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from app.config import Settings, load_settings
+from app.db import Database
 from app.executor import SSHExecutor
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
@@ -72,6 +74,26 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(stored["key_prefix"], created["api_key"][:22])
         self.assertNotIn(created["api_key"], stored["key_hash"])
         self.assertEqual(self.service.principal_from_key(created["api_key"])["id"], created["id"])
+
+    def test_database_migration_adds_lookup_prefix_to_existing_principals(self):
+        legacy_path = Path(self.tmp.name) / "legacy.db"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE principals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    kind TEXT NOT NULL CHECK(kind IN ('user','ai')),
+                    key_hash TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+        database = Database(legacy_path)
+        columns = {row["name"] for row in database.rows("PRAGMA table_info(principals)")}
+        self.assertIn("key_prefix", columns)
 
     def test_rule_blocks_command_and_writes_audit(self):
         status, created = self.service.dispatch("POST", "/api/v1/principals", {"name": "agent-1", "kind": "ai"}, None, "test-admin")
@@ -187,6 +209,17 @@ class AegisCoreTest(unittest.TestCase):
         status, response = self.service.dispatch("POST", "/api/v1/rules", duplicate, None, "test-admin")
         self.assertEqual(status, 409)
         self.assertEqual(response["error"], "id 已存在")
+
+    def test_rule_rejects_non_string_pattern(self):
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "invalid-pattern", "name": "invalid", "pattern": [], "reason": "invalid"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("pattern", response["error"])
 
     def test_new_rule_is_used_without_restarting_service(self):
         status, response = self.service.dispatch(

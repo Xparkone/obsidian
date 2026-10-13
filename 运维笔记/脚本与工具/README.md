@@ -28,3 +28,10 @@
 | 卸载审计钩子 | [卸载审计脚本.md](shell-audit/卸载审计脚本.md) |
 
 > Shell 审计脚本会写入 `/etc`、`/var/log` 并可能重启 `rsyslog`，执行前请确认主机、权限、日志保留策略和变更窗口。
+
+## Rancher 部署
+
+| 场景 | 文档 |
+|---|---|
+| Rancher 部署操作说明（Docker 单节点 / 证书 / Agent 接入） | [Rancher部署文档.md](Rancher部署文档.md) |
+| 一键部署参考脚本 | [sh/一键部署 Rancher脚本.md](sh/一键部署%20Rancher脚本.md) |
