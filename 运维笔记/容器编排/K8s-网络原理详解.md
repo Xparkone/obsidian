@@ -74,7 +74,7 @@ Kubernetes 官方《Cluster Networking》模型对所有网络实现提出三条
 | 网段 | 谁分配 | 典型配置入口 | 是否可路由 | 备注 |
 |------|--------|-------------|-----------|------|
 | **Node CIDR** | 基础设施/云（VPC、机房交换机） | 云控制台 / DHCP / kubeadm 管不到 | 集群外可路由 | 节点自己的 IP，唯一不属于 K8s 管理的段 |
-| **Pod CIDR** | `kubeadm` 的 `--pod-network-cidr`（kind 默认 `10.244.0.0/16`） | 见下「职能划分」 | **由 CNI 决定**（见 §1.3） | 每节点再切一块（host-local 风格常为 /24） |
+| **Pod CIDR** | 看形态：kubeadm 本身不给默认值，由管理员传 `--pod-network-cidr`（kind 帮你默认 `10.244.0.0/16`）；也可以是 CNI 自己的 IPAM 说了算 | 见下「职能划分」 | **由 CNI 决定**（见 §1.3） | 每节点再切一块（host-local 风格常为 /24） |
 | **Service CIDR** | apiserver 的 `--service-cluster-ip-range`（kind/kubeadm 默认 `10.96.0.0/12` 或 `10.96.0.0/16`） | 只有 apiserver 消费它 | **默认不可路由**（见 §1.4） | 虚拟 IP 池，没有任何网卡真正持有这些地址 |
 
 **Pod CIDR 的职能划分**（很多人搞混 cloud-controller-manager 和 kube-controller-manager）：
@@ -245,7 +245,7 @@ Calico 系则是纯 L3（不建桥）：每 Pod 一对 veth，宿主侧**逐 Pod
 | 怀疑换过 CNI 后的残留 | `ls /etc/cni/net.d/` + `/var/lib/cni/` | 旧 conflist 没清、旧 IPAM 占位还占着 |
 | 想直接看 CNI 在干嘛 | 插件日志（Cilium/Calico 写进自家 agent 日志；flannel 在 `kube-flannel` Pod 日志） | host-local 之类无日志的，看 `/opt/cni/bin` 与运行时 stderr |
 
-> ❗ cap 一句通用判断方法：**先 `crictl pods` 找到 sandbox 是否建起来了**。sandbox 都没起来 → 问题在 CRI/CNI ADD；sandbox 起来了但业务容器不通 → 大概率是网络链/策略/路由，退出 CNI 话题进 §3 或 §6。
+> ❗ 收尾一句通用判断方法：**先 `crictl pods` 找到 sandbox 是否建起来了**。sandbox 都没起来 → 问题在 CRI/CNI ADD；sandbox 起来了但业务容器不通 → 大概率是网络链/策略/路由，退出 CNI 话题进 §3 或 §6。
 
 ---
 
@@ -333,9 +333,9 @@ Calico 系则是纯 L3（不建桥）：每 Pod 一对 veth，宿主侧**逐 Pod
 **怎么避免变成黑洞**（§8.2 详排障）：
 
 - 让 CNI 自己探测（Flannel/Calico 默认都会按外接口 MTU 自动减，**前提是外接口本身是标准的 1500**）；如果你的 VPC/物理网本来就是 9000 或 1460（不少云是这样），显式把 CNI 的 MTU 写成「外接口 MTU - 封装头」。
-- 验证命令（实验 3.2 同款）：
+- 验证命令（实验 3.2 同款；注意 `-M do` 是 iputils 的参数，busybox 的 ping 不支持，请在节点或用 `nicolaka/netshoot` 这类镜像里跑）：
   ```bash
-  # 在 Pod 里用不分片大包试跨节点路径（1472+28=1500 是物理 1500 时的边界）
+  # 用不分片大包试跨节点路径（1472+28=1500 是物理 1500 时的边界）
   ping -M do -s 1372 -c 3 <对端PodIP>   # overlay 下应通（1372+78≈1450）
   ping -M do -s 1472 -c 3 <对端PodIP>   # 若失败而 1372 通 → MTU 黑洞实锤
   ```
@@ -365,7 +365,7 @@ Calico 系则是纯 L3（不建桥）：每 Pod 一对 veth，宿主侧**逐 Pod
 回程无需规则：conntrack 记住这次 DNAT，回包自动反改写 10.96.10.100
 ```
 
-真实输出长这样（kind 默认 kindnet + iptables kube-proxy 集群里实测可得，§9.3.1 完整实验）：
+真实输出长这样（kind 默认 kindnet + iptables kube-proxy 集群里实测可得，实验 3.1 完整步骤）：
 
 ```
 -A KUBE-SERVICES -d 10.96.10.100/32 -p tcp -m comment --comment "default/web cluster IP" -m tcp --dport 80 -j KUBE-SVC-TCOU7JCQXEZGVUNU
@@ -505,7 +505,7 @@ kubeadm 集群里 DNS 由这几样东西组成（全部可作 `kubectl -n kube-s
 kubectl -n kube-system get deploy coredns -o wide
 kubectl -n kube-system get svc kube-dns
 kubectl -n kube-system get cm coredns -o yaml          # Corefile 本体
-kubectl run -it --rm dnsutils --image=registry.k8s.io/e2e-test-images/jessie-dnsutils:1.7 -- cat /etc/resolv.conf
+kubectl run -it --rm dnsutils --image=registry.k8s.io/e2e-test-images/dnsutils:1.3 -- cat /etc/resolv.conf
 ```
 
 ### 5.2 Corefile 最小讲法（kubeadm 默认逐段）
@@ -619,9 +619,11 @@ curl -s 127.0.0.1:9153/metrics | grep -E 'coredns_dns_requests_total|coredns_cac
 kubectl -n kube-system logs deploy/coredns --tail=100 -f | grep -Ei 'error|timeout|SERVFAIL'
 kubectl -n kube-system exec deploy/coredns -- cat /etc/resolv.conf   # forward 上游到底是谁
 
-# ③ 验证上游与转发链
-dig @127.0.0.1 10.96.0.10 kubernetes.default.svc.cluster.local          # 直查 CoreDNS（绕开 VIP）
-kubectl run -it --rm digdbg --image=registry.k8s.io/e2e-test-images/dnsutils:1.3 -- dig api.github.com.  # 尾点测 FQDN
+# ③ 验证上游与转发链：直查 CoreDNS Pod IP（绕开 kube-dns VIP 这条 DNAT 链，能区分 VIP 段问题与 CoreDNS 本身问题）
+COREIP=$(kubectl -n kube-system get pods -l k8s-app=kube-dns -o jsonpath='{.items[0].status.podIP}')
+kubectl run -it --rm digdbg --image=registry.k8s.io/e2e-test-images/dnsutils:1.3 -- sh
+# 容器内：dig @${COREIP} kubernetes.default.svc.cluster.local     # 直查某个 CoreDNS 副本
+# 容器内：dig api.github.com.                                     # 尾点测 FQDN（跳过 search 展开）
 ```
 
 ❗ 两个 invisible 陷阱：alpine/musl 镜像的 nslookup/getent **不会回放 TCP**、对尾点/search 的反应与 glibc 不完全一致，排障尽量用 `registry.k8s.io/e2e-test-images/dnsutils` 或 `nicolaka/netshoot`（glibc）；`dig` 默认 **不带 search 域**——业务用 `nslookup/ping/getent` 才更接近 glibc 行为。
@@ -642,8 +644,8 @@ ingress:
   - namespaceSelector: {}
     podSelector:
       matchLabels: {app: web}
-- from:                                # rule 2：「任何 ns 且 app=client」的 Pod（≠ 上一条的 AND）
-  - podSelector:
+- from:                                # rule 2：「本 ns 且 app=client」的 Pod（与 rule 1 是 OR；注意
+  - podSelector:                        #  podSelector 不写 namespaceSelector 时只对 policy 所在 ns 求值）
       matchLabels: {app: client}
 - ports:                               # 单写 ports 不带 from = 所有来源这个端口放行
   - port: 8080
@@ -811,14 +813,7 @@ spec:
     - {name: api-v2, port: 80, weight: 20}           # 灰度 20%
 ```
 
-验证分流（128 次请求数分布）：
-
-```bash
-for i in $(seq 1 128); do
-  curl -s -o /dev/null -w '%{http_version} %{remote_ip}\n' --header "Host: api.example.com" http://127.0.0.1:8888/v1; done | sort | uniq -c
-# 或打到 /（对照 weight）：看响应 header 里 envoy 写的 upstream_host / 后端日志的命中比
-kubectl -n envoy-gateway-system logs deploy/${ENVOY_SVC} --tail=200 | grep -E 'api-v1|api-v2' | awk -F'"' '{print $NF}' | sort | uniq -c
-```
+验证分流的正确姿势：**让两端返回体本身可区分**（实验 3.5 用两个 http-echo 后端做了完整统计），或用访问日志看 upstream cluster 命中比；闲时最直接的判据是 `kubectl describe httproute api-canary` 的 `ResolvedRefs=True` + 后端 Pod 的日志计数（`kubectl logs deploy/api-v1 | wc -l` 对比 `api-v2`）。
 
 **为什么这么设计**：权重在 `backendRef` 上而不在 rule 上——意味着「同一 match 内部的版本分流」和「不同 match 走不同后端」是两件事，canary 与 AB 测试（header 灰度）共用一个对象模型。
 
@@ -879,11 +874,11 @@ curl -sk --resolve api.example.com:8443:127.0.0.1 https://api.example.com/get -o
 | # | 症状 | 根因链 | 排查动作 | 处置 |
 |---|------|--------|---------|------|
 | 8.1 | 大规模下新建连接间歇 RST / `dial tcp: connect: cannot assign requested address` 一类 | **conntrack 表满或哈希冲突**；每个经过 ClusterIP/NodePort 的连接都写一条 conntrack，表满即丢（dmesg: `nf_conntrack: table full, dropping packet`）；UDP DNS 条目要等 30s 才回收最费表 | `conntrack -S`（看 `insert_failed`）；`sysctl net.netfilter.nf_conntrack_max net.netfilter.nf_conntrack_buckets`；`dmesg -T \| grep conntrack` | 双放大 max/buckets；上 NodeLocal（§5.4）根治 UDP DNS；应用 keep-alive 减少新建率 |
-| 8.2 | 大包时止（ping 通、tls handshake 超时、下载卡死）；跨节点才出 现 | **MTU 黑洞**：overlay 隧道往外套 50/20 字节头，Pod eth0 按 1500 发 → 中间某跳 Silent drop（PMTUD 被拦） | Pod 里 `ping -M do -s 1472/1372 对端PodIP`（实验 3.2）；`ip link` 看 veth 外接口 MTU；对端抓包看大包有没有裸奔出去 | 显式把 CNI MTU 写成「外接口 MTU - 头」；修了也确保 PMTUD 所需的 ICMP 不被拦 |
+| 8.2 | 小包通、大包死（ping 通、TLS handshake 超时、下载卡死）；跨节点才出现 | **MTU 黑洞**：overlay 隧道往外套 50/20 字节头，Pod eth0 按 1500 发 → 中间某跳静默丢大包（PMTUD 被拦） | 节点用 iputils `ping -M do -s 1472/1372 对端PodIP`（实验 3.2）；`ip link` 看 Pod eth0 与外接口 MTU；对端抓包看大包有没有裸奔出去 | 显式把 CNI MTU 写成「外接口 MTU - 头」；修了也确保 PMTUD 所需的 ICMP 不被拦 |
 | 8.3 | Service/Endpoint 多起来后 API 侧更新慢、规则同步以秒计 | **iptables 规则数 O(n) 膨胀**（Service+ endpoint 线性，万级时单包扫描与同步都变慢）；iptables kube-proxy 只做到了「最小变更集」而已 | `iptables -t nat -S KUBE-SERVICES \| wc -l`；指标 `kubeproxy_sync_proxy_rules_duration_seconds`（均值 >1s 是阈值信号） | 升 nftables 模式（GA v1.33）；或直接计划迁 eBPF（Cilium）；**别在 v1.37 新上 IPVS** |
 | 8.4 | DNS 偶发 5s/10s/30s 超时，成功率随 QPS 波动 | **ndots × 重试 × UDP 竞争**：每次外名查询 3~4 倍展开 + UDP conntrack 30s 窗口内竞争 | §5.5 三板斧；看 `coredns_cache_hits_total` 与 `coredns_forward_*`；NodeLocal 装没装 | FQDN 尾点 / 调 ndots / NodeLocal（大集群三管齐下） |
 | 8.5 | 「全集群只有我能上的网络」上线，结果**什么都没拦住** | **CNI 不支持 NetworkPolicy**：对象创建成功、数据面静默放行（Flannel 经典） | 判定 CNI：§6.3 表；在干净 ns 做 deny-all 测试（实验 3.4 第一步） | 换/补能 enforce 的方案（§6.3）；Flannel 就按官方三种补法上 |
-| 8.6 | 双栈集群里某些 Service 只有一族可达 / 新 Service 分不到 v6 | **各族管线没全配**：apiserver `--service-cluster-ip-range` 只写了一族；kubelet `--node-ip` 没指定双栈；Pod CIDR 单栈 | `kubectl get svc -o jsonpath='{.spec.clusterIPs}'`；`kubectl get servicecidrs`；node.status.addresses | 按 §1.2 三类网段双栈齐配；Service 用 `ipFamilies: [IPv4,IPv6]` 显式声明（PreferDualStack 默认行为以「平台是否双栈」为先决） |
+| 8.6 | 双栈集群里某些 Service 只有一族可达 / 新 Service 分不到 v6 | **各族管线没全配**：apiserver `--service-cluster-ip-range` 只写了一族；kubelet `--node-ip` 没指定双栈；Pod CIDR 单栈 | `kubectl get svc <name> -o jsonpath='{.spec.clusterIPs}'`（看实际分到几族）；`kubectl get servicecidrs`；node.status.addresses | 按 §1.2 三类网段双栈齐配；Service 用 `ipFamilies: [IPv4,IPv6]` 显式声明（PreferDualStack 默认行为以「平台是否双栈」为先决） |
 | 8.7 | Cilium（kube-proxy 替换模式）集群里 `curl 127.0.0.1:<NodePort>` 不通、`ss`/`iptables` 看不到监听 | **kube-proxy 已不存在**，NodePort 由 eBPF socket LB 提供：不绑端口、不写 iptables、不为回环提供服务 | 先 `kubectl get cm cilium-config -n kube-system \| grep kube-proxy-replacement`；Pod 侧用节点 IP/ClusterIP 测 | 这是正常行为不是故障（本仓库 `脚本与工具/Rancher部署文档.md` 所述）；迁移期注意两套 NAT 互不知情，切换瞬间存量连接全部重置 |
 | 8.8 | `externalTrafficPolicy: Local` 的 LB 服务，部分节点被打爆/部分冷 | Local 模式**节点粒度均衡**：源 IP 保住了，但 LB 按节点健康检查结果分流量，节点间 Pod 数不均就倾斜 | 看 LB 健康检查（kube-proxy :10256/healthz）与每个节点端点数；滚动更新窗口观察 | 接受不均可加 Pod 反亲和/扩缩让端点均摊；或对均匀性要求高的服务回到 Cluster + 用 PROXY/protocol 类 LB 保源 IP |
 
@@ -1022,10 +1017,10 @@ kubectl exec cli -- wget -qO- http://$SVCIP/  >/dev/null
 
 - tcpdump 里抓到的是 **node IP → node IP 的 UDP 8472**；解封装（`tcpdump -i any -nn -e -vvv udp port 8472`）能看到 **VNI=1** 的 VXLAN 头和真正的内层 **PodIP → PodIP**。
 - 对照命令 `docker exec net-exp-worker2 ip -d link show flannel.1`（VXLAN 设备参数）与 `ip route`（其他节点的 /24 走 flannel.1）。
-- 顺手验证 MTU 黑洞的边界：
+- 顺手验证 MTU 黑洞的边界（busybox 的 ping 不支持 `-M do`，用 node 容器里 Ubuntu 自带的 iputils ping 打跨节点 Pod IP）：
   ```bash
-  kubectl exec cli -- sh -c 'ping -M do -s 1372 -c 2 '"$PODIP"    # 应通（≈1450）
-  kubectl exec cli -- sh -c 'ping -M do -s 1472 -c 2 '"$PODIP"    # 应败（物理 1500 - VXLAN 50 > 1473）
+  docker exec net-exp-worker2 ping -M do -s 1372 -c 2 $PODIP      # 应通（封装内总包 ≈ 1450）
+  docker exec net-exp-worker2 ping -M do -s 1472 -c 2 $PODIP      # 应败（1500 - VXLAN 50 装不下）
   kubectl exec cli -- ip link show eth0                            # 看 CNI 给 Pod 的 MTU 是不是 1450
   ```
 
