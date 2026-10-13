@@ -71,7 +71,7 @@
 
 | # | 新建笔记 | 核心内容 | 前置 | 配套实验 | 状态 |
 |---|---------|---------|------|---------|:---:|
-| 1 | `K8s-API机制深入.md` | 对象模型与版本化、RequestPath 全链路、list-watch 与 informer、reflector/store、finalizer 与 ownerReference、GC、APF、聚合层、Raw API 调用、审计日志 | 无 | 抓 watch 请求观察资源版本；用 certs 直接 curl API | ⬜ |
+| 1 | `K8s-API机制深入.md` | 对象模型与版本化、RequestPath 全链路、list-watch 与 informer、reflector/store、finalizer 与 ownerReference、GC、APF、聚合层、Raw API 调用、审计日志 | 无 | 抓 watch 请求观察资源版本；用 certs 直接 curl API | ✅ |
 | 2 | `K8s-调度器深入.md` | scheduler 架构、Scheduling Framework 18 个扩展点、打分插件、PreBinding→Binding、抢占机制源码视角、descheduler 策略、自定义调度器、批调度（Volcano/Kueue 简介） | 第 1 章 | 写一个寄存式打分插件（或 descheduler 策略实验） | ⬜ |
 | 3 | `K8s-网络原理详解.md` | K8s 网络模型三原则、CNI 规范、Flannel/Calico/IPIP-BGP/Cilium(eBPF&hubble) 对比、kube-proxy iptables vs IPVS 抓链验证、CoreDNS 原理与排障、NetworkPolicy 加固、Gateway API 完整实战 | 无 | `iptables -t nat -L` 对照 Service；Cilium demo；tcpdump 追包 | ⬜ |
 | 4 | `K8s-存储深入.md` | CSI 两组件架构（Controller/Node service）、PV-PVC 绑定/回收/Retain-Delete 语义、静态 vs 动态供给、StorageClass 参数含义、扩容/克隆、VolumeSnapshot API、本地存储与拓扑感知 | 无 | CSI driver demo（如 csi-driver-host-path）；快照实验 | ⬜ |
