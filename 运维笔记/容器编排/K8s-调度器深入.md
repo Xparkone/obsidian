@@ -320,7 +320,7 @@ profiles:
 | **NodePorts** | preFilter, filter | hostPort / NodePort 冲突检查 | hostNetwork Pod 必检 |
 | **NodeName** | filter | `spec.nodeName` 精确匹配 | DaemonSet 的 Pod（controller 填了 nodeName）就是靠它秒过 |
 | **NodeUnschedulable** | filter | `kubectl cordon` 打的标记（`spec.unschedulable=true`） | 只挡新进，存量不动 |
-| **ImageLocality** | score | 节点上已有的镜像按大小计分（大镜像优先复用） | 粒度粗，常因分镜像_tag 的策略而失效 |
+| **ImageLocality** | score | 节点上已有的镜像按大小计分（大镜像优先复用，省拉取） | 只看 tag 是否命中，镜像 tag 频繁轮转的流水线收益有限 |
 | **VolumeBinding** | preFilter, filter, reserve, preBind, score | PVC/PV 匹配、WFFC 延迟绑定、CSIStorageCapacity 检查 | score 需 `StorageCapacityScoring` 门控（v1.37 Beta 默认开，§4.4） |
 | **VolumeRestrictions** | filter | RBD/ISCSI/FC 等「单写多读（RWO）」已占用的冲突检查 | 仍在用的 in-tree 卷类型才相关 |
 | **VolumeZone** | filter | PV nodeAffinity 里的 zone 与节点 zone 匹配（legacy in-tree） | 新存储都走 CSI，逐渐退出历史 |
@@ -998,7 +998,7 @@ kubectl -n kube-system logs kube-scheduler-sched-exp-control-plane -f \
 |-------------------------|-----------|--------|
 | `Attempting to schedule pod: default/demo-...` | 出队 → scheduling cycle 开始 | 这个 Pod 真的排队排到了 |
 | 若干 `Plugin <name> finished with unschedulable` / `insufficient ...` | Filter 阶段 | 哪些插件拒绝了哪些节点 |
-| `Score node ... - [list]` 之类中间值 | Score 阶段 | 节点间差多少分（权重乘前的原始分） |
+| Score 相关的中间日志（插件/节点分差，措辞随版本） | Score 阶段 | 节点间差多少分（权重乘前的原始分） |
 | `Selected node: sched-exp-worker` | scheduling cycle 结论 | assume 完，准备进 binding cycle |
 | `Successfully bound pod: default/demo-...` | binding cycle 结束 | Binding API 已发；之后 kubelet 接管 |
 
@@ -1055,7 +1055,7 @@ kubectl apply -f pc.yaml
 kubectl get priorityclass
 ```
 
-**step 2：集中装僵尸：只用一台 worker 装填**
+**step 2：集中塞满：只用一台 worker 装填**
 
 ```bash
 # 另一台 worker 先挡在外
@@ -1095,7 +1095,7 @@ kubectl get pods -o wide -w
 
 **你要看到的关键证据**
 
-- `events` 里低优 Pod 的 `Preempted` 记录（按 §6.5 顺序产）：`... Preempted by default/vip ...`
+- `events` 里低优 Pod 的 `Preempted` 记录（按 §6.3 的步骤）：`... Preempted by default/vip ...`
 - 被赶的低优 Pod 先 Terminating（它还有自己的 graceful period），随后被 Deployment 重排到别处 Pending
 - `vip` 上 `nominatedNodeName: sched-exp-worker`（可选 `kubectl get pod vip -o jsonpath='{.status.nominatedNodeName}'`）
 - `vip` 在腾出后 **下一轮** 被 Bind、Running——不是立刻
@@ -1177,7 +1177,7 @@ kind delete cluster --name sched-exp
 
 ### 实验 2.4（进阶可选）自定义 Score 插件：编译 + 跑起来
 
-> 目标：把 §9.1 的 NodeLabelScore 编成一个自定义 kube-scheduler，让它在 kind 里 Service。环境成本高（要 Go 工具链 + vendor k8s 源码），对版本敏感，**跑不通也不影响走读**——把骨架读明白更重要。
+> 目标：把 §9.1 的 NodeLabelScore 编成一个自定义 kube-scheduler，让它在 kind 集群里跑起来并接管一类 Pod。环境成本高（要 Go 工具链 + vendor k8s 源码），对版本敏感，**跑不通也不影响走读**——把骨架读明白更重要。
 
 ```bash
 # step 1 搭骨架（基于官方仓为模子，省 go.mod 四处 replace 的痛苦）
