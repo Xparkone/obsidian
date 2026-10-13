@@ -39,6 +39,11 @@ class AegisCoreTest(unittest.TestCase):
         events = self.service.db.rows("SELECT * FROM audit_events")
         self.assertEqual(events[-1]["decision"], "blocked")
 
+        status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "uname -a"}, key)
+        self.assertEqual(status, 200)
+        self.assertIn("result_audit_id", response)
+        self.assertEqual(self.service.db.row("SELECT action FROM audit_events ORDER BY id DESC LIMIT 1")["action"], "execute_result")
+
     def test_scope_blocks_unlisted_server(self):
         status, principal = self.service.dispatch("POST", "/api/v1/principals", {"name": "user-1", "kind": "user"}, None, "test-admin")
         status, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "private", "address": "10.0.0.2"}, None, "test-admin")

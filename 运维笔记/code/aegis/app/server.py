@@ -190,7 +190,8 @@ class AegisService:
             execution_id = uuid.uuid4().hex
             event_id = self.audit(principal["id"], server_id, "execute", command, "allowed", metadata={"mode": self.settings.executor_mode, "execution_id": execution_id})
             result = self.executor.execute(server, command)
-            return 200, {"status": result.status, "mode": result.mode, "server": server["name"], "command": command, "audit_id": event_id, "execution_id": execution_id, "message": "已通过规则评估并交给执行器", "output": result.output}
+            result_event_id = self.audit(principal["id"], server_id, "execute_result", command, result.status, metadata={"mode": result.mode, "execution_id": execution_id, "intent_audit_id": event_id})
+            return 200, {"status": result.status, "mode": result.mode, "server": server["name"], "command": command, "audit_id": event_id, "result_audit_id": result_event_id, "execution_id": execution_id, "message": "已通过规则评估并交给执行器", "output": result.output}
         return 404, {"error": "未找到接口"}
 
 
