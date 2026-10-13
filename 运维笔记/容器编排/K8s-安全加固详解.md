@@ -13,19 +13,17 @@
 「K8s 安全」不是一件事，是四层防御问题逐层叠加。CNCF 的 **4C 模型**把它拆干净（Cloud / Cluster / Container / Code）：
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ Cloud   底座自身的可信：节点 OS/内核补丁、云账号、VPC、硬防火墙 │
-│  ↑ 底座失守，上面所有 K8s 机制都是沙上之塔                     │
-│ Cluster K8s 自身的可被攻击部件：apiserver/etcd/kubelet/审计/网络 │
-│  ↑ 本章主战场（集群加固＝把控制面与数据面的弱点一个个掐掉）        │
-│ Container Pod/容器运行时的攻击面：securityContext/PSA/userns/镜像 │
-│  ↑ 本章主战场（工作负载加固）                                    │
-│ Code    应用层：依赖扫描、SBOM、签名、流水线门禁                  │
-│  ↑ 本章 §6 供应链把 Code↔Cluster 的缝堵上                      │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Cloud    底座自身可信：节点 OS/内核补丁、云账号、VPC、防火墙      │
+│ Cluster  K8s 自身攻击面：apiserver/etcd/kubelet/审计/网络      │
+│ Container Pod/运行时攻击面：securityContext/PSA/userns/镜像    │
+│ Code     应用层：依赖扫描、SBOM、签名、流水线门禁               │
+└──────────────────────────────────────────────────────────────┘
+上一层的安全永远依赖下一层——云账号被拿走后，restricted 起步的
+namespace 只是摆设；Node 被打穿时，攻击者拿到的是该节点所有 Pod 的凭据。
 ```
 
-上一层的安全永远依赖下一层——云账号被拿走后，restricted 起步的 namespace 只是摆设；反过来 Node 被打穿时，攻击者拿到的是**该节点上所有 Pod 的凭据**。所以本章的组织方式不是「把机制罗列一遍」，而是按攻击面分治：工作负载面（§1 §2）、准入面（§3 §4）、数据面（§5）、供应链（§6）、控制面/节点面（§7），排雷清单（§8）与实验（§9）收尾。
+所以本章的组织方式不是「把机制罗列一遍」，而是按攻击面分治：工作负载面（§1 §2）、准入面（§3 §4）、数据面（§5）、供应链（§6）、控制面/节点面（§7），排雷清单（§8）与实验（§9）收尾。
 
 ### 0.1 三扇门回顾（引用第 1 章 §2，只点一句）
 
@@ -34,17 +32,13 @@
 ### 0.2 攻击面地图（本章目录就是这张图的展开）
 
 ```
-攻击面 1 控制面      apiserver（公开端口 6443、--anonymous-auth、profiling、
- │                    准入插件链、etcd 之间的 TLS）               → §7
- ├  控制面数据        etcd 里躺着的 Secret（base64 ≠ 加密）        → §5
-攻击面 2 节点        kubelet(10250/10255)、SSH、containerd socket、
- │                    节点上的秘密文件                           → §7
-攻击面 3 工作负载    Pod 用 root/privileged/hostNS 跑起来         → §1 §2
- │                    PSA/securityContext/userns 逐个掐
-攻击面 4 准入与控制  webhook/策略引擎本身成为新攻击面（锁死、超时、
- │                    默认 fail-close）                         → §3 §4
-攻击面 5 供应链      镜像从哪来、被谁签过、SBOM 里有什么           → §6
-攻击面 6 数据平面    Pod↔Pod 谁跟谁说话（NetworkPolicy，已见第 3 章）│ 不复述
+攻击面 1 控制面   apiserver（6443、--anonymous-auth、profiling、准入插件链）→ §7
+ ├ 控制面数据     etcd 里躺着的 Secret（base64 ≠ 加密）                      → §5
+攻击面 2 节点     kubelet(10250/10255)、containerd socket、节点秘密文件      → §7
+攻击面 3 工作负载 Pod root/privileged/hostNS：PSA/securityContext/userns 掐掉 → §1 §2
+攻击面 4 准入面   webhook/策略引擎自身成短板（锁死、超时、默认 fail-close）    → §3 §4
+攻击面 5 供应链   镜像从哪来、被谁签过、SBOM 里有什么                         → §6
+攻击面 6 数据平面 Pod↔Pod 通信（NetworkPolicy，已在第 3 章专篇）             → 不复述
 ```
 
 ### 与已有笔记的边界（不重复内容）
@@ -65,7 +59,7 @@
 
 ## 一、Pod Security Standards 与 PSA 实战
 
-Pod Security Standards（PSS，上层标准）与 Pod Security Admission（PSA，内置准入插件）是一体两面：PSS 定义**三档**标准，PSA 是apiserver 里按 namespace 标签执行标准的内置控制（**PodSecurity 准入插件，v1.23 Beta 默认开 → v1.25 GA**，第 1 章 §2.3 插件表里有它）。
+Pod Security Standards（PSS，上层标准）与 Pod Security Admission（PSA，内置准入插件）是一体两面：PSS 定义**三档**标准，PSA 是 apiserver 里按 namespace 标签执行标准的内置控制（**PodSecurity 准入插件，v1.23 Beta 默认开 → v1.25 GA**，第 1 章 §2.3 插件表里有它）。
 
 ### 1.1 三档标准的差异（逐档批判读）
 
@@ -73,10 +67,9 @@ Pod Security Standards（PSS，上层标准）与 Pod Security Admission（PSA�
 |--------|-----------|----------|------------|
 | hostProcess / hostNetwork / hostPID / hostIPC | 放行 | **禁**（hostNetwork/IPC/PID 必须为 false；hostProcess 必须 nil/false） | 禁（同上，且 restricted 合并了 baseline 全部禁区） |
 | `privileged: true` | 放行 | **禁** | 禁 |
-| capabilities.add | 放行 | 只允许白名单（NET_BIND_SERVICE、SYS_CHROOT 等 12 个） | **必须先 drop ALL，只允许 add 回 NET_BIND_SERVICE** |
-| hostPath 卷 | 放行 | **禁** | 禁 |
-| hostPort | 放行 | 默禁（内置 PSA 只能判「0 或未写」——白名单要策略引擎） | 禁（同上） |
-| volume 类型 | 不限 | 不限 | **白名单**：configMap/downwardAPI/emptyDir/ephemeral/PVC/projected/secret/csi（hostPath、hostAlias 之类**全部禁**） |
+| capabilities.add | 放行 | 只允许 PSS 白名单（NET_BIND_SERVICE/SYS_CHROOT/KILL 等固定 13 项） | **必须先 drop ALL，只允许 add 回 NET_BIND_SERVICE** |
+| hostPath 卷 / hostPort | 放行 | **禁**（hostPort 内置 PSA 只能判「0 或未写」——白名单要策略引擎） | 禁（同上） |
+| volume 类型 | 不限 | 不限 | **白名单**：configMap/downwardAPI/emptyDir/ephemeral/PVC/projected/secret/csi（hostPath 等非白名单类型**全禁**） |
 | `allowPrivilegeEscalation` | 不限 | 不限 | **必须 false** |
 | runAsNonRoot | 不限 | 不限 | **必须 true**（Pod 级或每个容器级） |
 | runAsUser | 不限 | 不限 | 不能是 **0**（v1.23+ 起生效的控制） |
@@ -109,8 +102,7 @@ metadata:
 
 - **enforce 只作用于 Pod 对象**，不作用于 Deployment/Job 等工作负载资源；**audit 与 warn 对工作负载资源也会评估**（让你在模板面提前看到「这套模板进集群会怎样」）。
 - 三种模式可独立叠加、独立 pin version——「**audit/warn 比 enforce 严一档**」是经典落地姿势：restricted 先只审计不强制，先把隐患扒出来，评估后再收紧 enforce。
-- pinned version 的语义：`latest` 跟随集群升级的 PSS 规则集变化——升级后 audit/warn 可能突然多出新报警；**生产上 enforce 建议钉死具体版本**，评审完新规则集再跟进。
-- 更新 Pod 的 `spec.activeDeadlineSeconds` 与 `spec.tolerations` 两个字段不受策略限制（官方例外：容忍性和截止时间允许后改），方便运维救急而不用临时降标。
+- pinned version 的语义：`latest` 跟随集群升级的 PSS 规则集变化——升级后 audit/warn 可能突然多出新报警；**生产上 enforce 建议钉死具体版本**，评审完新规则集再跟进。Pod 更新层面官方给了两个小例外：`activeDeadlineSeconds` 与 `tolerations` 修改不受策略限制，方便运维救急而不用临时降标。
 
 **为什么这么设计**：为什么只有三档而不是开放策略语言？因为 PSS 被刻意设计成「**全 K8s 一线可比的最低语言**」——三档往后走只可加严，厂商、benchmark、策略引擎可以对齐这三档出报告和规则包（PSS 页官方链接了 Kubewarden/Kyverno/Gatekeeper 三个 PSS 落地替代品）。控件之外的需求（镜像白名单、强制 label、按团队豁免）刻意不进 PSS——那是策略引擎的地盘（§3/§4）。
 PSP（PodSecurityPolicy）是它的前任：一套完整 RBAC+对象的策略模型，但对象级粒度复杂到绝大多数集群都用错。PSP 在 v1.21 标记废弃、**v1.25 移除**，继任者就是这个按 ns 打标签、用三档内置标准的 PSA（`K8s-资源全览.md` §5.4 有一句过渡提示，API 层面用法就不复述了）。
@@ -156,8 +148,8 @@ kubectl label ns prod pod-security.kubernetes.io/audit=baseline \
   pod-security.kubernetes.io/audit-version=v1.37 \
   pod-security.kubernetes.io/warn=baseline --overwrite
 
-# step 2：在审计日志里找违规（violation 以 audit annotation
-#        "pod-security.kubernetes.io/audit-violations" 记录进审计事件，送到第 1 章 §8 配的 sink）
+# step 2：在审计日志找违规（violation 以 audit annotation
+#        "pod-security.kubernetes.io/audit-violations" 记录；kubeadm 集群直看静态 Pod 日志）
 kubectl logs -n kube-system kube-apiserver-... 2>/dev/null | grep -i 'audit-violations' | head -5
 
 # step 3：发布前用 server dry-run 过一遍「上了 enforce 后这套模板还起得来吗」
@@ -202,18 +194,9 @@ PSS 是「站在 ns 门口」，securityContext 是「站在容器门口」。�
 
 `allowPrivilegeEscalation: false` 落地的是内核 flag **no_new_privs**——「这个进程及其子孙不能获得比启动时更高的权限」。一来封 SUID 类提权（容器里自带 setuid 的 busybox `su`、`sudo`、apt 装进来的巨多 setuid 二进制）；二来封 runtime 借 exec 切换用户身份的旁路。它对合法业务流程基本不可见——受限的少数场景是包管理升级（容器里 apt/dnf 需要 suid 或特权升级）与 setcap 标记的二进制。**代价近零，推荐进模板默认值**。
 
-### 2.4 readOnlyRootFilesystem: 启动时 vs 运行时
+### 2.4 readOnlyRootFilesystem：启动时 vs 运行时
 
-开启后根文件系统**只读**，但应用会失败的地方很多：logging 库写临时目录、Java agent 落 dump、Python `__pycache__`、Node `node_modules/.cache**。三段式摆放：
-
-```yaml
-volumeMounts:
-  - { name: tmp,     mountPath: /tmp }           # emptyDir memory
-  - { name: run,     mountPath: /var/run }
-volumes:
-  - { name: tmp, emptyDir: { medium: Memory, sizeLimit: 64Mi } }
-  - { name: run, emptyDir: {} }
-```
+开启后根文件系统**只读**，但应用会失败的地方不少：logging 库写临时目录、Java agent 落 dump、Python `__pycache__`、Node `node_modules/.cache`。摆放姿势：把这些目录逐个以 emptyDir（`medium: Memory` 可上 tmpfs）挂回去——`/tmp`、`/var/run` 是经典样板，`volumeMounts` 与 `volumes` 各加两行即解；`/proc` 本身的默认屏蔽则由 procMount 那一列管（§2.1 表）。
 
 ### 2.5 capabilities：五条实战纪律
 
@@ -267,8 +250,7 @@ spec:
 - **文件系统要求**：**Linux ≥ 6.3**——tmpfs 在这个版本起支持 idmap mount（ConfigMap/Secret/SA token 都挂 tmpfs）；pod 内所有卷文件系统都要支持 idmap。**NFS 卷不行**（上游内核还不支持 idmap）。
 - **运行时要求**：containerd ≥ 2.0、CRI-O ≥ 1.25、runc ≥ 1.2 或 crun ≥ 1.9（**推荐 crun 1.13+**）。
 - **PSA 联动（最被低估的收益）**：开了 userns 的 Pod，`runAsNonRoot` / `runAsUser` 约束**被 PSS/PSA 自动放宽**（官方原话级：root in userns 永远映射到宿主机非特权用户，不构成提权风险）；**baseline 档下 procMount 也从「必须 Default」放宽**（restricted 档仍要求默认 procMount）——这是 userns 集群里写 YAML 的真正差异化。
-- **硬限制**：不能同时开 `hostNetwork/hostIPC/hostPID`；不能用裸块 volumeDevices；**卷的属主语义是容器内用户**（读写都按容器内 UID/GID 判定，所以与非 userns 的 Pod 共享卷时要事先对齐容器内用户，和 fsGroup 同一个思路）。
-- **观察**：kubelet 暴露 `started_user_namespaced_pods_total`（尝试创建的 userns Pod 计数）与 `started_user_namespaced_pods_errors_total`（失败计数）。
+- **硬限制与观察**：不能同时开 `hostNetwork/hostIPC/hostPID`，不能用裸块 volumeDevices；**卷的属主语义是容器内用户**（与非 userns Pod 共享卷要对齐容器内用户，fsGroup 同思路）；kubelet 暴露 `started_user_namespaced_pods_total` / `started_user_namespaced_pods_errors_total` 两计数。
 
 **决策一句话**：集群 ≥ v1.36 且节点内核 ≥ 6.3（Ubuntu 24.04 / RHEL 9.4 / Flatcar 近期镜像都满足）的话，给负载加 `hostUsers: false` 是**零业务侵入、收益最大**的一笔（对照：`runAsNonRoot: true` 需要镜像改造，userns 不用）。
 
@@ -300,18 +282,12 @@ ValidatingWebhookConfiguration 与 MutatingWebhookConfiguration 同构（`admiss
 
 ```json
 // 请求（apiserver → webhook）
-{
-  "apiVersion": "admission.k8s.io/v1",
-  "kind": "AdmissionReview",
-  "request": {
-    "uid": "705ab4f5-6393-11e8-b7cc-42010a800002",
+{ "apiVersion": "admission.k8s.io/v1", "kind": "AdmissionReview",
+  "request": { "uid": "705ab4f5-...", "operation": "CREATE",
     "kind": {"group":"apps","version":"v1","kind":"Deployment"},
     "resource": {"group":"apps","version":"v1","resource":"deployments"},
-    "name": "my-deploy", "namespace": "default",
-    "operation": "CREATE", "userInfo": {...},
-    "object": { /* Deployment 全量 */ }, "oldObject": null, "dryRun": false
-  }
-}
+    "name": "my-deploy", "namespace": "default", "userInfo": {...},
+    "object": { /* Deployment 全量 */ }, "oldObject": null, "dryRun": false } }
 // 响应（允许）
 {"apiVersion":"admission.k8s.io/v1","kind":"AdmissionReview",
  "response":{"uid":"705ab4f5-...","allowed":true}}
@@ -319,9 +295,8 @@ ValidatingWebhookConfiguration 与 MutatingWebhookConfiguration 同构（`admiss
 {"response":{"uid":"...","allowed":false,
   "status":{"code":403,"message":"container \"app\" has no resources.requests"}}}
 // 响应（mutating 改写）：patch = base64(JSONPatch 数组)，patchType 唯一合法值 JSONPatch
-{"response":{"uid":"...","allowed":true,
-  "patchType":"JSONPatch",
-  "patch":"W3sib3AiOiJhZGQiLCJwYXRoIjoiL21ldGFkYXRhL2xhYmVscyIsInZhbHVlIjp7ImFwcCI6IndlYmhvb2stdGVzdCJ9fV0="}}
+{"response":{"uid":"...","allowed":true, "patchType":"JSONPatch",
+  "patch":"W3sib3AiOiJhZGQiLCJwYXRoIjoiL21ldGFkYXRhL2xhYmVscyIsInZhbHVlIjp7ImFwcCI6IngifV0="}}
 ```
 
 mutating 的产出会被**写进审计注解**（`patch.webhook.admission.k8s.io/round_X_index_Y`），第 1 章 §8 的审计查询里可以直接 grep 出「这个对象被哪个 webhook 加了什么」——生产排障时比 `kubectl get` 齐全。
@@ -455,8 +430,7 @@ func main() {
 
 - **failurePolicy 的真实风险**：`Fail` + webhook Pod 全挂 = `namespaceSelector` 匹配面内 CREATE/UPDATE 全瘫。案例级：webhook 匹配 `pods`，节点翻新时节点上**所有** DaemonSet Pod 与业务 Pod 都起不来（Cilium/CoreDNS 起不来 → 全体连不上的连环事故）。生产公式：**先用 Ignore + 告警观察 ≥ 两周，稳定后换 Fail 并同步收窄 rules**。
 - **把自己/基础设施锁死**：webhook 服务本身的 Pod 如果被自己的 rules 匹配——挂了永远起不来（kyverno 官方文档把「kyverno 命名空间必须被豁免」写成一级警告正是这个事故史）。纪律三件套：`namespaceSelector` 排除系统ns、webhook 所在ns所有标签打 `admission.webhook/ignore: "true"`（自己权威声明），label 加进 `mutatingWebhookConfiguration.namespaceSelector.matchExpressions.NotIn`。
-- **超时与 APF**：webhook 调用占用 apiserver 的 seat——第 1 章 §5 的 APF 分类排队会把它算进去；一个慢的 webhook 直接把 APF 相关业务泳道拖出延迟尖峰（监控 `apiserver_flowcontrol_current_executing_requests{flow_schema=...}` + `apiserver_admission_webhook_admission_duration_seconds`）。生产建议 timeoutSeconds ≤ 5s，webhook 服务端设置更短的内部分钟超时保证「Fast fail」。
-- **监控**：`apiserver_admission_webhook_admission_duration_seconds{name,type}`（延迟）、`apiserver_admission_webhook_admission_step_error_count`（v1 指标，重试错误率）、`apiserver_admission_webhook_rejection_count{error_type,...}`（错误类型：`calling_webhook_error`/`no_error` + rejection_code）。**审计注解**（patch.webhook.admission.k8s.io/round_X_index_Y）对 mutating 可追溯实际改动。
+- **超时与 APF + 监控**：webhook 调用占用 apiserver 的 seat——第 1 章 §5 的 APF 分类排队会把它算进去，慢 webhook 会拖出相关业务泳道的延迟尖峰（建议 timeoutSeconds ≤ 5s，webhook 内部超时再小一档 fast-fail）。监控四件套：`apiserver_admission_webhook_admission_duration_seconds`（延迟）、`apiserver_admission_webhook_admission_step_error_count`、`apiserver_admission_webhook_rejection_count{error_type}`（calling_webhook_error / no_error + rejection_code）、审计注解 `patch.webhook.admission.k8s.io/round_X_index_Y`（mutating 可追溯改动，§3.2）。
 - **v1.37 新增防线**：TokenReview/SubjectAccessReview/SelfSubject* 这批虚拟资源**默认不再进入 webhook**（第一节引的官方描述原文——防止 webhook 把 apiserver 自己的认证鉴权链撞死）。老集群升级上 v1.37 如果「有 webhook 匹配 `*`」需要 review：v1.37 之后对 tokenreviews 的 webhook 调用是不会发生的。
 - **证书轮换**：替换 Secret 里的 tls.crt 只是第一步，**ValidatingWebhookConfiguration 里的 caBundle 必须同步更新**（否则 apiserver 验签失败 = webhook 变不可用的 = 又一场 failurePolicy 事故）（§8.4）。生产上要 cert-manager 的 `cert-manager.io/inject-ca-from` 这种自动同步器，而不是人肉 patch。
 
@@ -525,21 +499,18 @@ metadata:
 spec:
   crd:
     spec:
-      names:
-        kind: K8sRequiredLabels
+      names: { kind: K8sRequiredLabels }
       validation:
         openAPIV3Schema:
           type: object
-          properties:
-            labels: { type: array, items: { type: string } }
+          properties: { labels: { type: array, items: { type: string } } }
   targets:
   - target: admission.k8s.gatekeeper.sh
     rego: |
       package k8srequiredlabels
       violation[{"msg": msg}] {
-        provided := {label | input.review.object.metadata.labels[label]}
-        required := {label | label := input.parameters.labels[_]}
-        missing := required - provided
+        missing := {l | l := input.parameters.labels[_];
+                        not input.review.object.metadata.labels[l]}
         count(missing) > 0
         msg := sprintf("missing labels: %v", [missing])
       }
@@ -646,7 +617,7 @@ Secret 默认是 **base64 而不是加密**——`kubectl get secret -o yaml` �
 |----------|------|------|
 | `identity` | 无（明文） | 迁移期做兜底读用 |
 | `aescbc` | 弱（CBC padding-oracle 理论风险，官方明示 "weak，不推荐"） | 旧集群兼容 |
-| `aesgcm` | 强但 **200k 写次必须轮换** | 只在有自动轮换时说 |
+| `aesgcm` | 强但官方要求**每 200k 写次轮换一次同一 key** | 只在有自动轮换机制时使用 |
 | `secretbox` | 强（XSalsa20+Poly1305）+ 快 | 不想上 KMS 时的推荐 |
 | `kms` v1 / v2 | 最强（信封加密，多 key/KEK/DEK 分层） | 生产推荐；KMS v2 **GA v1.29**；KMS v1 **v1.28 起废弃、v1.29 起默认关**（`--feature-gates=KMSv1=true` 强制开） |
 
@@ -670,8 +641,7 @@ resources:
       - identity: {}      # 迁移期兜底：能读旧明文 Secret
 EOF
 
-# ③ kube-apiserver manifest 挂进 --encryption-provider-config + hostPath /etc/kubernetes/enc
-#    （static pod 重启自动生效）
+# ③ kube-apiserver manifest 挂 --encryption-provider-config + hostPath（static pod 自动重载）
 # ④ 验证：新建一条 Secret + etcdctl 直读看前缀
 ETCDCTL_API=3 etcdctl \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
@@ -688,12 +658,12 @@ kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 
 - **providers 有序**：第 1 个 provider 决定**写**用什么，列表里**所有** provider 都能**读**——这就是「加新 key 到尾部 → 然后把读到的东西用新 key 重写 → 移旧 key」的多步无停机轮换流程的依据。
 - **KMS v2 的 key_id 轮换**：KEK 轮换后 KMS 插件的 Status 里 key_id 变了，api server 观察到后自动把 cache 里的 DEK seed 标记 stale——**不用重启 apiserver**；但节奏不是实时的（Status 轮询~1 分钟、故障期 10s、被动迁移窗口约 3+N+M 分钟）。
-- **rotate 完整流程命令链**：
+- **rotate 完整流程命令链**（四步，每步之间重启 apiserver 并验证）：
   ```bash
   # a. 新增 key2 进 providers（置于末尾），重启所有 apiserver
   # b. 把 key2 调到首位（新写入用 key2），重启所有 apiserver
   # c. kubectl get secrets --all-namespaces -o json | kubectl replace -f -   （重写存量）
-  # d. 逐 etcdctl 抽查只剩 k8s:enc:secretbox:v1:key2，确认后从列表里移除 key1
+  # d. etcdctl 抽查只剩 k8s:enc:secretbox:v1:key2，从列表移除 key1
   ```
 - **自动重载 flag**：`--encryption-provider-config-automatic-reload=true`（默认关；打开后 apiserver **每分钟长轮询**配置文件变更——轮换重启步骤可以省了；指标 `apiserver_encryption_config_controller_automatic_reload_last_timestamp_seconds`）。
 - **KMS v2 部署形态**：KMS provider 必须**跑在每个控制面节点**上（unix socket 直连 apiserver），socket 路径（e.g. `unix:///var/run/kmsplugin/socket.sock`）写进 EncryptionConfiguration。云厂商多给托管 hook（GKE/Azure/阿里的 KMS 集成都是同一系列）。
@@ -710,7 +680,7 @@ kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 | 轮换 | sidecar 模板定期重读 Vault（不重启 Pod） | 驱动轮询 volume 更新（可选 alpha 秘钥轮换） |
 | 适用 | 已用 Vault / 要 Vault 的 lease、audit、revocation 体系 | 要求 Pod template 侵入最小 |
 
-**ESO（External Secrets Operator，v2.12.0，本文写作时最新）**：**把「外部密钥仓库」还是「K8s Secret」对接起来**——对象链三级：
+**ESO（External Secrets Operator，v2.12.0，本文写作时最新）**：**把「外部密钥仓库」与「K8s Secret」对接起来**——对象链三级：
 
 ```yaml
 # ① SecretStore / ClusterSecretStore：连到 AWS SM/GCP SM/Vault/Azure KV 的认证与端点
@@ -738,7 +708,7 @@ spec:
 ```
 
 - ESO 的价值与 Vault injector 的场景不冲突——**ESO 把秘密留在「K8s Secret」生态**（reconciler 模式，应用零感知，回滚容易），injector 走「sidecar 注密」生态（应用侧须消费文件）。
-- **与 GitOps 的关系一句**：`CI-CD/Argo-CD-部署与使用详解.md` 里 ArgoCD 管的全是**可入 git 的清单**——ESO 的 ExternalSecret 是纯 YAML 可以连 Argo 一起入 git，而真密钥留在 AWS SM 等外部仓库——这是「Secret 不提交库」的实现桥梁（HashiCorp Vault 系相等做法是 Sealed Secrets/SOPS＋KMS 密钥轮换）。
+- **与 GitOps 的关系一句**：`CI-CD/Argo-CD-部署与使用详解.md` 里 ArgoCD 管的全是**可入 git 的清单**——ESO 的 ExternalSecret 是纯 YAML，可以跟 app 清单一起入 git，真密钥留在 AWS SM 等外部仓库——这是「Secret 不提交库」的实现桥梁（同类形态还有 Sealed Secrets / SOPS＋KMS，走的是「把密文本身入 git」路线）。
 
 **为什么这么设计**：三条路面（静态加密、注入、同步）对应不同信任边界——静态加密防「etcd 磁盘拿走」、注入防「Secret 对象进 API/etcd」、ESO 让密钥的生命周期**在外部 Vault 里统一**。生产组合最深的形态是：**所有三方都上了 + 强 RBAC + audit 审计异常 get/list secrets**（第 1 章 §8 审计策略可以在用 Secret 资源的 verb 打 Metadata）。
 
@@ -746,7 +716,7 @@ spec:
 
 ## 六、镜像与供应链安全
 
-供应链这头，K8s 的拦截面一直在准入层——「这个镜像是谁签的」「这个镜像是不是我在 CI 里扫过的那份」。cosign 主，Gatekeeper/Kyverno 场。
+供应链这头，K8s 的拦截面一直在准入层——「这个镜像是谁签的」「这个镜像是不是我在 CI 里扫过的那份」。签名主角是 cosign，执行场是准入层（Kyverno/Gatekeeper）。
 
 ### 6.1 cosign：两套方案
 
@@ -781,7 +751,7 @@ metadata:
   name: require-cosign-signature
 spec:
   validationFailureAction: Enforce
-  background: false                     # 验签走外网，开背景扫必炸审计（EP 缓解见 §6.4）
+  background: false                     # 验签要调外网 registry，背景扫会周期出网——默认关
   webhookTimeoutSeconds: 15
   failurePolicy: Fail
   rules:
@@ -857,21 +827,21 @@ spec:
 | `authentication.anonymous.enabled` | **false**（默认） | 保持 false | 10250 端口的匿名访问一旦开 = 任意读/exec；历史事故之源（2018 前后多集群事件的根） |
 | `authorization.mode` | **Webhook**（默认） | 保持 Webhook；配合 NodeRestriction（§7.2 apiserver 侧） | AlwaysAllow = 拿了 kubelet cert 等于全 node 主宰 |
 | `readOnlyPort` | **0（禁）**（v1beta1 明确 default 0） | 保持 0 | 10255 只读端口可泄 Pod 清单/资源情报（供攻击者侦察） |
-| `seccompDefault` | **false**（默认） | 生产开 true（排除先验证的 sidecar/自身例外） | 默认 RuntimeDefault seccomp（§2.6） |
-| `serverTLSBootstrap` / `rotateCertificates` | false / false | 开（kubeadm 已默认开了 client 轮转） | kubelet serving cert 有源可查、有轮换 |
+| `seccompDefault` | **false**（默认） | 验证存量兼容后开 true（对个别 syscall 敏感的 sidecar 先 Localhost 化） | 全量 workload 默认掉 RuntimeDefault seccomp（§2.6） |
+| `serverTLSBootstrap` / `rotateCertificates` | false / false | 开 | kubelet 的 client 与 serving 证书都有源可查、有自动轮换 |
 
-> ❗ 「默认就对」的东西容易在升级中被配置漂移偷改——kube-bench 4.2.x 全部条目就是 stdin 这些。
+> ❗ 「默认就对」的东西最容易在版本升级和配置漂移中被偷改——kube-bench 4.2.x 的全套条目检查的就是这些。
 
 ### 7.2 apiserver：关键 flag（默认值核对于官方 command-line-reference）
 
 | flag | 默认 | 加固 |
 |------|------|------|
-| `--anonymous-auth` | **true**（默认） | 显式 `=false`（匿名请求顶死 system:anonymous+unauthenticated，RBAC 再杀也拦不住侦察面） |
+| `--anonymous-auth` | **true**（默认） | 显式 `=false`——匿名请求会以 `system:anonymous` 身份落到 RBAC，集群里任何「system:unauthenticated 可 discover」的默认绑定就成了侦察面 |
 | `--enable-admission-plugins` | 一串默认（§1 章 §2.3 表） | 显式串里确认含 `NodeRestriction`、`ValidatingAdmissionWebhook`、`MutatingAdmissionWebhook`、`PodSecurity`、`ResourceQuota`、`LimitRanger`、`DefaultStorageClass`、`ServiceAccount`——四大安全插件必保，kubeadm 落地默认用 Node,RBAC + 上列 |
 | `--encryption-provider-config` | 无（Secret 明文） | §5.2 全链 + auto reload |
-| `--etcd-cafile`/`--etcd-certfile`/`--etcd-keyfile` | 空 | 必配（kubeadm 默认是 /etc/kubernetes/pki/etcd/{ca.crt,apiserver-etcd-client.crt,.key}）；etcd 自身 **peer 用 server 另一对证书**（`peer-{cert,key}-file` 于 etcd manifest）——两套密钥分开是 CIS 明确要求，而不是「复用」 |
+| `--etcd-cafile`/`--etcd-certfile`/`--etcd-keyfile` | 空 | 必配（kubeadm 默认是 /etc/kubernetes/pki/etcd/{ca.crt,apiserver-etcd-client.crt,.key}）；etcd 自身 **peer 用另一对证书**（`peer-{cert,key}-file`）——两套密钥分开是 CIS 明确要求 |
 | `--profiling` | **true**（默认） | `=false`（pprof 输出对攻击者情报价值大，只留 API 面排查窗口期临时开） |
-| `--disable-insecure-port` / `--insecure-port` | **已不存在** | v1.20 起 insecure serving 已被拔（同样年 v1.24 移除 flag 本体，PR #106859）；现代检查对象是「ss -lnt 只监听 6443」而非 flag |
+| `--disable-insecure-port` / `--insecure-port` | **已不存在** | insecure 8080 于 v1.20 被拔（deprecation v1.10 起）、v1.24 flag 本体物理移除（CHANGELOG PR #106859）——现代检查对象是「ss -lnt 只监听 6443」而不是 flag 值 |
 | `--requestheader-client-ca-file` | 空 | 聚合层（metrics-server 等）入场景必配，否则 proxy-user 可被仿冒 |
 
 ### 7.3 kube-bench 跑法（kind/kubeadm 通用 job）
@@ -882,8 +852,8 @@ kubectl apply -f https://raw.githubusercontent.com/aquasecurity/kube-bench/v0.16
 kubectl wait --for=condition=complete job/kube-bench --timeout=120s
 kubectl logs job/kube-bench | sed -n '/\[INFO\]/,/\[PASS\]\|\[FAIL\]\|\[WARN\]/p' | head -60
 
-# kubeadm 集群就用 job.yaml（自动探测版本 → 映射 cis-2.0 等 profile）；
-# 其他发行版（EKS/GKE/Rancher/OpenShift/k3s）走对应平台 job-job-eks.yaml 等变体
+# kubeadm/kind 直接 job.yaml（自动探测版本并映射 cis-2.0 等 profile）；
+# EKS/GKE/k3s 等发行版走仓库里对应平台的 job-*.yaml 变体
 ```
 
 **结果分级处理节奏**（CIS 原生四级）：
@@ -920,27 +890,21 @@ kind create cluster --name sec-exp --image kindest/node:v1.37.2
 
 # step 1：建 ns，只上 audit/warn
 kubectl create ns psa-drill
-kubectl label ns psa-drill \
-  pod-security.kubernetes.io/audit=restricted \
+kubectl label ns psa-drill pod-security.kubernetes.io/audit=restricted \
   pod-security.kubernetes.io/audit-version=latest \
   pod-security.kubernetes.io/warn=restricted --overwrite
 
 # step 2：起一个明知违例的 Deployment（裸 nginx 不满足 restricted）
 kubectl create deploy bad-app -n psa-drill --image=nginx
-#    期望 kubectl 输出含 Warning：
-#    Warning: would violate PodSecurity "restricted:latest": allowPrivilegeEscalation != false
-#             (container "nginx" must set securityContext.allowPrivilegeEscalation=false), ...
+#    期望 kubectl 输出 Warning：would violate PodSecurity "restricted:latest":
+#    allowPrivilegeEscalation != false (container "nginx" must set ...), ...
 
-# step 3：verify audit events（audit annotation）
-kubectl get events -n psa-drill --sort-by=.lastTimestamp | tail -5
-
-# step 4：升级 enforce —— Deployment 能创建，但 ReplicaSet 起不来 Pod（关键陷阱！）
+# step 3：升级 enforce —— Deployment 建得起来，但 ReplicaSet 造不出 Pod（关键陷阱！）
 kubectl label ns psa-drill pod-security.kubernetes.io/enforce=restricted --overwrite
 kubectl delete deploy bad-app -n psa-drill && kubectl create deploy bad-app -n psa-drill --image=nginx
-kubectl get rs,po -n psa-drill
 kubectl describe rs -n psa-drill | grep -A5 Events
-#    期望：rs 事件 Error creating: pods "bad-app-xxx" is forbidden: violates PodSecurity ...
-#    ⚠️ 这正是 §8.1「audit 先行」的根源——Deployment 的 enforce 挡在 Pod 阶段
+#    期望：Error creating: pods "bad-app-xxx" is forbidden: violates PodSecurity ...
+#    ⚠️ 这就是 §8.1「audit 先行」的根源——enforce 挡在 Pod 而不是 Deployment 阶段
 
 # step 5（stepdown 演练）：把合规版本跑通
 cat <<'EOF' | kubectl -n psa-drill apply -f -
@@ -952,15 +916,10 @@ spec:
   template:
     metadata: { labels: { app: good } }
     spec:
-      securityContext:
-        runAsNonRoot: true
-        seccompProfile: { type: RuntimeDefault }
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
       containers:
-      - name: app
-        image: nginxinc/nginx-unprivileged:stable
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities: { drop: ["ALL"] }
+      - { name: app, image: nginxinc/nginx-unprivileged:stable,
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } } }
 EOF
 kubectl -n psa-drill rollout status deploy/good-app --timeout=90s
 
@@ -1035,9 +994,9 @@ spec:
           resources: { requests: { cpu: 50m, memory: 64Mi } } }
 EOF
 kubectl rollout status deploy/ok-with-requests --timeout=60s
-kubectl delete deploy ok-with-requests
-kubectl delete validatingadmissionpolicybinding require-requests-binding
-kubectl delete validatingadmissionpolicy require-requests
+# 清理
+kubectl delete deploy ok-with-requests deny-test cel-audit-test --ignore-not-found
+kubectl delete validatingadmissionpolicy require-requests validatingadmissionpolicybinding require-requests-binding
 ```
 
 ### 实验 9.3 webhook server 全链（§3.3 骨架 + 证书 + caBundle + §3.4 signer 陷阱）
@@ -1156,8 +1115,7 @@ webhooks:
   sideEffects: None
   failurePolicy: Fail
   timeoutSeconds: 5
-  # ⚠️ 三个豁免一致遵守：排除 kube-system 与自己所在 ns（this ns=default 本实验留全量观察）
-  namespaceSelector:
+  namespaceSelector:    # ⚠️ 纪律：排除 kube-system 与自己所在 ns（本实验观察动 default）
     matchExpressions:
     - { key: kubernetes.io/metadata.name, operator: NotIn, values: ["kube-system"] }
 EOF
@@ -1179,7 +1137,7 @@ kubectl create deploy hook-test --image=nginx 2>&1 | tail -2
 #   container "nginx" in ns default/hook-test has no resources.requests
 
 kubectl delete validatingwebhookconfiguration require-resources-hook
-kubectl delete deploy/webhook-dep svc/webhook-svc secret/webhook-certs curltest deploy hook-test --ignore-not-found
+kubectl delete deploy/webhook-dep svc/webhook-svc secret/webhook-certs curltest deploy hook-test --ignore-not-found 2>/dev/null
 ```
 
 ### 实验 9.4 Kyverno 部署 + 禁 `:latest`（对照 §4.2）
@@ -1214,8 +1172,7 @@ EOF
 kubectl run latest-pod --image=busybox:latest --restart=Never 2>&1 | tail -3   # 被拒
 kubectl run pinned-pod --image=busybox:1.36 --restart=Never --command -- sleep 30
 kubectl get pod pinned-pod
-
-# 顺手看一眼报告（background: true 时 Kyverno 会把存量也扫上去）
+# 顺手看一眼报告（background: true 时存量也被扫）
 kubectl get policyreports -A 2>/dev/null | head
 
 kubectl delete clusterpolicy disallow-latest pod latest-pod pinned-pod --ignore-not-found
@@ -1267,24 +1224,24 @@ kind create cluster --name sec-enc --config /tmp/kind-enc.yaml --image kindest/n
 kubectl create secret generic s1 --from-literal=password=topsecret
 kubectl create configmap cm1 --from-literal=note=plain-text-marker
 
-# step 4：直查 etcd（secret 应密文、configmap 应明文 —— 一条命令一眼对照）
+# step 4：直查 etcd（secret 应密文、configmap 应明文 —— 对称两条命令）
 CID=$(docker exec sec-enc-control-plane crictl ps --name etcd -q)
+
 docker exec sec-enc-control-plane crictl exec "$CID" sh -c \
-  'ETCDCTL_API=3 etcdctl \
-     --cacert=/etc/kubernetes/pki/etcd/ca.crt \
-     --cert=/etc/kubernetes/pki/etcd/server.crt \
-     --key=/etc/kubernetes/pki/etcd/server.key \
+  'ETCDCTL_API=3 etcdctl --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+     --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key \
      get /registry/secrets/default/s1' | hexdump -C | head -4
 #   期望：value 前缀 k8s:enc:aescbc:v1:key1:<密文...>
 
 docker exec sec-enc-control-plane crictl exec "$CID" sh -c \
-  'ETCDCTL_API=3 etcdctl ...同上... get /registry/configmaps/default/cm1' | hexdump -C | head -4
-#   期望：value 直接是 {{"apiVersion":"v1",... note: plain-text-marker ...}} 明文
+  'ETCDCTL_API=3 etcdctl --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+     --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key \
+     get /registry/configmaps/default/cm1' | hexdump -C | head -4
+#   期望：value 直接是 {"apiVersion":"v1",... note: plain-text-marker ...} 明文
 
 # step 5：API 层面读起来完全无感（加密只发生在 etcd 层）
 kubectl get secret s1 -o jsonpath='{.data.password}' | base64 -d; echo   # topsecret
-
-# step 6：重写存量（生产上必做；实验的 Secret 已在加密配置后建成，可选做）
+# step 6：重写存量（生产必做；本实验 Secret 在加密后建成故非必需，仅演示命令）
 kubectl get secrets --all-namespaces -o json | kubectl replace -f -
 
 kind delete clusters sec-enc sec-exp; rm -rf /tmp/enc /tmp/wh /tmp/server.* /tmp/ca.* /tmp/tls.*
@@ -1308,12 +1265,9 @@ kind delete clusters sec-enc sec-exp; rm -rf /tmp/enc /tmp/wh /tmp/server.* /tmp
 | webhook 必备 | `sideEffects: None`（或 NoneOnDryRun）+ `admissionReviewVersions` + `timeoutSeconds ≤5s` + namespaceSelector 排 kube-system/自己；`failurePolicy: Fail` 默认 |
 | CSR signer 语系 | kube-apiserver-client **只能 client auth**（+certificate approve 必人工）；server cert 走 cert-manager/自建 CA/custom signer 手工签；kcm 要 `--cluster-signing-cert-file`（kubeadm/kind 有） |
 | CEL 策略 | VAP GA v1.30；MAP GA v1.36 默认开；validationActions: [Deny/Warn/Audit]（Deny+Warn 不能同列）；binding 必配；status.typeChecking 盯 warning |
-| Gatekeeper | ConstraintTemplate（Rego）+ Constraint；`kubectl apply -f .../gatekeeper/<version>/deploy/gatekeeper.yaml`（v3.23.1） |
-| Kyverno | ClusterPolicy: validate/mutate/generate/verifyImages；validationFailureAction: Enforce/Audit；PolicyException(kyverno.io/v2)；helm install kyverno kyverno/kyverno |
-| EncryptionConfiguration | `apiserver.config.k8s.io/v1`；providers 有序第一写其余读；identity 兜底；前缀 `k8s:enc:{aescbc|secretbox|kms}:v1:key1:` |
-| KMS | KMS v2 GA v1.29；KMS v1 v1.28 废弃/v1.29 默认关；rotate 步序：加新 key 末尾→调首→`kubectl get secrets -A -o json | kubectl replace -f -`→撤旧 key |
-| cosign | v3：`cosign sign --yes`（keyless）/`cosign sign --key cosign.key`；`--certificate-identity(-regexp)` + `--certificate-oidc-issuer` |
-| Kyverno 验签 | verifyImages: imageReferences + attestors.keys.publicKeys；mutateDigest=true 自动落 digest |
+| Gatekeeper / Kyverno | Gatekeeper：ConstraintTemplate（Rego）+ Constraint，install v3.23.1；Kyverno：ClusterPolicy validate/mutate/generate/verifyImages，PolicyException(kyverno.io/v2)，helm install kyverno kyverno/kyverno |
+| EncryptionConfiguration / KMS | `apiserver.config.k8s.io/v1`，providers 有序第一写其余读、identity 兜底、前缀 `k8s:enc:{aescbc|secretbox|kms}:v1:key1:`；KMS v2 GA v1.29、v1 v1.28 废弃/v1.29 默认关；rotate：新 key 进尾→调首→rewrite全部→撤旧 |
+| cosign / Kyverno 验签 | v3 keyless `cosign sign --yes` 或本地 `--key cosign.key`；verifyImages: imageReferences+attestors.keys.publicKeys，mutateDigest 自动落 digest |
 | kubelet 四面 | anonymous.enabled false（默认）；authorization.mode Webhook（默认）；readOnlyPort 0（默认）；seccompDefault 显式开 |
 | apiserver 关键 | `--anonymous-auth=false`（默认 true）；`--profiling=false`（默认 true）；NodeRestriction 常在显式 plugins 串里；etcd peer/client 双密钥 |
 | CIS/kube-bench | CIS v2.0 ↔ k8s 1.34-1.35；kube-bench v0.16.0 job.yaml 一键跑；PASS/FAIL/WARN 分级处理 |
@@ -1341,16 +1295,12 @@ kind delete clusters sec-enc sec-exp; rm -rf /tmp/enc /tmp/wh /tmp/server.* /tmp
 | User Namespaces（hostUsers、节点要求、PSA 联动） | https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/ |
 | feature-gate 版本注释（UserNamespacesSupport） | https://github.com/kubernetes/kubernetes/blob/master/pkg/features/kube_features.go |
 | Dynamic Admission Control（webhook 配置、协议、监控指标） | https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/ |
-| Validating Admission Policy（v1.30 GA） | https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/ |
-| Mutating Admission Policy（v1.36 GA） | https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/ |
-| CSR 与 signer（内建 signer 契约、kubectl approve） | https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/ |
-| Manage TLS Certificates in a Cluster（custom signer 手工签名流程） | https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster/ |
+| Validating / Mutating Admission Policy（v1.30 / v1.36 GA） | https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/ + .../mutating-admission-policy/ |
+| CSR 与 signer（内建 signer 契约）+ Manage TLS in a Cluster（手工签名流程） | https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/ + https://kubernetes.io/docs/tasks/tls/managing-tls-in-a-cluster/ |
 | kcm signer 源码（validAPIServerClientUsages） | https://github.com/kubernetes/kubernetes/blob/master/pkg/controller/certificates/signer/signer.go |
-| Encrypting Confidential Data at Rest（providers、轮换、auto-reload） | https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/ |
-| KMS provider（v2 GA、key_id/Status 轮询、90 天轮换建议） | https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/ |
+| Encrypting Confidential Data at Rest + KMS provider（轮换、auto-reload、key_id） | https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/ + .../kms-provider/ |
 | AppArmor（v1.31 GA，appArmorProfile 字段） | https://kubernetes.io/docs/tutorials/security/apparmor/ |
-| KubeletConfiguration v1beta1（默认值逐字段） | https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/ |
-| kube-apiserver flags（--anonymous-auth/--profiling 默认 true） | https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/ |
+| KubeletConfiguration + kube-apiserver flags（默认值来源） | https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/ + https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/ |
 | kube-bench（CIS 支持矩阵：cis-2.0 ↔ 1.34-1.35） | https://github.com/aquasecurity/kube-bench |
 | Gatekeeper（v3.23.1 安装与 ConstraintTemplate） | https://open-policy-agent.github.io/gatekeeper/website/docs |
 | Kyverno（v1.19.1 安装、verifyImages、PolicyException） | https://kyverno.io/docs/ |
