@@ -19,7 +19,7 @@ cp .env.example .env
 python3 main.py
 ```
 
-打开 <http://127.0.0.1:8080/>。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。不要使用 `file://.../static/index.html` 打开，因为浏览器不会把它当成 Aegis 服务，也无法请求 `/api/v1/*`。
+`main.py` 会自动读取当前目录的 `.env`，已经存在的 shell 环境变量优先；修改 `.env` 后需要重启进程。打开 <http://127.0.0.1:8080/>。本地默认数据库写入项目下的 `data/aegis.db`，不需要 root 权限；Docker Compose 会把数据写入容器 Volume。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。不要使用 `file://.../static/index.html` 打开，因为浏览器不会把它当成 Aegis 服务，也无法请求 `/api/v1/*`。
 管理接口（创建身份、服务器、授权和规则）必须带 `X-Aegis-Admin`；未配置 `AEGIS_ADMIN_TOKEN` 时管理写接口默认拒绝，请把 `.env` 里的示例值换成随机值并放入 Secret Manager。
 前端右上角可以分别保存管理员令牌和身份密钥。它们只保存在当前浏览器 `localStorage`，保存后会用 `X-Aegis-Admin` / `X-Aegis-Key` 请求对应接口；未提供身份密钥时不会返回服务器资产详情。
 

@@ -1,9 +1,10 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from app.config import Settings
+from app.config import Settings, load_settings
 from app.executor import SSHExecutor
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
@@ -18,6 +19,41 @@ class AegisCoreTest(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_local_default_data_dir_is_writable_project_relative_path(self):
+        previous = os.environ.pop("AEGIS_DATA_DIR", None)
+        previous_cwd = Path.cwd()
+        temporary = tempfile.TemporaryDirectory()
+        temporary_cwd = temporary.name
+        try:
+            os.chdir(temporary_cwd)
+            settings = load_settings()
+            self.assertEqual(settings.data_dir.resolve(), (Path(temporary_cwd) / "data").resolve())
+            self.assertEqual(settings.db_path.resolve(), (Path(temporary_cwd) / "data" / "aegis.db").resolve())
+        finally:
+            os.chdir(previous_cwd)
+            temporary.cleanup()
+            if previous is not None:
+                os.environ["AEGIS_DATA_DIR"] = previous
+
+    def test_dotenv_is_loaded_for_local_startup(self):
+        previous_env = os.environ.copy()
+        previous_cwd = Path.cwd()
+        temporary = tempfile.TemporaryDirectory()
+        try:
+            root = Path(temporary.name)
+            (root / ".env").write_text("AEGIS_ADMIN_TOKEN=from-dotenv\nAEGIS_DATA_DIR=./local-data\n", encoding="utf-8")
+            os.chdir(root)
+            os.environ.pop("AEGIS_ADMIN_TOKEN", None)
+            os.environ.pop("AEGIS_DATA_DIR", None)
+            settings = load_settings()
+            self.assertEqual(settings.admin_token, "from-dotenv")
+            self.assertEqual(settings.data_dir, (root / "local-data").resolve())
+        finally:
+            os.chdir(previous_cwd)
+            os.environ.clear()
+            os.environ.update(previous_env)
+            temporary.cleanup()
 
     def test_key_hash_is_verifiable_but_not_plaintext(self):
         key = "aegis_secret"
