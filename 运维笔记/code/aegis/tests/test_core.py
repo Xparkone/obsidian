@@ -1,0 +1,60 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from app.config import Settings
+from app.server import AegisService
+from app.security import hash_api_key, verify_api_key
+
+
+class AegisCoreTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        settings = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin")
+        self.service = AegisService(settings)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_key_hash_is_verifiable_but_not_plaintext(self):
+        key = "aegis_secret"
+        encoded = hash_api_key(key)
+        self.assertNotIn(key, encoded)
+        self.assertTrue(verify_api_key(key, encoded))
+        self.assertFalse(verify_api_key("aegis_other", encoded))
+
+    def test_rule_blocks_command_and_writes_audit(self):
+        status, created = self.service.dispatch("POST", "/api/v1/principals", {"name": "agent-1", "kind": "ai"}, None, "test-admin")
+        self.assertEqual(status, 201)
+        key = created["api_key"]
+        status, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "test", "address": "10.0.0.1"}, None, "test-admin")
+        self.assertEqual(status, 201)
+        self.service.dispatch("POST", "/api/v1/access-grants", {"principal_id": created["id"], "server_id": server["id"], "actions": ["read"]}, None, "test-admin")
+        status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "rm -rf /"}, key)
+        self.assertEqual(status, 403)
+        self.assertEqual(response["rule_id"], "dangerous-filesystem")
+        events = self.service.db.rows("SELECT * FROM audit_events")
+        self.assertEqual(events[-1]["decision"], "blocked")
+
+    def test_scope_blocks_unlisted_server(self):
+        status, principal = self.service.dispatch("POST", "/api/v1/principals", {"name": "user-1", "kind": "user"}, None, "test-admin")
+        status, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "private", "address": "10.0.0.2"}, None, "test-admin")
+        status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "ls"}, principal["api_key"])
+        self.assertEqual(status, 403)
+        self.assertIn("访问权限", response["error"])
+
+    def test_dashboard_shape(self):
+        status, dashboard = self.service.dispatch("GET", "/api/v1/dashboard", {}, None)
+        self.assertEqual(status, 200)
+        self.assertIn("recent_events", dashboard)
+
+    def test_admin_token_required_for_control_plane_writes(self):
+        status, response = self.service.dispatch("POST", "/api/v1/principals", {"name": "blocked", "kind": "ai"}, None)
+        self.assertEqual(status, 401)
+        self.assertIn("X-Aegis-Admin", response["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

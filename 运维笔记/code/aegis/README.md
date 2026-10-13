@@ -1,0 +1,90 @@
+# Aegis：AI 堡垒机 MVP
+
+Aegis 是一个面向用户和 AI Agent 的操作入口。身份拿到的密钥只用于识别调用方，调用方能看到哪些服务器、能执行什么动作由显式授权决定；每个命令经过规则引擎后才进入执行适配器，违规动作立即停止并写入审计。
+
+当前版本使用 Python 标准库和 SQLite，包含：
+
+- 用户/AI 身份与 API Key：数据库只保存 scrypt 哈希，创建接口只返回一次明文密钥。
+- 服务器资产与访问授权：`access_grants` 以身份和服务器为联合主键，未授权服务器不可执行。
+- 可扩展规则：规则保存为 `id/name/pattern/reason/severity`，当前内置文件系统破坏、服务中断、远程脚本和 fork bomb 规则。
+- 审计与告警：允许、阻断、权限拒绝都会落库；命中阻断规则后通过配置的飞书、钉钉、企业微信 webhook 发送通知。
+- dry-run 执行适配器：MVP 不连接真实 SSH，返回“已通过规则评估”作为安全的联调边界。
+- 前端控制台：总览、策略事件、身份、资产和规则指标，视觉 token 参考 Aegis Figma 设计。
+
+## 运行
+
+```bash
+cd code/aegis
+cp .env.example .env
+python3 main.py
+```
+
+打开 <http://127.0.0.1:8080/>。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。
+管理接口（创建身份、服务器、授权和规则）必须带 `X-Aegis-Admin`，请把 `.env` 里的 `AEGIS_ADMIN_TOKEN` 换成随机值；示例中的 `change-this-in-a-secret-manager` 不能用于生产。
+
+容器方式：
+
+```bash
+docker compose up --build
+```
+
+## API 最小流程
+
+创建身份，密钥只在响应中显示一次：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/v1/principals \
+  -H 'X-Aegis-Admin: change-this-in-a-secret-manager' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"ops-agent","kind":"ai"}'
+```
+
+创建服务器和授权：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/v1/servers \
+  -H 'X-Aegis-Admin: change-this-in-a-secret-manager' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"prod-api-02","address":"10.20.1.12","environment":"production","tags":["api"]}'
+
+curl -sS -X POST http://127.0.0.1:8080/api/v1/access-grants \
+  -H 'X-Aegis-Admin: change-this-in-a-secret-manager' \
+  -H 'Content-Type: application/json' \
+  -d '{"principal_id":1,"server_id":3,"actions":["read"]}'
+```
+
+执行请求必须提供 `Authorization: Bearer <密钥>` 或 `X-Aegis-Key`：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/v1/execute \
+  -H 'Authorization: Bearer aegis_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"server_id":3,"command":"uname -a"}'
+```
+
+## 规则扩展设计
+
+MVP 用正则规则是为了让新增规则不需要改执行流程：新增一条规则记录即可。生产版建议把规则拆成以下稳定接口：
+
+```text
+Rule.evaluate(CommandContext) -> Allow | Deny | RequireApproval
+CommandContext = principal, server, action, command, labels, time, source_ip
+```
+
+规则按 `scope`（全局/身份/资产/标签）、`priority`、`enabled` 和 `version` 管理，组合出“拒绝优先”的确定性决策。规则实现可放在 `app/rules/`，内置 `RegexRule`、`PathRule`、`RateLimitRule`，后续再接 OPA/Rego；每次决策保存规则版本和输入摘要，保证审计可复盘。高风险写操作可以返回 `RequireApproval`，交给人工审批后再恢复同一个 execution id。
+
+## 生产边界
+
+- 需要接入真实 SSH/Kubernetes 时，新增受限的 executor adapter，并以 allowlist 命令、最小权限账号、连接超时和会话录屏为前置条件；不要把用户提交的 host、端口或私钥直接交给 shell。
+- API Key 适合 MVP。生产环境应接 OIDC/JWT、密钥轮换、撤销、短期 token 和 KMS/Secret Manager。
+- webhook 失败不阻断审计写入；需要告警可靠送达时增加消息队列、重试、签名校验和死信。
+- 当前 SQLite 适合单实例验证；多副本部署前切换 PostgreSQL，并将审计写入不可变存储。
+
+## 验证
+
+```bash
+PYTHONPATH=. python3 -m unittest discover -s tests -v
+python3 -m py_compile main.py app/*.py
+```
+
+当前测试为本地静态/单元验证，未连接真实服务器、SSH、飞书、钉钉、企业微信或生产数据库。

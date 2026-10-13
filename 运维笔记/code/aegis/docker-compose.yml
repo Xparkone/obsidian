@@ -1,0 +1,13 @@
+services:
+  aegis:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - aegis-data:/var/lib/aegis
+    restart: unless-stopped
+
+volumes:
+  aegis-data:

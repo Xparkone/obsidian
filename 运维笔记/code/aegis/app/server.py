@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import json
+import re
+import secrets
+import hmac
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from .config import Settings
+from .db import Database, utc_now
+from .notify import WebhookNotifier
+from .rules import RegexDenyRule
+from .security import hash_api_key, issue_api_key, verify_api_key
+
+
+class AegisService:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.db = Database(settings.db_path)
+        self.db.seed([r.__dict__ for r in __import__("app.rules", fromlist=["built_in_rules"]).built_in_rules()], settings.seed_demo)
+        self.notifier = WebhookNotifier({"feishu": settings.feishu_webhook, "dingtalk": settings.dingtalk_webhook, "wecom": settings.wecom_webhook})
+        self.counters = {"requests": 0, "commands": 0, "blocked": 0, "alerts": 0}
+
+    def principal_from_key(self, api_key: str | None) -> dict[str, Any] | None:
+        if not api_key:
+            return None
+        for principal in self.db.rows("SELECT * FROM principals WHERE status='active'"):
+            if verify_api_key(api_key, principal["key_hash"]):
+                return principal
+        return None
+
+    def visible_servers(self, principal_id: int | None = None) -> list[dict[str, Any]]:
+        if principal_id is None:
+            servers = self.db.rows("SELECT * FROM servers ORDER BY id")
+        else:
+            servers = self.db.rows("SELECT s.* FROM servers s JOIN access_grants g ON g.server_id=s.id WHERE g.principal_id=? ORDER BY s.id", (principal_id,))
+        for server in servers:
+            server["tags"] = json.loads(server.pop("tags_json", "[]"))
+        return servers
+
+    def evaluate(self, command: str) -> tuple[bool, str | None, str | None, str]:
+        for row in self.db.rows("SELECT * FROM rules WHERE enabled=1 ORDER BY id"):
+            if re.search(row["pattern"], command, flags=re.IGNORECASE):
+                return False, row["id"], row["reason"], row["severity"]
+        return True, None, None, "info"
+
+    def audit(self, principal_id: int | None, server_id: int | None, action: str, command: str | None, decision: str, rule_id: str | None = None, reason: str | None = None, metadata: dict[str, Any] | None = None) -> int:
+        return self.db.insert("INSERT INTO audit_events(principal_id,server_id,action,command,decision,rule_id,reason,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (principal_id, server_id, action, command, decision, rule_id, reason, json.dumps(metadata or {}), utc_now()))
+
+    def dashboard(self) -> dict[str, Any]:
+        counts = {k: self.db.row(sql)["count"] for k, sql in {
+            "principals": "SELECT count(*) AS count FROM principals",
+            "servers": "SELECT count(*) AS count FROM servers",
+            "rules": "SELECT count(*) AS count FROM rules WHERE enabled=1",
+            "audit_events": "SELECT count(*) AS count FROM audit_events",
+        }.items()}
+        blocked = self.db.row("SELECT count(*) AS count FROM audit_events WHERE decision='blocked'")["count"]
+        return {**counts, "blocked_commands": blocked, "recent_events": self.db.rows("SELECT a.*, p.name AS principal_name, s.name AS server_name FROM audit_events a LEFT JOIN principals p ON p.id=a.principal_id LEFT JOIN servers s ON s.id=a.server_id ORDER BY a.id DESC LIMIT 8")}
+
+    def dispatch(self, method: str, path: str, body: dict[str, Any], api_key: str | None, admin_key: str | None = None) -> tuple[int, dict[str, Any]]:
+        self.counters["requests"] += 1
+        route = urlparse(path).path
+        principal = self.principal_from_key(api_key)
+        is_admin = bool(admin_key and self.settings.admin_token and hmac.compare_digest(admin_key, self.settings.admin_token))
+        if route == "/healthz":
+            return 200, {"status": "ok"}
+        if route == "/readyz":
+            return 200, {"status": "ready", "db": str(self.settings.db_path)}
+        if route == "/api/v1/dashboard" and method == "GET":
+            return 200, self.dashboard()
+        if route == "/api/v1/servers" and method == "GET":
+            return 200, {"items": self.visible_servers(principal["id"] if principal else None)}
+        if route == "/api/v1/audit" and method == "GET":
+            return 200, {"items": self.db.rows("SELECT a.*, p.name AS principal_name, s.name AS server_name FROM audit_events a LEFT JOIN principals p ON p.id=a.principal_id LEFT JOIN servers s ON s.id=a.server_id ORDER BY a.id DESC LIMIT 100")}
+        if route == "/api/v1/rules" and method == "GET":
+            return 200, {"items": self.db.rows("SELECT id,name,pattern,reason,severity,enabled,created_at FROM rules ORDER BY id")}
+        if route == "/api/v1/principals" and method == "GET":
+            return 200, {"items": self.db.rows("SELECT id,name,kind,status,created_at FROM principals ORDER BY id")}
+        if route == "/api/v1/metrics" and method == "GET":
+            return 200, {"items": self.counters}
+        if route == "/api/v1/principals" and method == "POST":
+            if not is_admin:
+                return 401, {"error": "管理接口需要 X-Aegis-Admin"}
+            if not body.get("name") or body.get("kind") not in {"user", "ai"}:
+                return 400, {"error": "name 与 kind(user|ai) 必填"}
+            key = issue_api_key()
+            try:
+                principal_id = self.db.insert("INSERT INTO principals(name,kind,key_hash,created_at) VALUES(?,?,?,?)", (body["name"], body["kind"], hash_api_key(key), utc_now()))
+            except Exception:
+                return 409, {"error": "name 已存在"}
+            return 201, {"id": principal_id, "name": body["name"], "kind": body["kind"], "api_key": key, "warning": "密钥只在本次响应显示，请立即保存"}
+        if route == "/api/v1/servers" and method == "POST":
+            if not is_admin:
+                return 401, {"error": "管理接口需要 X-Aegis-Admin"}
+            if not body.get("name") or not body.get("address"):
+                return 400, {"error": "name 与 address 必填"}
+            try:
+                server_id = self.db.insert("INSERT INTO servers(name,address,environment,tags_json,created_at) VALUES(?,?,?,?,?)", (body["name"], body["address"], body.get("environment", "production"), json.dumps(body.get("tags", [])), utc_now()))
+            except Exception:
+                return 409, {"error": "name 已存在"}
+            return 201, {"id": server_id, "name": body["name"]}
+        if route == "/api/v1/access-grants" and method == "POST":
+            if not is_admin:
+                return 401, {"error": "管理接口需要 X-Aegis-Admin"}
+            if not body.get("principal_id") or not body.get("server_id"):
+                return 400, {"error": "principal_id 与 server_id 必填"}
+            self.db.insert("INSERT OR REPLACE INTO access_grants(principal_id,server_id,actions_json) VALUES(?,?,?)", (body["principal_id"], body["server_id"], json.dumps(body.get("actions", ["read"]))))
+            return 201, {"status": "granted"}
+        if route == "/api/v1/rules" and method == "POST":
+            if not is_admin:
+                return 401, {"error": "管理接口需要 X-Aegis-Admin"}
+            required = [body.get(k) for k in ("id", "name", "pattern", "reason")]
+            if not all(required):
+                return 400, {"error": "id/name/pattern/reason 必填"}
+            try:
+                re.compile(body["pattern"])
+            except re.error:
+                return 400, {"error": "pattern 不是有效正则"}
+            self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
+            return 201, {"id": body["id"]}
+        if route == "/api/v1/execute" and method == "POST":
+            self.counters["commands"] += 1
+            if not principal:
+                return 401, {"error": "需要在 Authorization 或 X-Aegis-Key 提供密钥"}
+            try:
+                server_id = int(body.get("server_id"))
+            except (ValueError, TypeError):
+                return 400, {"error": "server_id 必须是整数"}
+            server = self.db.row("SELECT * FROM servers WHERE id=?", (server_id,))
+            if not server:
+                return 404, {"error": "服务器不存在"}
+            grant = self.db.row("SELECT * FROM access_grants WHERE principal_id=? AND server_id=?", (principal["id"], server_id))
+            if not grant:
+                event_id = self.audit(principal["id"], server_id, "execute", body.get("command"), "blocked", reason="身份没有该服务器的访问权限")
+                self.counters["blocked"] += 1
+                return 403, {"error": "身份没有该服务器的访问权限", "audit_id": event_id}
+            command = str(body.get("command", "")).strip()
+            if not command or len(command) > 4096:
+                return 400, {"error": "command 必填且长度不能超过 4096"}
+            allowed, rule_id, reason, severity = self.evaluate(command)
+            if not allowed:
+                event_id = self.audit(principal["id"], server_id, "execute", command, "blocked", rule_id, reason, {"severity": severity})
+                self.counters["blocked"] += 1
+                results = self.notifier.send("Aegis 规则阻断", f"身份={principal['name']} 服务器={server['name']} 规则={rule_id} 命令={command[:200]}")
+                self.counters["alerts"] += sum(1 for r in results if r.delivered)
+                return 403, {"error": "命令被规则阻断", "rule_id": rule_id, "reason": reason, "audit_id": event_id}
+            event_id = self.audit(principal["id"], server_id, "execute", command, "allowed", metadata={"mode": "dry-run"})
+            return 200, {"status": "accepted", "mode": "dry-run", "server": server["name"], "command": command, "audit_id": event_id, "message": "已通过规则评估，当前 MVP 不连接真实 SSH"}
+        return 404, {"error": "未找到接口"}
+
+
+def create_handler(service: AegisService, static_dir: Path):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "Aegis/0.1"
+
+        def _json(self, status: int, payload: dict[str, Any]) -> None:
+            encoded = json.dumps(payload, ensure_ascii=False).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _text(self, status: int, content: str, content_type: str = "text/plain; version=0.0.4") -> None:
+            encoded = content.encode()
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def _body(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length > 1_000_000:
+                raise ValueError("请求体过大")
+            raw = self.rfile.read(length) if length else b"{}"
+            return json.loads(raw.decode() or "{}")
+
+        def _key(self) -> str | None:
+            return self.headers.get("X-Aegis-Key") or self.headers.get("Authorization", "").removeprefix("Bearer ").strip() or None
+
+        def _admin(self) -> str | None:
+            return self.headers.get("X-Aegis-Admin")
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Aegis-Key")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.end_headers()
+
+        def do_GET(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path
+            if path == "/" or path == "/index.html":
+                data = (static_dir / "index.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path.startswith("/static/"):
+                file = static_dir / path.removeprefix("/static/")
+                if file.is_file() and static_dir in file.resolve().parents:
+                    data = file.read_bytes()
+                    content_type = "text/css" if file.suffix == ".css" else "application/javascript"
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+            if path == "/metrics":
+                lines = [
+                    "# HELP aegis_requests_total HTTP requests received by Aegis.",
+                    "# TYPE aegis_requests_total counter",
+                    f"aegis_requests_total {service.counters['requests']}",
+                    "# HELP aegis_commands_total Command execution requests.",
+                    "# TYPE aegis_commands_total counter",
+                    f"aegis_commands_total {service.counters['commands']}",
+                    "# HELP aegis_blocked_commands_total Commands stopped by scope or policy.",
+                    "# TYPE aegis_blocked_commands_total counter",
+                    f"aegis_blocked_commands_total {service.counters['blocked']}",
+                    "# HELP aegis_alerts_delivered_total Delivered webhook alerts.",
+                    "# TYPE aegis_alerts_delivered_total counter",
+                    f"aegis_alerts_delivered_total {service.counters['alerts']}",
+                ]
+                self._text(200, "\n".join(lines) + "\n")
+                return
+            status, payload = service.dispatch("GET", self.path, {}, self._key(), self._admin())
+            self._json(status, payload)
+
+        def do_POST(self) -> None:  # noqa: N802
+            try:
+                body = self._body()
+                status, payload = service.dispatch("POST", self.path, body, self._key(), self._admin())
+            except (ValueError, json.JSONDecodeError) as exc:
+                status, payload = 400, {"error": str(exc)}
+            self._json(status, payload)
+
+        def log_message(self, fmt: str, *args: Any) -> None:
+            return
+
+    return Handler
+
+
+def serve(settings: Settings) -> None:
+    service = AegisService(settings)
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    httpd = ThreadingHTTPServer((settings.host, settings.port), create_handler(service, static_dir))
+    print(f"Aegis listening on http://{settings.host}:{settings.port}", flush=True)
+    httpd.serve_forever()
