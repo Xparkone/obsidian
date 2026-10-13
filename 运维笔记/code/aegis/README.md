@@ -136,6 +136,8 @@ SSH 模式要求目标主机已经存在于 known_hosts，使用 `BatchMode=yes`
 
 MVP 用正则规则是为了让新增规则不需要改执行流程：新增一条规则记录即可。生产版建议把规则拆成以下稳定接口：
 
+当前新增规则的 `pattern` 使用大小写不敏感正则，并限制为最多 512 个字符；系统会拒绝反向引用、高级回溯构造以及明显可能导致灾难性回溯的重复结构。启用规则最多 256 条。规则配置加载失败时执行路径会失败关闭，`/readyz` 返回 503，避免把无效策略当成“没有命中规则”。
+
 ```text
 Rule.evaluate(CommandContext) -> Allow | Deny | RequireApproval
 CommandContext = principal, server, action, command, labels, time, source_ip

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -19,6 +19,7 @@ class RegexValidationError(ValueError):
 
 @dataclass
 class _GroupState:
+    has_quantifier: bool = False
     has_unbounded_quantifier: bool = False
     has_branch: bool = False
 
@@ -30,11 +31,12 @@ def _has_dangerous_quantifier(pattern: str) -> bool:
     on ``sre_parse`` (a deprecated private parser).  It understands escapes,
     character classes and nested groups well enough to reject the classic
     ``(a+)+``/``([a-z]*){2,}`` and ``(a|aa)+`` ReDoS shapes while keeping
-    ordinary shell rules such as ``[^\n|;&]*`` valid.  Bounded outer repeats
+    ordinary shell rules such as ``[^\\n|;&]*`` valid.  Bounded outer repeats
     and optional groups are allowed because they cannot grow the backtracking
-    tree without bound (for example the built-in ``(-[rf]+\s+)?`` rule).
+    tree without bound (for example the built-in ``(-[rf]+\\s+)?`` rule).
     """
     groups: list[_GroupState] = []
+    closed_group_has_quantifier = False
     closed_group_has_unbounded_quantifier = False
     closed_group_has_branch = False
     in_class = False
@@ -47,26 +49,47 @@ def _has_dangerous_quantifier(pattern: str) -> bool:
             index += 1
             continue
         if char == "\\":
+            closed_group_has_quantifier = False
+            closed_group_has_unbounded_quantifier = False
+            closed_group_has_branch = False
             escaped = True
             index += 1
             continue
         if in_class:
             if char == "]":
                 in_class = False
+                closed_group_has_quantifier = False
+                closed_group_has_unbounded_quantifier = False
+                closed_group_has_branch = False
             index += 1
             continue
         if char == "[":
+            closed_group_has_quantifier = False
+            closed_group_has_unbounded_quantifier = False
+            closed_group_has_branch = False
             in_class = True
             index += 1
             continue
         if char == "(":
+            closed_group_has_quantifier = False
+            closed_group_has_unbounded_quantifier = False
+            closed_group_has_branch = False
             groups.append(_GroupState())
+            # ``(?:`` is the only non-capturing group form accepted by the
+            # API.  Skip its ``?`` marker so it is not mistaken for a
+            # quantifier belonging to the group body.
+            if pattern.startswith("?:", index + 1):
+                index += 3
+                continue
             index += 1
             continue
         if char == ")" and groups:
             state = groups.pop()
+            closed_group_has_quantifier = state.has_quantifier
             closed_group_has_unbounded_quantifier = state.has_unbounded_quantifier
             closed_group_has_branch = state.has_branch
+            if groups and state.has_quantifier:
+                groups[-1].has_quantifier = True
             if groups and state.has_unbounded_quantifier:
                 # The parent now contains a quantified sub-expression.  If a
                 # quantifier follows the parent's closing ``)``, the pair is
@@ -77,6 +100,9 @@ def _has_dangerous_quantifier(pattern: str) -> bool:
             index += 1
             continue
         if char == "|" and groups:
+            closed_group_has_quantifier = False
+            closed_group_has_unbounded_quantifier = False
+            closed_group_has_branch = False
             groups[-1].has_branch = True
             index += 1
             continue
@@ -93,17 +119,20 @@ def _has_dangerous_quantifier(pattern: str) -> bool:
                     bound = pattern[index : pattern.index("}", index) + 1]
                     unbounded = bound.endswith(",}")
                     index = pattern.index("}", index)
-                if (closed_group_has_unbounded_quantifier or closed_group_has_branch) and unbounded:
+                if (closed_group_has_quantifier or closed_group_has_branch) and unbounded:
                     return True
                 if groups:
+                    groups[-1].has_quantifier = True
                     groups[-1].has_unbounded_quantifier |= unbounded
                 closed_group_has_unbounded_quantifier = False
+                closed_group_has_quantifier = False
                 closed_group_has_branch = False
             index += 1
             continue
         # Any ordinary token means a following quantifier applies to this
         # token, not to the group closed earlier.
         closed_group_has_unbounded_quantifier = False
+        closed_group_has_quantifier = False
         closed_group_has_branch = False
         index += 1
     return False
@@ -120,6 +149,8 @@ def compile_rule_pattern(pattern: str) -> re.Pattern[str]:
     # legacy data follows the same safety policy as newly created rules.
     if re.search(r"\\(?:[1-9][0-9]*|g<[^>]+>|k<[^>]+>)", pattern):
         raise RegexValidationError("pattern 不支持反向引用")
+    if re.search(r"\(\?(?!:)", pattern):
+        raise RegexValidationError("pattern 不支持高级回溯构造")
     try:
         compiled = re.compile(pattern, flags=re.IGNORECASE)
     except (re.error, TypeError) as exc:
@@ -151,9 +182,13 @@ class RegexDenyRule:
     pattern: str
     reason: str
     severity: str = "critical"
+    _compiled: re.Pattern[str] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_compiled", compile_rule_pattern(self.pattern))
 
     def evaluate(self, command: str, context: dict[str, Any]) -> RuleDecision:
-        if re.search(self.pattern, command, flags=re.IGNORECASE):
+        if self._compiled.search(command):
             return RuleDecision(False, self.id, self.reason, self.severity)
         return RuleDecision(True)
 

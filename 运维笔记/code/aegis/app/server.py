@@ -118,6 +118,8 @@ class AegisService:
         if route == "/healthz":
             return 200, {"status": "ok"}
         if route == "/readyz":
+            if self._rules_error:
+                return 503, {"status": "not_ready", "reason": "规则配置不可用"}
             return 200, {"status": "ready", "db": str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "executor_mode": self.settings.executor_mode}
         if route == "/api/v1/dashboard" and method == "GET":
             return 200, self.dashboard(principal, is_admin)

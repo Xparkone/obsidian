@@ -8,7 +8,7 @@ from pathlib import Path
 from app.config import Settings, load_settings
 from app.db import Database
 from app.executor import SSHExecutor
-from app.rules import MAX_RULE_PATTERN_LENGTH, built_in_rules, compile_rule_pattern
+from app.rules import MAX_ENABLED_RULES, MAX_RULE_PATTERN_LENGTH, built_in_rules, compile_rule_pattern
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
 
@@ -277,7 +277,27 @@ class AegisCoreTest(unittest.TestCase):
         status, response = self.service.dispatch(
             "POST",
             "/api/v1/rules",
-            {"id": "backref", "name": "反向引用", "pattern": r"(a)\\1", "reason": "测试"},
+            {"id": "optional-loop", "name": "可空重复", "pattern": r"(a?)*b", "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("重复结构", response["error"])
+
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "ambiguous", "name": "歧义正则", "pattern": r"(a|aa)+$", "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("重复结构", response["error"])
+
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "backref", "name": "反向引用", "pattern": r"(a)\1", "reason": "测试"},
             None,
             "test-admin",
         )
@@ -295,6 +315,25 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn(str(MAX_RULE_PATTERN_LENGTH), response["error"])
 
+    def test_new_rule_rejects_excessive_enabled_rule_count(self):
+        with self.service.db.connect() as connection:
+            connection.executemany(
+                "INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)",
+                [
+                    (f"limit-{index}", "数量上限", "safe", "测试", "critical", "now")
+                    for index in range(MAX_ENABLED_RULES)
+                ],
+            )
+        status, response = self.service.dispatch(
+            "POST",
+            "/api/v1/rules",
+            {"id": "over-limit", "name": "超出上限", "pattern": "safe", "reason": "测试"},
+            None,
+            "test-admin",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn(str(MAX_ENABLED_RULES), response["error"])
+
     def test_built_in_rules_pass_regex_safety_validation(self):
         for rule in built_in_rules():
             compile_rule_pattern(rule.pattern)
@@ -310,6 +349,9 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(rule_id, "__rules_invalid__")
         self.assertIn("legacy-redos", reason)
         self.assertEqual(severity, "critical")
+        status, response = self.service.dispatch("GET", "/readyz", {}, None)
+        self.assertEqual(status, 503)
+        self.assertEqual(response["status"], "not_ready")
 
 
 if __name__ == "__main__":
