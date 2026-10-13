@@ -80,6 +80,19 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at DESC);
                 """
             )
+            self._ensure_columns(c, "servers", {
+                "username": "TEXT NOT NULL DEFAULT ''",
+                "port": "INTEGER NOT NULL DEFAULT 22",
+                "known_hosts_path": "TEXT NOT NULL DEFAULT ''",
+                "credential_ref": "TEXT NOT NULL DEFAULT ''",
+            })
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def insert(self, sql: str, args: tuple[Any, ...] = ()) -> int:
         with self.connect() as c:
@@ -101,5 +114,5 @@ class Database:
                 (rule["id"], rule["name"], rule["pattern"], rule["reason"], rule.get("severity", "critical"), utc_now()),
             )
         if seed_demo and not self.row("SELECT id FROM servers LIMIT 1"):
-            self.insert("INSERT INTO servers(name,address,environment,tags_json,created_at) VALUES(?,?,?,?,?)", ("prod-api-01", "10.20.1.10", "production", json.dumps(["api", "critical"]), utc_now()))
-            self.insert("INSERT INTO servers(name,address,environment,tags_json,created_at) VALUES(?,?,?,?,?)", ("staging-worker-01", "10.20.2.11", "staging", json.dumps(["worker"]), utc_now()))
+            self.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,created_at) VALUES(?,?,?,?,?,?,?)", ("prod-api-01", "10.20.1.10", "production", json.dumps(["api", "critical"]), "ops", 22, utc_now()))
+            self.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,created_at) VALUES(?,?,?,?,?,?,?)", ("staging-worker-01", "10.20.2.11", "staging", json.dumps(["worker"]), "ops", 22, utc_now()))

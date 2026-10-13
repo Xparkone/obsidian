@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from app.config import Settings
+from app.executor import SSHExecutor
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
 
@@ -12,7 +13,7 @@ class AegisCoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        settings = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin")
+        settings = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin", "dry-run", 1.0)
         self.service = AegisService(settings)
 
     def tearDown(self):
@@ -31,7 +32,7 @@ class AegisCoreTest(unittest.TestCase):
         key = created["api_key"]
         status, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "test", "address": "10.0.0.1"}, None, "test-admin")
         self.assertEqual(status, 201)
-        self.service.dispatch("POST", "/api/v1/access-grants", {"principal_id": created["id"], "server_id": server["id"], "actions": ["read"]}, None, "test-admin")
+        self.service.dispatch("POST", "/api/v1/access-grants", {"principal_id": created["id"], "server_id": server["id"], "actions": ["execute"]}, None, "test-admin")
         status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "rm -rf /"}, key)
         self.assertEqual(status, 403)
         self.assertEqual(response["rule_id"], "dangerous-filesystem")
@@ -54,6 +55,28 @@ class AegisCoreTest(unittest.TestCase):
         status, response = self.service.dispatch("GET", "/api/v1/servers", {}, None)
         self.assertEqual(status, 401)
         self.assertIn("身份密钥", response["error"])
+
+    def test_server_registration_keeps_connection_fields_private(self):
+        status, created = self.service.dispatch("POST", "/api/v1/servers", {"name": "ssh-host", "address": "node.example", "username": "ops", "port": 2201, "known_hosts_path": "/tmp/known_hosts", "credential_ref": "secret://node"}, None, "test-admin")
+        self.assertEqual(status, 201)
+        status, response = self.service.dispatch("GET", "/api/v1/servers", {}, None, "test-admin")
+        self.assertEqual(status, 200)
+        server = next(item for item in response["items"] if item["id"] == created["id"])
+        self.assertEqual(server["port"], 2201)
+        self.assertNotIn("credential_ref", server)
+        self.assertNotIn("known_hosts_path", server)
+
+    def test_read_only_grant_cannot_execute(self):
+        _, principal = self.service.dispatch("POST", "/api/v1/principals", {"name": "read-only", "kind": "user"}, None, "test-admin")
+        _, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "read-only-host", "address": "10.0.0.8"}, None, "test-admin")
+        self.service.dispatch("POST", "/api/v1/access-grants", {"principal_id": principal["id"], "server_id": server["id"], "actions": ["read"]}, None, "test-admin")
+        status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "ls"}, principal["api_key"])
+        self.assertEqual(status, 403)
+        self.assertIn("不允许执行", response["error"])
+
+    def test_ssh_executor_fails_closed_without_asset_identity(self):
+        result = SSHExecutor(0.1).execute({"name": "missing"}, "id")
+        self.assertEqual(result.status, "failed")
 
     def test_admin_token_required_for_control_plane_writes(self):
         status, response = self.service.dispatch("POST", "/api/v1/principals", {"name": "blocked", "kind": "ai"}, None)

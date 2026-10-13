@@ -73,4 +73,4 @@ class Rule:
 - `/metrics`：Prometheus 文本格式，包含请求、命令、阻断和告警投递计数。
 - `/api/v1/dashboard`：前端用的资产、身份、规则、审计和阻断汇总。
 
-当前 dry-run executor 没有连接真实服务器，不能把 `accepted` 当成真实命令已执行；接入 SSH/Kubernetes 时必须新增独立 adapter，并在 adapter 层再次实施超时、命令 allowlist、凭据隔离和会话审计。
+默认 dry-run executor 不连接真实服务器，不能把 `accepted` 当成真实命令已执行；设置 `AEGIS_EXECUTOR_MODE=ssh` 后会使用 `SSHExecutor`，仍要求资产中登记用户、端口和 known_hosts。接入 Kubernetes Exec、云厂商 Session Manager 或交互式会话时必须新增独立 adapter，并在 adapter 层再次实施超时、命令 allowlist、凭据隔离和会话审计。

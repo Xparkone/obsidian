@@ -16,6 +16,8 @@ class Settings:
     dingtalk_webhook: str | None
     wecom_webhook: str | None
     admin_token: str
+    executor_mode: str
+    ssh_timeout: float
 
 
 def load_settings() -> Settings:
@@ -31,4 +33,6 @@ def load_settings() -> Settings:
         dingtalk_webhook=os.getenv("AEGIS_DINGTALK_WEBHOOK") or None,
         wecom_webhook=os.getenv("AEGIS_WECOM_WEBHOOK") or None,
         admin_token=os.getenv("AEGIS_ADMIN_TOKEN", ""),
+        executor_mode=os.getenv("AEGIS_EXECUTOR_MODE", "dry-run").lower(),
+        ssh_timeout=float(os.getenv("AEGIS_SSH_TIMEOUT", "15")),
     )

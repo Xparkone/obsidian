@@ -1,6 +1,6 @@
 # Aegis：AI 堡垒机 MVP
 
-Aegis 是一个面向用户和 AI Agent 的操作入口。身份拿到的密钥只用于识别调用方，调用方能看到哪些服务器、能执行什么动作由显式授权决定；每个命令经过规则引擎后才进入执行适配器，违规动作立即停止并写入审计。
+Aegis 是一个面向用户和 AI Agent 的操作入口。身份拿到的密钥只用于识别调用方，调用方能看到哪些服务器、能执行什么动作由显式授权决定；每个命令经过规则引擎后才进入执行适配器，违规动作立即停止并写入审计。它必须通过 Aegis HTTP 服务访问，不能直接双击 `index.html` 当成完整服务使用。
 
 当前版本使用 Python 标准库和 SQLite，包含：
 
@@ -8,7 +8,7 @@ Aegis 是一个面向用户和 AI Agent 的操作入口。身份拿到的密钥�
 - 服务器资产与访问授权：`access_grants` 以身份和服务器为联合主键，未授权服务器不可执行。
 - 可扩展规则：规则保存为 `id/name/pattern/reason/severity`，当前内置文件系统破坏、服务中断、远程脚本和 fork bomb 规则。
 - 审计与告警：允许、阻断、权限拒绝都会落库；命中阻断规则后通过配置的飞书、钉钉、企业微信 webhook 发送通知。
-- dry-run 执行适配器：MVP 不连接真实 SSH，返回“已通过规则评估”作为安全的联调边界。
+- 执行适配器：默认 `dry-run`，也支持将 `AEGIS_EXECUTOR_MODE=ssh` 切换到受控 SSH 客户端；两种模式都复用同一条身份、权限、规则和审计路径。
 - 前端控制台：总览、策略事件、身份、资产和规则指标，视觉 token 参考 Aegis Figma 设计。
 
 ## 运行
@@ -19,9 +19,9 @@ cp .env.example .env
 python3 main.py
 ```
 
-打开 <http://127.0.0.1:8080/>。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。
+打开 <http://127.0.0.1:8080/>。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。不要使用 `file://.../static/index.html` 打开，因为浏览器不会把它当成 Aegis 服务，也无法请求 `/api/v1/*`。
 管理接口（创建身份、服务器、授权和规则）必须带 `X-Aegis-Admin`；未配置 `AEGIS_ADMIN_TOKEN` 时管理写接口默认拒绝，请把 `.env` 里的示例值换成随机值并放入 Secret Manager。
-前端右上角的“身份密钥”只保存在浏览器 `localStorage`，保存后会用 `X-Aegis-Key` 请求该身份有权看到的服务器；未提供身份密钥时不会返回服务器资产详情。
+前端右上角可以分别保存管理员令牌和身份密钥。它们只保存在当前浏览器 `localStorage`，保存后会用 `X-Aegis-Admin` / `X-Aegis-Key` 请求对应接口；未提供身份密钥时不会返回服务器资产详情。
 
 容器方式：
 
@@ -62,6 +62,14 @@ curl -sS -X POST http://127.0.0.1:8080/api/v1/execute \
   -H 'Content-Type: application/json' \
   -d '{"server_id":3,"command":"uname -a"}'
 ```
+
+启用 SSH 执行前，在资产登记时填写 `username`、`port` 和受信任的 `known_hosts_path`，然后设置：
+
+```bash
+AEGIS_EXECUTOR_MODE=ssh
+```
+
+SSH 模式要求目标主机已经存在于 known_hosts，使用 `BatchMode=yes`，不会让服务端等待密码输入。凭据引用字段只保存 Secret Manager 的引用，不保存私钥内容；当前仓库不提供真实凭据。
 
 ## 规则扩展设计
 
