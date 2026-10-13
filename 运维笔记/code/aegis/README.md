@@ -63,6 +63,67 @@ curl -sS -X POST http://127.0.0.1:8080/api/v1/execute \
   -d '{"server_id":3,"command":"uname -a"}'
 ```
 
+## AI Agent 接入
+
+AI 接入只需要它自己的身份密钥，不需要管理员令牌，也不需要 SSH 私钥。管理员先创建 AI 身份：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/v1/principals \
+  -H "X-Aegis-Admin: $AEGIS_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"ops-agent","kind":"ai"}'
+```
+
+把响应中的 `api_key` 只交给这个 AI，并用管理员令牌授权它访问指定服务器：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/api/v1/access-grants \
+  -H "X-Aegis-Admin: $AEGIS_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"principal_id":1,"server_id":1,"actions":["read","execute"]}'
+```
+
+AI 侧只调用两个接口：先 `GET /api/v1/servers` 获取它有权看到的资产，再 `POST /api/v1/execute` 提交命令。每次请求都带 `X-Aegis-Key: aegis_...`。如果返回 403，AI 应把规则或权限阻断作为最终结果记录下来，不能改写命令绕过策略后循环重试。
+
+仓库提供了不依赖第三方包的客户端示例：[examples/ai_agent.py](examples/ai_agent.py)：
+
+```bash
+export AEGIS_AGENT_KEY='aegis_...'
+export AEGIS_URL='http://127.0.0.1:8080'
+python3 examples/ai_agent.py
+```
+
+接入 LangChain、OpenAI function calling 或其他 Agent 框架时，把 `visible_servers()` 和 `execute(server_id, command)` 包装成工具即可。模型只生成工具参数，Aegis 仍是唯一的执行入口；不要把管理员令牌、SSH 私钥或其他服务器凭据放进模型上下文。
+
+### 接入 Codex 类软件：MCP
+
+如果 Agent Host 支持 MCP，直接启动仓库里的 stdio MCP 适配器：
+
+```bash
+export AEGIS_URL='http://127.0.0.1:8080'
+export AEGIS_AGENT_KEY='aegis_...'
+python3 integrations/aegis_mcp_server.py
+```
+
+在支持 MCP 的客户端配置中加入同等内容（不同软件的配置文件名称可能不同）：
+
+```json
+{
+  "mcpServers": {
+    "aegis": {
+      "command": "python3",
+      "args": ["/Users/lijiaxuan/Documents/hermes/运维笔记/code/aegis/integrations/aegis_mcp_server.py"],
+      "env": {
+        "AEGIS_URL": "http://127.0.0.1:8080",
+        "AEGIS_AGENT_KEY": "aegis_..."
+      }
+    }
+  }
+}
+```
+
+客户端启动后会发现三个工具：`aegis_list_servers`、`aegis_execute`、`aegis_get_audit`。Agent 只能通过这些工具操作，不能获得 Aegis 管理员令牌或底层 SSH 凭据。若目标软件不支持 MCP，则使用前面的 HTTP API 客户端方式；不要把 Aegis 直接包装成无权限限制的本地 shell 工具。
+
 启用 SSH 执行前，在资产登记时填写 `username`、`port` 和受信任的 `known_hosts_path`，然后设置：
 
 ```bash
