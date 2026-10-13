@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import secrets
 import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,8 +11,9 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import Settings
 from .db import Database, utc_now
+from .executor import DryRunExecutor
 from .notify import WebhookNotifier
-from .rules import RegexDenyRule
+from .rules import built_in_rules
 from .security import hash_api_key, issue_api_key, verify_api_key
 
 
@@ -21,8 +21,9 @@ class AegisService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.db = Database(settings.db_path)
-        self.db.seed([r.__dict__ for r in __import__("app.rules", fromlist=["built_in_rules"]).built_in_rules()], settings.seed_demo)
+        self.db.seed([r.__dict__ for r in built_in_rules()], settings.seed_demo)
         self.notifier = WebhookNotifier({"feishu": settings.feishu_webhook, "dingtalk": settings.dingtalk_webhook, "wecom": settings.wecom_webhook})
+        self.executor = DryRunExecutor()
         self.counters = {"requests": 0, "commands": 0, "blocked": 0, "alerts": 0}
 
     def principal_from_key(self, api_key: str | None) -> dict[str, Any] | None:
@@ -151,7 +152,8 @@ class AegisService:
                 self.counters["alerts"] += sum(1 for r in results if r.delivered)
                 return 403, {"error": "命令被规则阻断", "rule_id": rule_id, "reason": reason, "audit_id": event_id}
             event_id = self.audit(principal["id"], server_id, "execute", command, "allowed", metadata={"mode": "dry-run"})
-            return 200, {"status": "accepted", "mode": "dry-run", "server": server["name"], "command": command, "audit_id": event_id, "message": "已通过规则评估，当前 MVP 不连接真实 SSH"}
+            result = self.executor.execute(server, command)
+            return 200, {"status": result.status, "mode": result.mode, "server": server["name"], "command": command, "audit_id": event_id, "message": "已通过规则评估，当前 MVP 不连接真实 SSH", "output": result.output}
         return 404, {"error": "未找到接口"}
 
 

@@ -30,5 +30,5 @@ def load_settings() -> Settings:
         feishu_webhook=os.getenv("AEGIS_FEISHU_WEBHOOK") or None,
         dingtalk_webhook=os.getenv("AEGIS_DINGTALK_WEBHOOK") or None,
         wecom_webhook=os.getenv("AEGIS_WECOM_WEBHOOK") or None,
-        admin_token=os.getenv("AEGIS_ADMIN_TOKEN", "dev-admin-token"),
+        admin_token=os.getenv("AEGIS_ADMIN_TOKEN", ""),
     )

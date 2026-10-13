@@ -64,6 +64,8 @@ class Rule:
 
 `docker-compose.yml` 只运行一个 Aegis 容器，SQLite 数据写入 named volume。单实例验证完成后再替换为 PostgreSQL，并把审计事件复制到不可变对象存储；多副本模式需要共享数据库和分布式任务队列，不能直接把 SQLite volume 挂到多个副本。
 
+执行器通过 `app/executor.py` 的 `Executor` 接口隔离。当前 `DryRunExecutor` 只返回计划执行内容；真实 SSH、Kubernetes Exec 或云厂商 Session Manager 都应实现新的 adapter，并继续复用身份、范围、规则和审计路径。
+
 ## 指标
 
 - `/healthz`：进程存活。
