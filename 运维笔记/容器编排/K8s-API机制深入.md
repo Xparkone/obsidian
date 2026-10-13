@@ -365,7 +365,7 @@ client（每个控制器/每个 informer）              kube-apiserver
 |---------|------|---------|------|
 | 不设 rv、不设 limit | **Most Recent（强一致）** | 直接找 etcd 做 quorum 读 | ❗ 最贵：全量对象反序列化 + etcd 压力，大集群高危操作 |
 | `resourceVersion=0` | **Any（不旧于任意点）** | 多数命中 apiserver 的 watch cache | 便宜；可能略旧（几百 ms～秒级） |
-| `resourceVersion=<v>` + `resourceVersionMatch=Exact` | 精确快照 | cache 没有则查 etcd | 快照过期 → 404/410 |
+| `resourceVersion=<v>` + `resourceVersionMatch=Exact` | 精确快照 | cache 没有则查 etcd | 该版本点已不可用 → 410 Gone |
 | `resourceVersion=<v>` + `resourceVersionMatch=NotOlderThan` | 不旧于 v | cache 优先 | 官方推荐的一致性/性能折中 |
 | `limit=500`（+continue token） | 分页拉取 | 切片返回 | 控制单次内存尖峰；**v1.29 起 GA**（原分页门控已移除） |
 
@@ -599,7 +599,7 @@ DELETE 请求
 
 | 症状 | 幕后 | 正确处置 |
 |------|------|---------|
-| Namespace 永远 Terminating | ns 内某资源 finalizer 未清 / metrics 风格的 APIService 故障拖住发现 | 先找卡住的资源：`kubectl api-resources --verbs=list --namespaced -o name \| xargs -n1 kubectl get -n <ns> --ignore-not-found`，修根因；万不得已 `kubectl replace --raw /api/v1/namespaces/<ns>/finalize` 清空（下述警告） |
+| Namespace 永远 Terminating | ns 内某资源 finalizer 未清 / metrics 风格的 APIService 故障拖住发现 | 先找卡住的资源：`kubectl api-resources --verbs=list --namespaced -o name \| xargs -n1 kubectl get -n <ns> --ignore-not-found`，修根因；万不得已才 `kubectl get ns <ns> -o json \| jq 'del(.spec.finalizers)' > ns.json && kubectl replace --raw /api/v1/namespaces/<ns>/finalize -f ./ns.json`（务必先读下面的警告） |
 | PV/PVC 卡在删除 | `kubernetes.io/pv-protection` 由 StorageObjectInUseProtection 自动挂的 | 先删使用它的 Pod；没人用了自会释放 |
 | 云厂商 LB/PVC 的 Service 删不掉 | cloud-controller 的 finalizer，外部资源释放失败 | 去云控制台/凭据查失败原因，修 IAM/配额 |
 | CRD 已卸载，CR 残留 Terminating | 没人来摘 finalizer | 修 CRD 或手动 remove（接受外部资源泄漏） |
@@ -643,16 +643,19 @@ PriorityLevelConfiguration（泳道）：
 
 **默认泳道**（`kubectl get prioritylevelconfigurations` 可见）：
 
-| 优先级 | 服务谁 | nominal shares(默认参考) |
-|--------|--------|--------------------------|
-| `exempt`（mandatory） | `system:masters` 的请求（永不排队） | 无限制 |
-| `node-high` | kubelet 心跳/状态更新 | 400 |
-| `system` | `system:nodes` 非心跳请求 | 30 |
-| `leader-election` | controller-manager/scheduler 的 Lease 续租 | 10 |
-| `workload-high` | 内建控制器业务请求 | 40 |
-| `workload-low` | 其他 ServiceAccount（含你跑在 Pod 里的控制器） | 90 |
-| `global-default` | 其余流量（如普通 kubectl） | 建议级别，~20 |
-| `catch-all`（mandatory） | 兜底 | 极小，不排队 |
+| 优先级 | 服务谁 | nominal shares（bootstrap 源码默认） | limitResponse |
+|--------|--------|--------------------------|---------|
+| `exempt`（mandatory） | `system:masters` 的请求（永不排队） | 不属于有限流体系 | 直通 |
+| node-high | kubelet 心跳/状态更新 | 40 | Queue（可借出 25%） |
+| system | `system:nodes` 非心跳请求 | 30 | Queue（可借出 33%） |
+| leader-election | KCM/scheduler 的 Lease 续租 | 10 | Queue（不外借） |
+| workload-high | 内建控制器与 kube-system SA | 40 | Queue（可借出 50%） |
+| workload-low | 其他 ServiceAccount（含你的 Pod 内控制器） | 100 | Queue（可借出 90%） |
+| global-default | 其余流量（如普通 kubectl） | 20 | Queue（可借出 50%） |
+| `catch-all`（mandatory） | 兜底（只有所有 FlowSchema 都没命中才走到） | 5 | **Reject 直接拒** |
+
+> 另有专用 FlowSchema `probes`：GET `/healthz` `/readyz` `/livez` 的请求直接进 `exempt`——健康检查不会被限流掐死。
+> LendablePercent 的概念：把本泳道名义并发的一定比例共享给紧张的泳道借用（**v1.26+** 周期调整）。
 
 - mandatory 对象不可改；suggested 对象可被 apiserver **每分钟**重新校准——要固定自定义，
   需打注解 `apf.kubernetes.io/autoupdate-spec: "false"`，否则你的改动会被刷回去
@@ -778,3 +781,498 @@ kubectl describe apiservice v1beta1.metrics.k8s.io
 生产建议：给 APIService 的 Available 配告警（`kube_apiservice_status_condition` 或自探），
 metrics.k8s.io 挂的是 HPA 心脏，不只是 `kubectl top` 不好用。
 
+
+---
+
+## 七、直接操作 Raw API：摘掉 kubectl 的「滤镜」
+
+kubectl 做的所有事都是 HTTP。想当控制器的角色，就得能像控制器一样说话。
+
+### 7.1 三条直连路径
+
+```bash
+# ── ① kubectl --raw：带着 kubectl 的认证，手势最轻 ──
+kubectl get --raw /version
+kubectl get --raw /api/v1/namespaces/default/pods --limit=2
+kubectl get --raw '/apis/metrics.k8s.io/v1beta1/nodes' | jq .
+kubectl get --raw '/readyz?verbose'                       # 组件级健康细节
+
+# ── ② kubectl proxy：本地起一个免证书代理（默认 8001）──
+kubectl proxy --port=8001 &
+curl http://127.0.0.1:8001/api/v1/namespaces/default/configmaps
+# 适用：临时脚本/学习；生产自动化别用它（多一层单点、token 不会自动轮换）
+
+# ── ③ curl + 双向 TLS：最贴近组件的原始姿势 ──
+# （从 kubeconfig 提取证书/上下文，全命令见实验 1.1）
+curl --cacert ca.crt --cert client.crt --key client.key $SERVER/api/v1/namespaces/default/configmaps
+
+# ③' SA token 版本（演示 Pod 内客户端同一个姿势）：
+TOKEN=$(kubectl create token default -n default)
+curl --cacert ca.crt -H "Authorization: Bearer $TOKEN" $SERVER/api/v1/namespaces/default/secrets
+#   default SA 无 list secrets 权限 → 403 Forbidden：认证 OK、鉴权拒——亲手看到 §2 两闸门
+```
+
+### 7.2 API discovery：apiserver 的「自检报告」
+
+| 端点 | 内容 |
+|------|------|
+| `/api` | core 组支持的版本列表（`["v1"]`） |
+| `/apis` | 所有命名组的 APIGroupList（含聚合层扩展组，如 metrics.k8s.io） |
+| `/api/v1`、`/apis/<group>/<version>` | 该组版本下所有资源（APIResourceList：name/singularName/namespaced/kind/verbs） |
+| `/openapi/v2` | 聚合的全量 OpenAPI v2 文档（有损：default/nullable 等字段会丢） |
+| `/openapi/v3` | **v1.27 起 GA**；按组版本拆分 + hash 的 OpenAPI v3 文档（无损），客户端可按版本缓存 |
+| `/version` | 构建版本 |
+| `/healthz`、`/livez`、`/readyz` | 健康族谱，`?verbose` 出明细（§9.6） |
+| `/metrics` | Prometheus 指标（本文所有排查指标的源头） |
+
+聚合发现（aggregated discovery）：自 **v1.30 GA** 起，`/api` 和 `/apis` 两个端点就能发完全部发现文档——客户端用如下 Accept 头：
+
+```bash
+curl -s --cacert ca.crt -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/json;v=v2;g=apidiscovery.k8s.io;as=APIGroupDiscoveryList' \
+  $SERVER/apis | head -c 400
+# 不带这个 Accept 头时，/api /apis 返回老式分级文档（向下兼容）
+# 收益：kubectl/discovery 客户端不再为 50+ 个组版本每个发起一次文档请求
+```
+
+### 7.3 亲手演示「版本协商」：一份数据、两种视图
+
+HPA 同时服务 `autoscaling/v1` 与 `autoscaling/v2`，是同一份持久化数据的两个投影（§1.4 规则）：
+
+```bash
+kubectl create deploy vpa-demo --image=nginx
+kubectl autoscale deploy vpa-demo --cpu=60% --min=1 --max=4 --dry-run=client -o yaml > hpa.yaml
+kubectl apply -f hpa.yaml
+
+# 同一份数据：
+kubectl get --raw /apis/autoscaling/v1/namespaces/default/horizontalpodautoscalers/vpa-demo
+kubectl get --raw /apis/autoscaling/v2/namespaces/default/horizontalpodautoscalers/vpa-demo
+# 对比输出：v1 只有最简字段（targetCPUUtilizationPercentage），v2 是 metrics 数组结构
+# —— apiserver 在 storage version 与请求版本之间做了双向转换，有损字段按兼容规则折叠
+```
+
+> 这就是升级时「改 yaml 的 apiVersion」本质：数据没动，只是让 apiserver 以新版本的 schema 读取/校验那同一份 etcd 记录。
+
+---
+
+## 八、审计日志（Audit）：回答「谁、何时、改了什么」
+
+### 8.1 生命周期与策略
+
+每个请求最多记录 4 个 stage（审计 handler 在 handler chain 的很早期生成 `RequestReceived`）：
+
+| stage | 时机 | 说明 |
+|-------|------|------|
+| RequestReceived | 请求刚到达，还没鉴权/执行 | 抓「来闹事但还没进来」的请求 |
+| ResponseStarted | 响应头已发、body 未发 | 只对长请求（watch）有意义 |
+| ResponseComplete | 响应完成 | 最常用 |
+| Panic | 引起 panic 的请求 | 线上事故必查 |
+
+策略（`--audit-policy-file`，不传 = 完全不审计；rules 不能为空）按规则**从上到下首个命中**，level 决定记多少：
+
+| level | 记什么 |
+|-------|-------|
+| None | 不记 |
+| Metadata | 只记元数据：用户/时间/GVR/verb/响应码 |
+| Request | 元数据 + **请求 body**（非资源 URL 不适用） |
+| RequestResponse | 元数据 + 请求 body + **响应 body**（最贵，慎用） |
+
+> ❗ **审计不自动脱敏**：你如果把 secrets 配成 RequestResponse，base64 后的密钥就直接落在日志里。
+> 官方惯例：secrets/configmaps 只到 `Metadata`；敏感渠道（存储加密 EncryptionConfiguration）交给数据面。
+
+### 8.2 推荐的最小策略 + 两处典型裁剪
+
+```yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]          # 最常见的降噪手段
+rules:
+  - level: None                           # ① 系统账号的高频 watch 不进审计（价值低）
+    users: ["system:kube-proxy", "system:kube-scheduler"]
+    verbs: ["watch"]
+  - level: None                           # ② 组件间高频自述：leases（leader 选举）
+    resources: [{group: "coordination.k8s.io", resources: ["leases"]}]
+  - level: RequestResponse                # ③ 进容器/跑命令全套记录
+    verbs: ["create", "get"]
+    resources: [{group: "", resources: ["pods/exec", "pods/attach", "pods/portforward"]}]
+  - level: Metadata                       # ④ 敏感对象只记元数据
+    resources: [{group: "", resources: ["secrets"]}, {group: "", resources: ["configmaps"]}]
+  - level: Metadata                       # ⑤ 其余一切：兜底
+```
+
+### 8.3 后端与默认参数
+
+| 后端 | flag | 要点（已核对官方默认值） |
+|------|------|------------------------|
+| **log** | `--audit-log-path`（`-` = stdout） | 不设置 = 禁用 log 后端 |
+|  | `--audit-log-mode` | 默认 `blocking`（事件写盘阻塞响应）；`batch` 不建议 log 后端；`blocking-strict` 在 RequestReceived 失败时整个请求失败 |
+|  | `--audit-log-maxsize/maxbackup/maxage` | 滚动：默认 **100MB / 100 份 / 366 天** |
+|  | `--audit-log-truncate-enabled` 等 | 单事件/批次超限截断，默认关 |
+| **webhook** | `--audit-webhook-config-file` | 指向 kubeconfig 形态的远端 API；`--audit-webhook-initial-backoff` 失败重试 |
+|  | `--audit-webhook-mode` | 默认 `batch`：buffer **10000** 事件、每批最多 **400**、最长攒 **30s**、限流 **10 QPS/burst 15** |
+
+观测：
+
+```bash
+# apiserver 内置指标：审计子系统是否健康
+apiserver_audit_event_total    # 已产生的审计事件
+apiserver_audit_error_total    # 因失败被丢弃的事件（增长 = 后端有问题/写不动）
+```
+
+> 静态 Pod 形态部署（kubeadm/kind）时：上面所有文件路径必须额外配置 hostPath 卷挂载到 apiserver 容器，否则改动不生效（详见实验 1.4）。
+
+### 8.4 典型分析场景：「最近谁 exec 进了哪个容器」
+
+```bash
+# 从 apiserver 的审计日志里抽取 pods/exec 请求（以 kubeadm 的 /var/log/kubernetes/audit.log 为例）
+grep '"subResource":"exec"' /var/log/kubernetes/audit.log | jq -r '
+  [ .requestReceivedTimestamp,
+    .user.username,
+    (.user.groups | map(select(. != "system:masters")) | join(",")),
+    .sourceIPs[0],
+    (.objectRef.namespace + "/" + .objectRef.name),
+    .verb,
+    (.responseStatus.code | tostring)
+  ] | @tsv' | sort | tail -20
+
+# 配套看「谁在调已废弃 API」（v1.19+ 自动打的注解）
+grep 'k8s.io/deprecated' /var/log/kubernetes/audit.log | jq -r '[.requestReceivedTimestamp,.user.username,.requestURI] | @tsv' | sort -u | tail -10
+```
+
+另外两个高频问答模板：
+
+- **谁删了 Deployment**：`grep -E '"verb":"delete".*"deployments"' audit.log | jq -r '[.requestReceivedTimestamp,.user.username,.objectRef.name] | @tsv'`
+- **服务变更审计**：把 `services, ingresses, networkpolicies` 规则到 Request；在 GitOps 时代主要用来抓「绕过流水线的手工 hotfix」
+
+
+---
+
+## 九、常见生产问题清单（API 面）
+
+| # | 症状 | 根因链 | 排查动作 | 处置 |
+|---|------|--------|---------|------|
+| 9.1 | etcd 磁盘暴涨 / `mvcc: database space exceeded`；`etcdserver: request is too large` 拒绝写 | ① 单对象超过 etcd 事务上限（默认约 1.5 MiB）：巨型 ConfigMap / Helm release Secret；② Event 高频（探针风暴、镜像拉取回退刷屏） | `etcdctl endpoint status -w=table` 看 DB 大小与 alarm；`kubectl get events -A --sort-by=.lastTimestamp \| tail` | 拆大对象；events 从 v1beta1 迁 `events.k8s.io/v1` 减量；定期 compact+defrag（详见你的 etcd 笔记） |
+| 9.2 | 控制器重启引发「重启风暴」：全组件 CPU/内存瞬间拉满 | 每个进程 informer 首次 list 是全量读；N 副本同时启动 → watch 雪崩 | 监控 `apiserver_registered_watchers`、`apiserver_longrunning_requests`、apiserver 内存曲线 | 副本错峰启动；共享 informer；selector 收窄；大资源只 watch metadata（§3.8） |
+| 9.3 | 客户端报 `429 Too Many Requests`，带 `Retry-After` | 三种来源： ① APF 按优先级拒绝（§5）； ② 关 APF 时 max-inflight 到顶； ③ **新版行为**：watch cache 未初始化时，WATCH 和未分页/带 selector 的 LIST 直接 429（保护 etcd 不被打爆，防 APF 占座饿死） | `apiserver_flowcontrol_rejected_requests_total` 看 reason；apiserver 日志 `RequestInfo` 确认客户端 | 客户端必须尊重 `Retry-After` + 指数退避（client-go 已内建）；分页拉取；等待 readyz 503→200 再发起 |
+| 9.4 | `kubectl top` 报 `Metrics API not available`；HPA `FailedGetResourceMetric` | 聚合层发现失败（§6.3：metrics-server/证书/Endpoint/网络策略） | `kubectl get apiservice v1beta1.metrics.k8s.io`；describe 看 `FailedDiscoveryCheck` message | 按 §6.3 表修 root cause；常规命根：Pod 挂了 / selector 漂移 / NetworkPolicy |
+| 9.5 | apiserver 全面慢（所有请求时延升、watch 延迟） | etcd 慢传导：磁盘 fsync 拉高 → etcd 请求变慢 → apiserver 队列堆积 → APF 占座时间拉长 | `etcd_request_duration_seconds`、`apiserver_request_duration_seconds`、节点 iostat | 上 SSD/独占盘；看是否大 list 风暴（§3.8）；必要时水平扩 apiserver 副本 |
+| 9.6 | 想知道 apiserver 此刻活得好不好 | 健康三件套读法（见下） | 见 9.6.1 | — |
+
+### 9.6.1 健康与性能端点读法（kubectl 一句话就够）
+
+```bash
+# 组件级健康（verbose 出每个 dependency：etcd / informer-sync / healthz 等）
+kubectl get --raw='/readyz?verbose'
+# 期望全 [+]；故障时打印 [−] 项
+#   [+]ping ok / [+]etcd ok / [+]etcd-readiness ok / [+]informer-sync ok / [+]poststarthook/... ok
+
+# 活的（不需要被重启）——不查依赖，失败才重启
+kubectl get --raw='/livez?verbose'
+
+# 指标：所有 §5/§9 的指标都从这里出
+kubectl get --raw='/metrics' | grep -E 'apiserver_(flowcontrol|request_total|watch|longrunning|audit)' | head -20
+```
+
+**readiness 判度差异（特别在 APF + watch cache 时代）**：`/readyz` 包含 informer-sync 和 etcd-readiness——
+所以「apiserver 进程在但 readyz 失败」是针对性保护：watch cache 还没灌满前直接 429（见 9.3③），
+让 LB/Ingress 把流量切到别的 apiserver 副本，这对 HA 控制面是生存机制，不是故障。
+
+---
+
+## 十、实验（kind/k3d 沙箱 4 连）
+
+> 环境：本机有 `kind` v0.2x+（k3d 同理，路径差异我会标注）与 `jq`。
+> 实验 1.1/1.2/1.3 在任何集群上都能做；1.4 需要重建控制面（kind 一把重置）。
+
+### 实验 1.1 用集群 CA 证书 + curl 直连 apiserver 读写 ConfigMap
+
+**第 0 步：从 kubeconfig 提三件套（kind/k3d/kubeadm 通用）**
+
+```bash
+# 证书/密钥都内嵌在 kubeconfig 里（kind/kubeadm 管理员 config 默认如此）：
+mkdir -p /tmp/k8s
+kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/k8s/ca.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/k8s/client.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-key-data}'         | base64 -d > /tmp/k8s/client.key
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+echo $SERVER    # kind 默认 https://127.0.0.1:<随机端口>（除非 kind config 固定了 apiServerPort）
+```
+
+**凭证物理路径对照表**（想从「文件」而不是「kubeconfig」取时）：
+
+| 发行版 | CA | 管理员客户端证书 | 备注 |
+|--------|-----|----------------|------|
+| kind | 节点容器内 `/etc/kubernetes/pki/ca.crt` | `/etc/kubernetes/pki/apiserver-kubelet-client.crt`（CN 受限）或直接用 `admin.conf` 提取 | host 端 kubeconfig 已内嵌等价证书，本实验无需进容器 |
+| kubeadm | `/etc/kubernetes/pki/ca.crt` | `/etc/kubernetes/pki/admin.conf`（内嵌 cert/key） | `~/.kube/config` 默认为其副本 |
+| k3s | `/var/lib/rancher/k3s/server/tls/client-ca.crt` | `/etc/rancher/k3s/k3s.yaml`（内嵌） | k3s.yaml 即 kubeconfig |
+
+**第 1 步：读、写、改、删一个 ConfigMap**
+
+```bash
+# ① 读（GET）：打印 jq 过滤后的对象
+curl -s --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  $SERVER/api/v1/namespaces/default/configmaps/curl-cm
+
+# ② 写（POST）：Content-Type 必须声明 application/json
+curl -s --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  -X POST -H 'Content-Type: application/json' \
+  -d '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"curl-cm","namespace":"default"},"data":{"hello":"raw-api"}}' \
+  $SERVER/api/v1/namespaces/default/configmaps
+
+# ③ 改（PATCH，merge 类型）：
+curl -s --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  -X PATCH -H 'Content-Type: application/merge-patch+json' \
+  -d '{"data":{"extra":"patched-via-curl"}}' \
+  $SERVER/api/v1/namespaces/default/configmaps/curl-cm
+
+# ④ 确认 kubectl 也看得到（证明走的就是同一条 REST 通道）
+kubectl get cm curl-cm -o yaml
+
+# ⑤ 删（DELETE）：
+curl -s --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  -X DELETE $SERVER/api/v1/namespaces/default/configmaps/curl-cm
+```
+
+预期看到：②返回 201 + 完整对象；③返回 200 + resourceVersion 自增——拿它和 kubectl 输出对照，亲手验证「kubectl 就是 HTTP」。
+
+### 实验 1.2 抓 watch：观察 resourceVersion 游标
+
+两个终端：A 起 watch，B 制造变更。
+
+```bash
+# 终端 A：从「此刻快照的 RV」开始 watch（取 LIST 自己的 resourceVersion，即快照游标）
+RV=$(kubectl get cm -n default -o jsonpath='{.metadata.resourceVersion}')
+echo "baseline RV=$RV"
+curl -sN --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  "$SERVER/api/v1/namespaces/default/configmaps?watch=true&resourceVersion=$RV&allowWatchBookmarks=true"
+```
+
+```bash
+# 终端 B：制造几次变更，观察 A 屏幕上逐条 JSON 事件
+kubectl create cm w1 --from-literal=a=1
+kubectl patch cm w1 --type=merge -p '{"data":{"a":"2"}}'
+kubectl annotate cm w1 x=y
+kubectl delete cm w1
+```
+
+**你要看懂的输出**（每行一条独立 JSON，无换行包裹的数组）：
+
+```json
+{"type":"ADDED",   "object":{"kind":"ConfigMap",...,"metadata":{"resourceVersion":"81250",...}}}
+{"type":"MODIFIED","object":{...,"resourceVersion":"81255",...}}     ← patch 后 rv +?（整数递增）
+{"type":"MODIFIED","object":{...,"resourceVersion":"81258",...}}     ← annotate 也算 MODIFIED
+{"type":"DELETED", "object":{...}}
+{"type":"BOOKMARK","object":{...,"resourceVersion":"81290"}}         ← 服务端不保证固定间隔，通常分钟级（官方明示不要依赖频率）
+```
+
+**再看 410 Gone（可选）**：
+
+```bash
+# 用一个明显很旧的 RV 续 watch：
+curl -s --cacert /tmp/k8s/ca.crt --cert /tmp/k8s/client.crt --key /tmp/k8s/client.key \
+  "$SERVER/api/v1/namespaces/default/configmaps?watch=true&resourceVersion=1"
+# 典型返回：{"kind":"Status","status":"Failure","code":410,"reason":"Gone",
+#   "message":"too old resource version: 1 (xxxxx)"}
+# 若你的 fresh 集群还没压缩到那里（5 分钟窗口内侥幸没过期），把 RV 记录等 10 分钟再试即可必现。
+```
+
+> `kubectl get cm -w -v=7` 也行：v=7 输出会打印它实际发的 `GET ...?watch=true&resourceVersion=...`，
+> 对比 curl 的原始流，能看到 kubectl 在那一层做了什么过滤（客户端表格化）。
+
+### 实验 1.3 `kubectl apply -v=8` 拆解 RequestPath
+
+```bash
+cat > /tmp/k8s/reqpath-demo.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: reqpath-demo, namespace: default}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: reqpath-demo}}
+  template:
+    metadata: {labels: {app: reqpath-demo}}
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+EOF
+
+kubectl apply -f /tmp/k8s/reqpath-demo.yaml -v=8 2>&1 | tee /tmp/k8s/apply-v8.log | less
+# 重点检索（-v=8 输出每行都带 "I1013 ... round_trippers.go" 前缀，按关键字捞）：
+grep -E 'GET https|PATCH https|POST https|Response Status|Content-Type|Warning' /tmp/k8s/apply-v8.log
+```
+
+把看到的行对号入座（对照 §2 链）：
+
+| -v=8 输出片段 | 对应链路位置 | 说明 |
+|---------------|-------------|------|
+| `GET https://...:6443/api?timeout=32s`、`GET .../apis?timeout=32s`、`GET .../openapi/v2` | 客户端阶段：discovery（RESTMapper） | kubectl 先问「有哪些 GVR、Deployment 对应哪个 URL」——不属于对象链路 |
+| `GET https://.../apis/apps/v1/namespaces/default/deployments/reqpath-demo` | 进入 handler chain 的第一次**读** | apply 判断「存在吗」；会走 ②③④⑤（流量整形/认证/审计/鉴权） |
+| `PATCH .../deployments/reqpath-demo?fieldManager=kubectl-client-side-apply&force=true`<br>`Content-Type: application/apply-patch+yaml` | **写**进入：同上 + 准入 ⑥⑦⑧ | Server-Side Apply；v=8 能看到完整请求体与响应体 |
+| 响应头/日志里的 `Warning: 299 - "... is deprecated ..."` 行 | 服务端规则：deprecated API 提醒 | 该对象用了将被移除的版本就会打这个 RFC7234 Warning 头（§1.5） |
+| 响应 2xx + 完整对象 JSON | 链尾：转换回请求版本 → 响应 | 留意 `metadata.managedFields` 里 `kubectl-client-side-apply` 的账目 |
+
+再看一个拒绝路径的对照（可选）：
+
+```bash
+# 造一个一定会被 PodSecurity restricted 拒绝的 ns + 违规 Pod，看 apiserver 在哪个环节拒
+kubectl create ns psa-deny
+kubectl label ns psa-deny pod-security.kubernetes.io/enforce=restricted
+kubectl -n psa-deny run bad --image=nginx:1.27 --privileged -v=8 2>&1 | grep -E 'PATCH|POST|Forbidden|denied|violates'
+# 预期：HTTP 403 + 含 "violates PodSecurity" 的 message → 定位在 §2 链的「准入第②相 Validating（PodSecurity 插件）」
+```
+
+### 实验 1.4 开启审计并复盘 exec/logs 足迹
+
+**A. kind 最小配置**（官方示例的裁剪版，只保留必要项）：
+
+```bash
+mkdir -p /tmp/k8s/audit && cd /tmp/k8s/audit
+
+cat > audit-policy.yaml <<'EOF'
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: ["RequestReceived"]
+rules:
+  - level: RequestResponse
+    verbs: ["create", "get"]
+    resources:
+    - group: ""
+      resources: ["pods/exec", "pods/log", "pods/attach", "pods/portforward"]
+  - level: Metadata
+EOF
+
+cat > kind-audit-config.yaml <<'EOF'
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        audit-log-path: /var/log/kubernetes/kube-apiserver-audit.log
+        audit-policy-file: /etc/kubernetes/policies/audit-policy.yaml
+      extraVolumes:
+      - name: audit-policies
+        hostPath: /etc/kubernetes/policies
+        mountPath: /etc/kubernetes/policies
+        readOnly: true
+        pathType: "DirectoryOrCreate"
+      - name: audit-logs
+        hostPath: /var/log/kubernetes
+        mountPath: /var/log/kubernetes
+        readOnly: false
+        pathType: "DirectoryOrCreate"
+  extraMounts:
+  - hostPath: ./audit-policy.yaml
+    containerPath: /etc/kubernetes/policies/audit-policy.yaml
+    readOnly: true
+EOF
+
+# 若当前目录不是工程目录，把 hostPath 写成绝对路径再 create
+kind create cluster --name audit-demo --config kind-audit-config.yaml
+
+# 验证 flag 和挂载确实生效：
+docker exec audit-demo-control-plane grep -E 'audit-(log|policy)' /etc/kubernetes/manifests/kube-apiserver.yaml
+```
+
+**B. kubeadm 静态 Pod 的配置要点**（自己集群上操作，改动生效靠 kubelet 自动重启静态 Pod）：
+
+在 `/etc/kubernetes/manifests/kube-apiserver.yaml` 的 `command:` 加：
+
+```yaml
+    - --audit-policy-file=/etc/kubernetes/audit/policy.yaml
+    - --audit-log-path=/var/log/kubernetes/audit.log
+    - --audit-log-maxsize=100
+    - --audit-log-maxbackup=10
+```
+
+并在 `volumeMounts:` 加两个挂载、`volumes:` 加对应两个 hostPath（`File`/`DirectoryOrCreate`）。
+文件落到宿主机：policy 放 `/etc/kubernetes/audit/policy.yaml`，日志宿主机路径同上。
+
+**C. 触发事件并读审计**：
+
+```bash
+kubectl -n default run audit-test --image=busybox:1.36 --restart=Never -- sleep 3600
+kubectl exec audit-test -- ls /
+kubectl logs audit-test
+
+# kind 集群：直接在控制面容器里看（审计 JSON 是单行结构，subResource 即 exec/log 子资源）
+docker exec audit-demo-control-plane \
+  grep -E '"subResource":"(exec|log)"' \
+  /var/log/kubernetes/kube-apiserver-audit.log \
+  | jq -r '[.stage,.requestReceivedTimestamp,.user.username,.objectRef.namespace,.objectRef.name,.verb,.responseStatus.code] | @tsv'
+# 期望输出（典型）：
+# ResponseComplete  2026-10-13T08:12:03Z  kubernetes-admin  default  audit-test  create  101/200/...
+# ResponseComplete  2026-10-13T08:12:20Z  kubernetes-admin  default  audit-test  get     101/200/...
+```
+
+**D. 收尾**：
+
+```bash
+kind delete cluster --name audit-demo
+rm -rf /tmp/k8s
+```
+
+> 读数公式（与 §8.3 对照）：本实验的 exec 记录来自 RequestResponse 规则；日志行的 `user.username`
+> 就是审计回答「谁干的」的核心字段；`annotations` 里还能看到 PodSecurity/VAP 记下的拒绝原因。
+
+---
+
+## 十一、速查表 + 参考链接
+
+### 11.1 一页速查
+
+| 主题 | 命令 / 端点 / 指标 |
+|------|-------------------|
+| 版本与发现 | `kubectl version`；`kubectl api-resources`；`kubectl get --raw /version` |
+| 直接调 API | `kubectl get --raw /path`；`kubectl proxy --port=8001`；curl + ca/client.crt（实验 1.1） |
+| 看请求链 | `-v=6 URL`；`-v=7 头`；`-v=8 体`；实验 1.3 对号入座 |
+| RV 语义 | unset=list 强一致；`rv=0`=本地缓存快读；`rv=特定值+Exact`=快照；watch 续传过旧=410 |
+| WatchList | `?watch=true&sendInitialEvents=true&resourceVersionMatch=NotOlderThan`（v1.34+ 默认启用） |
+| 不用但重要 | `--etcd-compaction-interval=5m0s`（历史窗口）；`--request-timeout=1m0s`；`--min-request-timeout=1800` |
+| GC | `--cascade=background/foreground/orphan`；finalizer 卡死先看 `kubectl get events -A` 找 OwnerRef 问题 |
+| APF | `kubectl get flowschemas`、`prioritylevelconfigurations`；指标 `apiserver_flowcontrol_*`；默认豁免 `exempt/probes` |
+| 聚合层 | `kubectl get apiservice`；`FailedDiscoveryCheck` → 查 metrics-server Pod/证书/Endpoint/网络 |
+| 审计 | `--audit-policy-file` 必须给；指标 `apiserver_audit_event_total` / `apiserver_audit_error_total`；实验 1.4 模板 |
+| 健康 | `/livez`（活）、`/readyz?verbose`（就绪+依赖）、`/metrics`（指标源头） |
+
+### 11.2 关键要点（背诵版）
+
+1. K8s 所有控制循环=**list 快照 + watch 增量 + reconcile 写回**；掌握了 list-watch 就掌握了 80% 的控制器机制
+2. **resourceVersion 是乐观锁 + watch 游标**：409 是锁冲突，410 是游标过期，5 分钟窗口由 etcd 压缩决定
+3. spec/status 分离 = 期望与观测的合同；status 走 subresource，不动 generation
+4. 认证给身份，鉴权给许可，准入在最后两相：先 Mutating 改对象，再 Validating 定最终形态；读操作完全绕过准入
+5. v1.30 起 CEL ValidatingAdmissionPolicy GA、v1.36 起 Mutating GA——新策略优先写 CEL，不要轻易起一个会挂的 webhook
+6. APF 把总并发按优先级分泳道：watch 受管、exec/logs 不受管、大 list 占多座；429 要带 `Retry-After` 指数退避
+7. 聚合层是「第三方 API 住进 apiserver」：APIService + front-proxy CA + extension 反查 SAR；`FailedDiscoveryCheck` 照着 §6.3 查
+8. finalizer 是「外部资源未清」的承诺，强删 = 假装已清 → 云资源泄漏；先修为什么清不掉
+9. 审计不自动脱敏：secrets 只 Metadata；exec/log 是敏感操作，RequestResponse 记录全套
+10. 一切 API 行为都可被观测：`--v=8` 看客户端视角、`/metrics` 看服务端视角、审计日志看历史视角
+
+### 11.3 参考链接
+
+| 主题 | 链接 |
+|------|------|
+| Kubernetes API 总览（discovery/OpenAPI v2/v3/版本策略） | https://kubernetes.io/docs/concepts/overview/kubernetes-api/ |
+| API Concepts（list/watch/RV 语义/分块/WatchList/410/书签） | https://kubernetes.io/docs/reference/using-api/api-concepts/ |
+| API deprecation policy（alpha/beta/GA 兼容承诺） | https://kubernetes.io/docs/reference/using-api/deprecation-policy/ |
+| 已移除 API 迁移指南（按版本的年表） | https://kubernetes.io/docs/reference/using-api/deprecation-guide/ |
+| 认证（X.509/SA/OIDC/结构化认证配置） | https://kubernetes.io/docs/reference/access-authn-authz/authentication/ |
+| 准入控制器全集 + v1.37 默认插件 | https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/ |
+| ValidatingAdmissionPolicy（GA v1.30） | https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/ |
+| MutatingAdmissionPolicy（GA v1.36） | https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/ |
+| APF 概念/配置/指标 | https://kubernetes.io/docs/concepts/cluster-administration/flow-control/ |
+| APF bootstrap 默认对象源码（泳道 shares） | https://github.com/kubernetes/apiserver/blob/master/pkg/apis/flowcontrol/bootstrap/default.go |
+| 垃圾回收（ownerReference/级联/finalizer） | https://kubernetes.io/docs/concepts/architecture/garbage-collection/ |
+| 聚合层总览 | https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/apiserver-aggregation/ |
+| 配置聚合层（front-proxy 信任链） | https://kubernetes.io/docs/tasks/extend-kubernetes/configure-aggregation-layer/ |
+| 审计（策略/后端/默认参数） | https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/ |
+| kube-apiserver flag 全量参考（默认值来源） | https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/ |
+| feature gates 总表 | https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/ |
+| kind 审计开启官方示例 | https://kind.sigs.k8s.io/docs/user/auditing/ |
+| kubectl quick reference（--v 日志等级） | https://kubernetes.io/docs/reference/kubectl/quick-reference/ |
+
+> 下一章预告：`K8s-调度器深入.md`——Scheduling Framework 的 18 个扩展点会大量使用本篇的 informer/watch 与 APF 概念。
