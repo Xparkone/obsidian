@@ -20,7 +20,7 @@
         <div class="sidebar-bottom"><span class="status-dot"></span><span>Policy engine online</span><small>v0.1 · dry-run mode</small></div>
       </aside>
       <main class="main">
-        <header class="topbar"><div><p class="eyebrow">SECURITY OPERATIONS</p><h1>控制台总览</h1><p class="muted">让每一次 AI 与服务器之间的操作都经过可解释的策略检查。</p></div><div class="top-actions"><span class="pill"><span class="status-dot"></span>系统正常</span><button class="ghost" id="refresh">刷新数据</button></div></header>
+        <header class="topbar"><div><p class="eyebrow">SECURITY OPERATIONS</p><h1>控制台总览</h1><p class="muted">让每一次 AI 与服务器之间的操作都经过可解释的策略检查。</p></div><div class="top-actions"><input id="identity-key" class="key-input" type="password" placeholder="粘贴身份密钥" aria-label="身份密钥" /><button class="ghost" id="save-key">保存</button><span class="pill"><span class="status-dot"></span>系统正常</span><button class="ghost" id="refresh">刷新数据</button></div></header>
         <section id="overview" class="hero-grid">
           <article class="hero-card"><div><span class="eyebrow cyan">AEGIS SIGNAL</span><h2>守住每一次<br /><em>高风险动作</em></h2><p>身份、资产、权限、规则和审计在同一条执行路径上协同工作。</p></div><div class="hero-orbit"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><div class="hero-mark">A</div></div></article>
           <article class="metric-card accent"><span class="eyebrow">BLOCKED COMMANDS</span><strong id="blocked-count">—</strong><span class="metric-note">被策略阻断</span></article>

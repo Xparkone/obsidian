@@ -73,6 +73,8 @@ class AegisService:
         if route == "/api/v1/dashboard" and method == "GET":
             return 200, self.dashboard()
         if route == "/api/v1/servers" and method == "GET":
+            if not principal and not is_admin:
+                return 401, {"error": "查看服务器资产需要身份密钥"}
             return 200, {"items": self.visible_servers(principal["id"] if principal else None)}
         if route == "/api/v1/audit" and method == "GET":
             return 200, {"items": self.db.rows("SELECT a.*, p.name AS principal_name, s.name AS server_name FROM audit_events a LEFT JOIN principals p ON p.id=a.principal_id LEFT JOIN servers s ON s.id=a.server_id ORDER BY a.id DESC LIMIT 100")}

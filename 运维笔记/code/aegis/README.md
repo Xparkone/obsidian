@@ -21,6 +21,7 @@ python3 main.py
 
 打开 <http://127.0.0.1:8080/>。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。
 管理接口（创建身份、服务器、授权和规则）必须带 `X-Aegis-Admin`，请把 `.env` 里的 `AEGIS_ADMIN_TOKEN` 换成随机值；示例中的 `change-this-in-a-secret-manager` 不能用于生产。
+前端右上角的“身份密钥”只保存在浏览器 `localStorage`，保存后会用 `X-Aegis-Key` 请求该身份有权看到的服务器；未提供身份密钥时不会返回服务器资产详情。
 
 容器方式：
 

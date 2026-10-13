@@ -50,6 +50,11 @@ class AegisCoreTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("recent_events", dashboard)
 
+    def test_server_inventory_requires_identity_scope(self):
+        status, response = self.service.dispatch("GET", "/api/v1/servers", {}, None)
+        self.assertEqual(status, 401)
+        self.assertIn("身份密钥", response["error"])
+
     def test_admin_token_required_for_control_plane_writes(self):
         status, response = self.service.dispatch("POST", "/api/v1/principals", {"name": "blocked", "kind": "ai"}, None)
         self.assertEqual(status, 401)
