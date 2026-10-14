@@ -759,7 +759,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### 4. PodSecurityPolicy / Pod Security Admission
+### 4. Pod Security Admission（PSA；v1.25 起替代已删除的 PodSecurityPolicy）
 
 ```yaml
 # K8s 1.25+ 使用 Pod Security Admission

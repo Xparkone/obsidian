@@ -80,7 +80,7 @@
 | 7 | `K8s-生产集群运维手册.md` | kubeadm 搭集群（v1.37、containerd、etcd 外部/堆叠选型）、升级流程（kubeadm upgrade + drain）、CA/证书轮转（1.35+ 自动轮转行为）、节点自运维（node-problem-detector、draino）、etcd/apiserer/scheduler 性能调优参数、LIMIT ranger/ResourceQuota 治理、大规模集群设计约束 | 第 1 章 | 见下方实验 L2 / L3 | ✅ |
 | 8 | `K8s-故障排查方法论.md` | 分域排障树：控制面 / 节点 / 调度 / Pod-容器 / 网络-DNS / 存储 / 证书七大域；每域「症状→工具→修复」；kubectl debug/ephemeral/nsenter/tcpdump 组合技；kubelet 日志读法；真实事故复盘模板；收敛 `排障进阶-5个冷门kubectl命令` 等内容做成一本通 | 第 1~4、7 章 | 实验 L3 破坏-恢复演练是本篇的实战战场 | ✅ |
 | 9 | `K8s-自动伸缩深入.md` | HPA 算法与冷却窗口、自定义指标（prometheus-adapter/KEDA ScaledObject 对比）、VPA 三种模式与 InPlace 更新、CA vs Karpenter 选型、Karpenter WorkerPool/EC2NodeClass、伸缩对 PDB/滚动更新的联动、容量规划方法 | 第 7 章 | Karpenter（或 CA）+ KEDA 各一个 demo | ✅ |
-| 10 | `K8s-多集群与进阶生态.md` | 多集群痛点与方案谱（Rancher/Fleet/Karmada/OCP/OCM 对比）、多集群 Service/网络（Submariner/云厂商实现）、Cluster API 声明式建集群、设备管理（GPU device plugin、TimeSlicing vs MIG）、kubeedge / 边缘、Wasm/KWasm/Knative、vCluster 虚拟集群 | 第 7、9 章可以之后学 | Karmada 装一套把 Deployment 推到两个 kind 集群 | ⬜ |
+| 10 | `K8s-多集群与进阶生态.md` | 多集群痛点与方案谱（Rancher/Fleet/Karmada/OCP/OCM 对比）、多集群 Service/网络（Submariner/云厂商实现）、Cluster API 声明式建集群、设备管理（GPU device plugin、TimeSlicing vs MIG）、kubeedge / 边缘、Wasm/KWasm/Knative、vCluster 虚拟集群 | 第 7、9 章可以之后学 | Karmada 装一套把 Deployment 推到两个 kind 集群 | ✅ |
 
 **建议学习节奏：每章 = 读笔记 → 做配套实验 → 在仓库里补一节「我已经验证过的」心得 → 勾掉状态。**
 
@@ -102,7 +102,7 @@
 | 项 | 位置 | 问题 | 处理 |
 |---|------|------|------|
 | 1 | `容器编排/K3s-部署指南.md` | 基线 v1.32.3+k3s1，该 minor 已于 2026-02-28 EOL | 升级基线到 1.35+ 并验证命令仍成立 |
-| 2 | `容器编排/K8s-资源全览.md` | 小节标题仍写「PodSecurityPolicy / Pod Security Admission」，正文已迁 PSA | 清理标题里的 PSP 字样 |
+| 2 | `容器编排/K8s-资源全览.md` | 小节标题仍写「PodSecurityPolicy / Pod Security Admission」，正文已迁 PSA | ✅ 2026-10-14 标题已清理为 PSA + 注明 v1.25 替代关系 |
 | 3 | kubectl 速查类 | `k8s-常用操作手册` / `K8s-组件详解§8` / `Docker-K8s-快捷批量` / `排障进阶` 四篇有重叠 | ✅ 2026-10-14 已由第 8 章完成：本章 §0.3 接管边界 + 四篇均加回链 |
 
 ---
@@ -120,7 +120,7 @@
 第 7 章 生产集群运维           ✅ 2026-10-14 → 容器编排/K8s-生产集群运维手册.md
 第 8 章 故障排查方法论         ✅ 2026-10-14 → 容器编排/K8s-故障排查方法论.md
 第 9 章 自动伸缩               ✅ 2026-10-14 → 容器编排/K8s-自动伸缩深入.md
-第 10 章 多集群与进阶生态      ⬜
+第 10 章 多集群与进阶生态      ✅ 2026-10-14 → 容器编排/K8s-多集群与进阶生态.md
 实验 L2 kubeadm 集群           ⬜
 实验 L3 破坏-恢复 runbook      ⬜
 CKA 模拟考                     ⬜
