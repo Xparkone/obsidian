@@ -94,9 +94,9 @@ spec:
 
 - **成本上限**：apiserver 在**创建/更新 CRD 时静态估算**每条 rule 的最坏成本，超限直接拒绝写入 CRD，报错形如 `CEL rule exceeded budget by more than 100x (try simplifying the rule, or adding maxItems, maxProperties, and maxLength ...)`。纪律：**凡是被 CEL 遍历的 string/map/list，必须同步写 `maxLength` / `maxProperties` / `maxItems`** 把最坏情况钉死，否则 compile 期就被拒。
 - **作用域**：只能看当前对象（+`metadata`），**不能跨对象、不能查外部世界**——这是和第 5 章 §3.6（VAP 只能看请求对象 + namespaceObject + params）同样的边界。要跨对象/查外部，还是得 webhook。
-- **oldSelf 过渡规则**：`self.replicas >= oldSelf.replicas`（只升不降）、`self.foo == oldSelf.foo`（不可变）这类引用 `oldSelf` 的规则**只在 update 时评估**，create 时跳过；`optionalOldSelf: true`（v1.33 起 Stable）允许「旧值缺失也算过」的自定义回退逻辑。
+- **oldSelf 过渡规则**：`self.replicas >= oldSelf.replicas`（只升不降）、`self.foo == oldSelf.foo`（不可变）这类引用 `oldSelf` 的规则**只在 update 时评估**，create 时跳过；`optionalOldSelf: true` 允许「旧值缺失也算过」的自定义回退（与 ratcheting 同一特性家族，v1.37 集群可用）。
 - **校验回退（ratcheting）**：CRD 的校验变严后，**不动该字段的存量对象不能被「顺手拒之门外」**——`CRDValidationRatcheting`（v1.28 Alpha → v1.30 Beta → **v1.33 GA 默认开**）：更新时若该字段值未变，则该字段上的新校验被跳过。例外（v1.37 实现，官方列明）：`allOf/anyOf/oneOf/not` 量词、list type 变更、`required` 变化、metadata 内建校验**不参与回退**；含 `oldSelf` 的过渡规则永不回退。
-- **Condition 上的 CEL**：apiserver 对每条 rule 有运行时中断（解释器步数超限会 halt 并报错）。
+- **运行时预算**：单次规则求值也有上限——解释器执行步数超限会被强制 halt 并返回错误（一拒俱拒，静态估算之外的运行时保险丝）。
 
 与 webhook 的分工一句话：**CEL 是准入逻辑的默认起点**（进程内求值、无 HTTPS 服务、不占 seat 网络往返），webhook 只留给 CEL 视野之外的校验（镜像验签、跨对象引用、调公司系统）。
 
@@ -141,8 +141,6 @@ func (dst *WebApp) ConvertFrom(srcRaw conversion.Hub) error // hub → 我
 | `names: { shortNames: [wa], categories: [ops] }` | `kubectl get wa`；`kubectl get ops` 一次拉出整个类别 | 少打字；团队级资源打包查看 |
 
 **为什么这么设计**：这四件套的本质是「让 CR 与内建资源平级」。内建 Deployment 之所以好用，不是它特殊，而是 status/scale/printer columns/categories 全都配齐了——CRD 全都可以有，写完这四件，你的 CR 在 `kubectl`/`HPA`/`K9s`/`ArgoCD` 里就是一等公民。
-
----
 
 ---
 
@@ -230,8 +228,8 @@ ctrl.NewControllerManagedBy(mgr).
 //                         ⚠️ 若 err 是 reconcile.TerminalError(e)：直接丢弃，永不重试
 //                         ⚠️ err 非 nil 时 Requeue/RequeueAfter 一律被忽略（并打 Warning 日志）
 // RequeueAfter > 0      → Forget（清退避） + 定时 AddAfter（等外部异步事件的标准姿势）
-// Requeue == true       → AddRateLimited（退避重试；【已 Deprecated】官方说「用 RequeueAfter
-//                         表达等待外部事件，不要借用错误重试的退避节
+// Requeue == true       → AddRateLimited（退避重试；字段已 Deprecated：官方指路用
+//                         RequeueAfter 表达「等外部事件」，别借用错误重试的退避节
 // 全零 + nil            → Forget（退避清零，安静等下一个事件）
 ```
 
@@ -252,14 +250,12 @@ ctrl.NewControllerManagedBy(mgr).
 | 策略 | 代码形态 | 语义 | 何时用 |
 |------|---------|------|--------|
 | **Update（read-modify-write）** | `r.Update(ctx, obj)` | 全量覆盖（带 resourceVersion 乐观锁，撞了报 409） | 对象**完全由你这个 controller 拥有**，每轮 reconcile 都是「算出新全量」；§5 用 |
-| **Patch（client patch）** | `r.Patch(ctx, obj, client.MergeFrom(orig))` | 三种 patch type：strategic（内建类型，按 patchStrategy 并表）、merge（JSON Merge Patch）、JSONPatch | 与别人**共管**的大对象，只不想碰的字段不覆盖；`MergeFrom` 自动算差分，最常用 |
+| **Patch（client patch）** | `r.Patch(ctx, obj, client.MergeFrom(orig))` | 三种 patch type：strategic（内建类型，按 patchStrategy 并表）、merge（JSON Merge Patch）、JSONPatch | 与别人**共管**的大对象：以「修改前的快照」为基准算差分，只覆盖你动的字段，别人的字段不伤；`MergeFrom` 最常用 |
 | **Server-side Apply（SSA）** | `r.Patch(ctx, obj, client.Apply, client.FieldOwner("webapp-operator"))` | apiserver 按 **field manager** 逐字段仲裁所有权，冲突返回 409 + 字段清单 | 共管对象 + 想显式声明「我拥有哪几个字段」；**v0.23 起 `Status().Patch(..., client.Apply)` 也支持 status 子资源**（v0.23.0 release「Client: Add subresource Apply support」） |
 
 三条纪律：① 别用 Update 去全量覆盖「别人也会改」的对象（manual scale 的 Deployment、HPA 染指的 replicas——那是 §8.6 field manager 冲突的温床）；② SSA 的 apply 对象必须是**只含你拥有的字段的「骨架对象」**，把 Get 出来的对象改两笔就 Apply 是反模式（你没有的字段会被你「认领」）；③ 409 冲突不需要代码里特判——**统一交回给 workqueue 退避重试**，下一轮拿到新 RV 自然收敛。
 
-**为什么这么设计**：Cache/Client 分离 + Builder 声明式 watch + 单一 Reconcile 签名，本质是把「控制器最难写对的三半」——事件拓扑、一致性窗口、重试节奏——全部标准化。你的 Go 代码只剩**读快照、算差分、写回**三件事。
-
----
+**为什么这么设计**：Cache/Client 分离 + Builder 声明式 watch + 单一 Reconcile 签名，本质是把控制器最难写对的三件事——事件拓扑、一致性窗口、重试节奏——全部标准化。你的代码只剩**读快照、算差分、写回**。
 
 ---
 
@@ -305,7 +301,7 @@ controllerutil.SetControllerReference(owner, dependent, scheme)
 - **status 子资源必须先声明**（§1.4），否则 `Status().Update` 直接被 apiserver 拒。
 - **`ObservedGeneration` 纪律**：每轮把当前 `generation` 抄进 status。客户端据此判断「status 是旧 spec 的还是新 spec 的」——`kubectl wait --for=jsonpath='{.status.observedGeneration}'=N` 与 GitOps 健康检查都靠它。
 - **`metav1.Condition` 标准**：`meta.SetStatusCondition` 管理；type 如 `Available/Progressing/Degraded`，status 三态 True/False/Unknown；**Reason 命名纪律：PascalCase、稳定枚举、进得了告警规则**（`ReconcileFailed` 可以，`DeploymentCreateTimeoutAfter30Seconds` 不行）；Message 是人话、允许带变量；`ObservedGeneration` 字段每条 condition 都应填。
-- **写 status 也要竞争意识**：条件没变就 status 相同——`meta.SetStatusCondition` 只在变化时改 lastTransitionTime，重复 Update 是无谓写；第 1 章 §2 讲过每次写都要过准入链，风暴期的「无变化 status 写」是 apiserver 的隐形压力（生产上先比较再写：`if apiequality.Semantic.DeepEqual(old.Status, new.Status)` 跳过）。
+- **写 status 也要「无变化就不写」的意识**：`meta.SetStatusCondition` 只在条件变化时更新 lastTransitionTime——值没变时新 status 与线上完全一样，但 `Status().Update` 照样要过准入链、bump resourceVersion；风暴期这是 apiserver 的隐形压力（生产上先比较再写：`if apiequality.Semantic.DeepEqual(old.Status, new.Status)` 跳过）。
 
 ### 3.5 finalizer 时机表（决策版；机制见第 1 章 §4.3）
 
@@ -315,7 +311,7 @@ controllerutil.SetControllerReference(owner, dependent, scheme)
 | 什么时候挂？ | 首次 reconcile 见到对象就挂（先挂再干活） | 先干活后挂：删除时清理动作可能永远赶不上 |
 | 什么时候摘？ | `DeletionTimestamp != 0` 分支里，清理**成功后**才摘 | 清理失败：把错误写进 condition，重试——**不能放弃式硬摘** |
 | 摘除后会发生什么？ | finalizers 清空 → apiserver 真正从 etcd 删除（连对象都 Get 不到） | 摘完再 reconcile 是 404 路径，属于正常 |
-| 需要什么权限？ | `resources=xxx/finalizers, verbs=update`（RBAC marker 单独一行，§5 代码③） | 少了它：更新 finalizers 403，对象卡 Terminating |
+| 需要什么权限？ | `resources=xxx/finalizers, verbs=update`（§5 控制器顶部的五条 RBAC marker 之一） | 少了它：更新 finalizers 403，对象卡 Terminating |
 | 清理动作本身卡住怎么办？ | 重试 + condition 外显 + 告警；**人工摘 finalizer 是破窗的最后手段**（第 1 章 §4.3 卡死处置表） | 硬摘 = 假装已清理，外部资源变孤儿收费 |
 
 ### 3.6 并发与退避的「场景调参」
@@ -340,17 +336,15 @@ controllerutil.SetControllerReference(owner, dependent, scheme)
 | 7 | 没有 conditions、没有 events | 用户只能靠 `kubectl describe` 的 events 与 log 猜——oncall 噩梦。Conditions 是 Operator 的「对外 API」 |
 | 8 | finalizer 里做长事务 / 同步等待外部资源 | DeletionTimestamp 挂起期间对象「死不透」：ns 删除卡死（第 1 章 §4.3），升级/迁移全部被一扇窗卡住 |
 | 9 | 没开 leader election 就跑了 2 副本 | 脑裂（split-brain）：两个 active 互相覆盖子对象（§8.3） |
-| 10 | 把 ✨任何✨ 日志/error 里塞 secret/token/整对象 YAML | 控制面日志聚合起來後变成秘密泄漏面（第 5 章 §5 的第三条通道）——只记 name/ns/关键字段 |
+| 10 | 把 ✨任何✨ 日志/error 里塞 secret/token/整对象 YAML | 控制面日志聚合起来后变成秘密泄漏面（第 5 章 §5 的第三条通道）——只记 name/ns/关键字段 |
 
 **为什么这么设计**：Reconcile 的正确性模型其实是「**高级语言的 declarative runtime**」——K8s 已有的所有控制器（Deployment→RS→Pod 链）都是同型：读快照、算差分、小步提交、限速重试。不按这个模型写，框架替你兜的每一层（cache、queue、predicate）都会反噬成奇葩故障。
 
 ---
 
----
-
 ## 四、kubebuilder 全流程
 
-kubebuilder 是「controller-runtime 的项目脚手架 + 代码发生器管家」——它生成的不是「一套框架」，而是「一个普通 Go module**：你随时能脱离它继续写。本节版本均按 2026-10 上游核对：**kubebuilder v4.16.0**（内置 **controller-gen v0.22.0**，生成的 CRD 带 `controller-gen.kubebuilder.io/version: v0.22.0` 注解，与 §5 实产生物一致）。
+kubebuilder 是「controller-runtime 的项目脚手架 + 代码发生器管家」——它生成的不是「一套框架」，而是一个普通 Go module：你随时能脱离 CLI 继续写。本节版本均按 2026-10 上游核对：**kubebuilder v4.16.0**（内置 **controller-gen v0.22.0**，生成的 CRD 带 `controller-gen.kubebuilder.io/version: v0.22.0` 注解，与 §5 实产生物一致）。
 
 ### 4.1 安装与第一条链
 
@@ -365,7 +359,7 @@ kubebuilder init --domain ops.example.com                     # --repo 指定 mo
 kubebuilder create api --group apps --version v1alpha1 --kind WebApp   # 问 Create Resource [y/n] → y
 ```
 
-`--domain` 决定 group 后缀（`apps.ops.example.com`）；不喜欢可随时改（生成物是普文本）。想有第二个 kind 就再跑一次 `create api`。`init` 之后可改用 `--plugins` 启用 helm/v2-alpha（出 Helm chart）等插件。
+`--domain` 决定 group 后缀（`apps.ops.example.com`）；不喜欢可随时改（生成物就是纯文本，改完重跑 manifests 即可）。想有第二个 kind 就再跑一次 `create api`。`init` 之后可用 `kubebuilder edit --plugins=...` 追加插件（如 helm/v2-alpha 出 Helm chart）。
 
 ### 4.2 骨架目录逐个讲（`kubebuilder init + create api` 产物，v4.16 形态）
 
@@ -433,18 +427,16 @@ Makefile 关键目标（与 hand-rolled 命令的对应）：
 | # | 坑 | 现象 → 根治 |
 |---|----|------------|
 | 1 | **controller-gen 版本与 Go 版本错位** | 老项目 go.mod 还停 go1.21/1.22，新 controller-gen（本机实测 v0.22.0 go.mod 要求 **go1.26.0**；v0.23/v0.24 的 controller-runtime 也逐级抬高）→ `make generate` 报模块/语法错。根治：Makefile 里 `CONTROLLER_TOOLS_VERSION` 钉死，与 kubebuilder 发行注记对齐（v4.15 起骨架 go directive = 1.26.x）；团队统一 `go install sigs.k8s.io/controller-tools/cmd/controller-gen@vX.Y.Z`，不要 `@latest`（go toolchain 自动切换仍要求代理可达） |
-| 2 | **CRD 与 controller 分离部署的时序坑** | `make deploy` 同一批对象里含 CRD 和你预填的 CR → apiserver 还没 Established CR，CR 落地 404/timeout。根治：先 `make install`（只 CRD）→ 等 `kubectl wait --for=condition=Established crd/...` → 再 deploy；GitOps 场景 sync-wave：CRD 波次 < webhook/CR 波次 |
-| 3 | **`make run` 跑起来没反应** | controller 起来了但「不调谐」：① 忘 `make install`（CRD 不在）；② kubeconfig context 指错集群；③ `make run` 在把自己当成集群内 Pod 读 in-cluster config 失败——本地跑务必走 kubeconfig（scaffold 的 `ctrl.GetConfigOrDie()` 自动优先 kubeconfig） |
+| 2 | **CRD 与 controller 分离部署的时序坑** | `make deploy` 同一批对象里含 CRD 和你预填的 CR → CRD 还没到 Established，CR 落地 404/timeout。根治：先 `make install`（只 CRD）→ 等 `kubectl wait --for=condition=Established crd/...` → 再 deploy；GitOps 场景 sync-wave：CRD 波次 < webhook/CR 波次 |
+| 3 | **`make run` 跑起来没反应** | controller 起来了但「不调谐」：① 忘 `make install`（CRD 不在）；② kubeconfig context 指错集群（你 watch 的是另一个集群）；③ controller 报 `GetConfigOrDie` / in-cluster config 错误——本地跑依赖 kubeconfig，别在容器里跑 make run（`ctrl.GetConfigOrDie()` 的顺序是 kubeconfig → in-cluster） |
 | 4 | **leader-election Role 忘绑** | in-cluster 部署开 `--leader-elect=true` 后 manager 403：`cannot get lease ...`。根治：scaffold 已生成 `config/rbac/leader_election_role(_binding).yaml`，确认 `config/default/kustomization.yaml` 里没被注释 |
-| 5 | **webhook 默认拉 cert-manager** | `kubebuilder create webhook` 后 `make deploy` 依赖 cert-manager 存在（证书 issuer/注入 caBundle 都是它的活）→ Learning 阶段本想轻跑却被挂满。建议：**学习篇先 `--webhooks=false` 不 create webhook**（骨架 main.go 里 webhook server 无 handler 也无碍；v0.25+ 还可 `--webhook-port=-1` 整个关掉），跑通 reconcile 后再加 |
+| 5 | **webhook 默认拉 cert-manager** | `kubebuilder create webhook` 之后 `make deploy` 才依赖 cert-manager（证书 issuer/注入 caBundle 都是它的活）→ 学习篇本想轻跑却被挂满。经验谈：**学习篇干脆不跑 `create webhook` 这步**（脚手架 webhook 是独立命令，不点这步你的 API/控制器零 webhook 依赖；骨架 main.go 里 webhook server 没有 handler 也无碍，controller-runtime v0.25+ 还可 `--webhook-port=-1` 整个关掉），reconcile 跑通后再回头加 |
 | 6 | **kind 拉不到 kindest/node 镜像** | 公司网络/镜像墙；用 `--image` 指定内部 mirror，或 `docker pull` 后 `kind create cluster --wait` 重试，可先 `docker images` 确认 |
 | 7 | **改完 types.go 忘 make generate/manifests** | CRD 没更新 → 新字段被 pruning 掉，「写了却不生效」。把 `make generate manifests` 设成编辑器的 save hook 是常见解法 |
 
 ### 4.5 什么时候不用 kubebuilder
 
 裸 controller-runtime（或者甚至裸 client-go）写出来的 Operator 完全可以摆脱 kubebuilder：kubebuilder 的价值在**脚手架 + 发版流水线默认值**（Makefile、Dockerfile、CI、lint、golangci-logcheck）。团队已有 Go monorepo / 自研 CI 的，往往选择「照抄骨架文件、弃 CLI」；个人学习与快速出活、中小团队，直接全家桶。Operator SDK = RedHat 在 kubebuilder 之上再封装（多了 helm/ansible operator 与 OLM 打包）——同一套 controller-runtime 底，一句决策：想要 Helm/Ansible operator 或 OLM 生态才上 SDK，否则 kubebuilder 直达。
-
----
 
 ---
 
@@ -542,6 +534,9 @@ type WebAppList struct {
 
 ```go
 // api/v1alpha1/groupversion_info.go
+// Package v1alpha1 contains API Schema definitions for the apps v1alpha1 API group.
+// +kubebuilder:object:generate=true
+// +groupName=apps.ops.example.com          ← 功能 marker：controller-gen 靠它定 CRD group，漏了会生成错组
 package v1alpha1
 
 import (
@@ -550,8 +545,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
+// GroupVersion：apps.ops.example.com/v1alpha1——GVK 的 G/V 部分就注册在这里。
 var GroupVersion = schema.GroupVersion{Group: "apps.ops.example.com", Version: "v1alpha1"}
 
+// SchemeBuilder 收集本包的类型注册函数；AddToScheme 是「一键注册进 manager scheme」的入口。
 var (
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 	AddToScheme   = SchemeBuilder.AddToScheme
@@ -820,7 +817,7 @@ func (r *WebAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 代码里的四个「不可省略的仪式」：
 
 1. **RBAC markers 五条**：主对象全动词 + `webapps/status` 写 + `webapps/finalizers` update + 每个受管子资源（deployments/services）全动词。少一行 = 403 + 卡死。
-2. **`client.IgnoreNotFound`**：racestance 的最后一道保险（对象在你 Get 和 Delete 之间消失）。
+2. **`client.IgnoreNotFound`**：竞态的最后一道保险——对象在「事件入队」和「你开始 Get」之间被删掉是常态（尤其不开 finalizer 时），NotFound 不是错误，是正常终点。
 3. **漂移只回写管理的字段**：注释里那场 bug 在实验 6.2 被真集群拒过一次——第一版全量替换 Template 把 labels 置 null，apiserver 报 `selector does not match template labels`。这是 §3.7 反模式 5 的原型。
 4. **`new(expr)`**：Go 1.26 语法（v4.15+ 骨架同样姿势；v0.24 起官方用 `new(x)` 替代 `ptr.To(x)`）。go.mod `go directive < 1.26` 的老项目继续用 `k8s.io/utils/ptr`。
 
@@ -828,6 +825,7 @@ func (r *WebAppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 ```go
 // cmd/main.go
+// main：Manager 装配——scheme、Cache/Client、健康探针、选主，全部在这里接线。
 package main
 
 import (
@@ -899,7 +897,7 @@ func main() {
 }
 ```
 
-对照 kubebuilder v4.16 骨架的差异说两句：骨架版更完整（metrics 走 :8443 HTTPS + `filters.WithAuthenticationAndAuthorization`、webhook server、TLS 选项、`LeaderElectionReleaseOnCancel` 开关注释），本例留下最小可讲版本；骨架版两段大同小异，实验 6.1 会把它跑一遍。
+对照 kubebuilder v4.16 骨架的差异说两句：骨架版更完整（metrics 走 :8443 HTTPS + `filters.WithAuthenticationAndAuthorization`、webhook server、TLS 选项、`LeaderElectionReleaseOnCancel` 开关注释），本例留下最小可讲版本；两者接线方式完全同构，实验 6.1 会把骨架版跑一遍。
 
 ### 5.4 生成的 CRD 与 RBAC（controller-gen v0.22.0 实产生物节选）
 
@@ -922,3 +920,376 @@ spec:
 RBAC 生成物 `config/rbac/role.yaml`：五行 markers → ClusterRole 一群五条 rules。**变化检测**：markers 改动后跑 `make manifests`，git diff 一眼可见——这是 markers 胜于手写 RBAC 的原因。
 
 ---
+
+## 六、测试与调试
+
+Operator 的测试金字塔：**fake client 单测（快、逻辑）→ envtest（真 apiserver，验证同集群互动）→ kind e2e（全链）**。前两层进 CI，第三层进流水线晚间档。
+
+### 6.1 fake client 单测（本机实测通过）
+
+`pkg/client/fake` 用 in-memory store 模拟一个 `client.Client`——**快速覆盖「我的业务逻辑」，不验证 apiserver 行为**（不过准入、不过 schema 校验、没有 GC、没有 webhook）。
+
+```go
+// internal/controller/webapp_controller_test.go（节选，本机 go test 已实测）
+func TestReconcileCreatesChildren(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = appsv1alpha1.AddToScheme(scheme)
+
+	replicas := int32(3)
+	webApp := &appsv1alpha1.WebApp{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"},
+		Spec:       appsv1alpha1.WebAppSpec{Image: "nginx:1.27", Replicas: &replicas, Hostname: "app.example.com"},
+	}
+	// WithStatusSubresource：不开它，Status().Update 会静默丢 status（fake client 的经典坑）
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(webApp).
+		WithStatusSubresource(&appsv1alpha1.WebApp{}).
+		Build()
+
+	r := &WebAppReconciler{Client: cl, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"}}
+	for i := 0; i < 5; i++ { // finalizer → 建 Deployment → 建 Service → 落定 status
+		if _, err := r.Reconcile(context.Background(), req); err != nil {
+			t.Fatalf("reconcile round %d: %v", i, err)
+		}
+	}
+
+	dep := &appsv1.Deployment{}
+	_ = cl.Get(context.Background(), types.NamespacedName{Name: "demo", Namespace: "default"}, dep)
+	owner := metav1.GetControllerOf(dep) // ownerReference 可断言：Kind=WebApp/Name=demo
+	_, _ = owner, dep
+}
+```
+
+第二个用例值得背（finalizer 删除路径）——fake client 可以**预置 Terminating 对象**（`DeletionTimestamp: &now` + 挂着 finalizer），而且**忠实模拟**「摘完最后一把 finalizer 且 deletionTimestamp 已置位 → 对象直接从存储消失」：断言对象 IsNotFound 即为过（v0.25.2 实测）。**边界一句**：GC 级联、准入控制、PSA、quota、webhook 全都不参与——这些正是 envtest/e2e 的层级。
+
+### 6.2 envtest：起一个真的 apiserver + etcd（本机实测通过）
+
+envtest 是 controller-runtime 的「便携式控制面」：本地下载 `kube-apiserver` + `etcd` 二进制（**无 kubelet/scheduler/kcm**），起进程给你的测试连——多版本矩阵、准入链、CRD 的 defaulting/校验全部真实。
+
+```bash
+# 安装（分支对齐 controller-runtime 大版本；v0.25 用 release-0.25）
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.25
+
+# 下载与集群对齐的资产（本机实测 1.37.0 资产落 ~/Library/Application Support/io.kubebuilder.envtest/）
+setup-envtest use 1.37.x!                     # 下载并打印路径
+source <(setup-envtest use -i -p env 1.37.x)  # 写入 KUBEBUILDER_ASSETS 环境变量
+# kubebuilder v4.15+ 的脚手架会 pin ENVTEST 版本并在 make test 里自动 setup-envtest（use -p path）
+```
+
+测试骨架（与 kubebuilder 骨架 `suite_test.go` 同形，**没装资产时自动 Skip，不拖垮普通 `go test`**）：
+
+```go
+// internal/controller/webapp_envtest_test.go（节选，本机 go test 已实测，8s 起控制面）
+func TestEnvtestEndToEnd(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS 未设置：先跑 setup-envtest use 1.37.x! 再重试")
+	}
+	testEnv := &envtest.Environment{
+		// 真集群里 CRD 来自 make install；测试直接喂 make manifests 产物目录
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases")},
+	}
+	cfg, err := testEnv.Start() // 随机端口 apiserver+etcd，全程本进程
+	if err != nil { t.Fatalf("start envtest: %v", err) }
+	defer func() { _ = testEnv.Stop() }()
+
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s); _ = appsv1alpha1.AddToScheme(s)
+	k8sClient, _ := client.New(cfg, client.Options{Scheme: s})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr, _ := ctrl.NewManager(cfg, ctrl.Options{Scheme: s})
+	_ = (&WebAppReconciler{Client: mgr.GetClient(), Scheme: mgr.GetScheme()}).SetupWithManager(mgr)
+	go func() { _ = mgr.Start(ctx) }()
+
+	_ = k8sClient.Create(ctx, newDemoWebApp("demo-env"))
+	// deadline 轮询：Deployment 应出现且 status 应回写（envtest 无 Deployment 控制器，
+	// 所以副本不滚动——验证的是「对象链 + status」而非「真跑起来」）
+	_ = mgr
+}
+```
+
+**它验证什么/不验证什么**：CRD 的 schema/defaulting/CEL（✓）、你的 controller 与真 apiserver 的读写往返与 RBAC（✓）；Pod 调度/容器运行（✗，没有 kubelet）、webhook 通不通（✓ 可测但需启 etcd 注入证书）、云资源（✗）。这一层能抓住 80% 的「fake client 测不出」的坑——尤其是 markers 写错（CRD 建不出来即刻报错）。
+
+### 6.3 本地调试节奏（make run 的正确打开方式）
+
+```bash
+# ① 开发档日志（scaffold 的 zap Options.Development=true；生产关掉）
+go run ./cmd -zap-devel=true
+
+# ② head-of-herd：盯着 reconciler 流（-zap-devel 下每轮 Reconciling/Error 都可见）
+tail -f controller.log | grep -E 'Reconcil|drift|created'
+
+# ③ delve 断点（挂在 make run 等价的进程上）
+dlv debug ./cmd -- -zap-devel=true
+# (dlv) b internal/controller.(*WebAppReconciler).Reconcile
+
+# ④ 定向观察集群侧（另终端）：
+kubectl get events -A --watch
+kubectl get webapps -w
+```
+
+调试时的三问：事件来没来（watch/predicate 问题）→ 进了 Reconcile 没打日志（业务分支问题）→ 写了没生效（RBAC/409/字段被 pruning）。
+
+---
+
+## 七、生产着陆清单
+
+上生产前逐条打勾，全部是前文的「纪律点」汇总：
+
+| # | 项 | 标准 |
+|---|----|------|
+| 1 | 镜像 | 固定 digest 引用（`repo@sha256:`）+ 非 root + 只读根（第 5 章 §2 四件套）；`make docker-build docker-push IMG=仓库/webapp-operator:v0.1.0`，交付用 `make build-installer` |
+| 2 | registry | 内网镜像仓库 + 拉取凭证（imagePullSecrets）；跨集群交付统一域名别依赖 latest |
+| 3 | metrics | `:8443`（authn/authz 过滤）+ **ServiceMonitor**（`config/prometheus/monitor.yaml` scaffold 给好的）；告警三件套：`controller_runtime_reconcile_errors_total`、`workqueue_retries_total`、`controller_runtime_reconcile_time_seconds` P99 |
+| 4 | leader election | **生产必开**（`--leader-elect=true` + 2 副本 + `LeaderElectionReleaseOnCancel: true`）；关闭单副本是「接受升级窗口脑停」的自觉选择，不是默认 |
+| 5 | 资源请求 | requests/limits 都写：单 CR、少量 watch 的 operator `100m/256Mi` 起步足够；大集群注意 cache 内存**随 watch 对象数线性涨**（§2.2 ByObject 收窄是第一手段），上线后用 `:8443/metrics` + pprof 校准 |
+| 6 | RBAC 最小化 | 动词逐个审议；ClusterRole 能收 Role 就收 Role（ns 级 operator）；leases 权限只给锁 ns |
+| 7 | 升级策略 | **CRD 先行**（新 CRD 落下 → 等 Established → 再升 controller）；schema 变更必须向后兼容或有 conversion webhook 兜底（§1.3）；回退顺序倒着来 |
+| 8 | POD 安全 | manager 容器套用第 5 章 §2 四件套起步（runAsNonRoot/seccomp RuntimeDefault/allowPrivilegeEscalation=false/drop ALL，近年 scaffold 的 `config/manager/manager.yaml` 已按此收敛；旧项目自查）；`automountServiceAccountToken` 保持 true（operator 本体必须访问 API），但在 SA 上只绑第 6 条的最小 RBAC |
+| 9 | finalizer 运行手册一页 | oncall 见到「CR 卡 Terminating」时的标准动作：① 看 controller 日志查清理失败原因；② 修原因（云 IAM/配额/依赖粘连）；③ 实在修不了、**确认外部资源已手工处理后**才人工摘 finalizer（接受泄漏）（第 1 章 §4.3 有完整卡死处置表） |
+| 10 | 回滚预案 | CRD 改动不可逆为主（加字段安全、删/改字段危险）——上线前把「旧版 controller 能否读写新版 CRD」当成 checklist 一项过 |
+
+---
+
+## 八、常见生产问题清单（Operator 视角）
+
+| # | 症状 | 根因链 | 排查/处置 |
+|---|------|--------|-----------|
+| 8.1 | **reconcile 风暴**：`controller_runtime_reconcile_total` QPS 异常高、CPU 打满 | watch 拓扑太宽（For 了热资源）；predicate 没挂 GenerationChanged；自己写 status 又触发自己 | `kubectl get --raw /metrics \| grep reconcile`；排查序：先看是哪个 controller（指标 label）→ 看事件源（日志里 Reconciling 的 name 分布是否病态集中）→ 收 predicate/`cache.Options.ByObject`；`MaxConcurrentReconciles` 反而要往下调压峰值 |
+| 8.2 | **cache 不同步错觉**：「刚改了 CR，controller 行为像没看到」 | 读走 cache 读的是旧快照；或写完立即读自己写的字段 | 把后续动作放进下一轮（事件会回来）或 `mgr.GetAPIReader()` 强制直读；v0.25.0 实验特性 `Client.EnableReadYourWritesConsistency: new(true)` 专为此生，生产先别依赖 |
+| 8.3 | **脑裂**：两个副本同时在工作、互相覆盖子对象 | 直接原因就是没开 `--leader-elect` 又跑了多副本（controller-runtime 拿不到锁会拒绝启动控制器组，不会「开跑」——所以真正的脑裂几乎全是忘开选主）；或 lease 过期面太大掩盖了节点级长断网 | `kubectl get lease -n <部署ns>`——应只有一个 `holderIdentity`；未开选主时副本数上限=1 |
+| 8.4 | **finalizer 卡死**：CR 永远 Terminating（实验 6.2 step 8 真实复现过） | 清理逻辑失败 / 外部云资源卡 / **控制器进程没了** / RBAC 缺 `xxx/finalizers:update` | ① `kubectl get <crd> <x> -o jsonpath='{.metadata.finalizers}'` 看是哪把锁；② controller 日志找清理错误；③ 修复根因让清理跑通；④ 确实救不了才人工摘（运行手册 §7.9） |
+| 8.5 | **RBAC 事件**：日志报 403 `cannot list resource "xxx" in API group` | markers 没加/生成后没重新 deploy role | `kubectl auth can-i --as system:serviceaccount:<ns>:<sa> <verb> <resource>` 快进定位；update markers → `make manifests deploy` |
+| 8.6 | **SSA field manager 冲突**：apply 时报 `conflict with "<other-manager>" using <type>` | 两个控制器「认领」同一字段（经典：operator vs HPA 都管 `replicas`）；或你错误地用「读出来的全量对象」做 Apply（§2.6 纪律 ②——把别人的字段也「认领」了） | `kubectl get <obj> --show-managed-fields -o yaml` 看字段护照；三选一出路：字段放手让给高优先控制器 / 抽成注解或独立字段各管各的 / 用 `--force-conflicts` 宣示主权（慎重） |
+| 8.7 | **Conversion webhook 把升级锁死**：升级 CRD 上 conversion webhook 挂了 → **全版本 CR 读写全瘫** | apiserver 每次读写都要调你的 webhook 做版本互转；webhook 挂了 = 整个 CRD 的可用性=webhook 可用性 | 上 conversion webhook = 你的控制器自此升级**顺序死锁**：先升 webhook 新代码（兼容新旧两版）→ 再升 CRD；webhook 服务的 PDB/多副本/HPA 都是硬要求；`failurePolicy` 这里没有 Ignore 的余地（协议层强依赖） |
+| 8.8 | **worker 排队感**：某个 CR 10 分钟才轮到 | MaxConcurrentReconciles=1（默认） + 前面挤着一个长事务 | 日志看 `worker count`；指标 `workqueue_depth{controller=...}`；大集群调 4~32 |
+| 8.9 | **401 expired kubeconfig**：本地 `make run` 长期挂机后 401 | 云端 kubeconfig token 过期（EKS ExecCredential 15 分钟等） | 重跑 `make run`；生产用 in-cluster SA 不存在此问题 |
+
+---
+
+## 九、实验（kind 沙箱 4 连）
+
+> 环境：docker 运行中、`kubectl`、Go 1.26（GOTOOLCHAIN=auto 可由 1.24 自动切换）、`kind`、（可选）`kubebuilder`。
+> 命中版本实测组合（2026-10-14 全走过）：**kind v0.33.0**（默认节点 `kindest/node:v1.37.0`，官方 digest `sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`）、**controller-runtime v0.25.2**、**controller-gen v0.22.0**、**kubebuilder v4.16.0**。
+
+### 实验 6.1 kubebuilder 从零到 make run（含踩坑表）
+
+```bash
+# step 1 集群（不写 --image 即 kind 默认 v1.37.0；官方建议按 digest 钉）
+kind create cluster --name op-exp \
+  --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+
+# step 2 脚手架（学习期不跑 create webhook——cert-manager 依赖会带来一波 pre-flight 噪音，§4.4 坑 5）
+mkdir memcached && cd memcached
+kubebuilder init --domain example.com
+kubebuilder create api --group cache --version v1alpha1 --kind Memcached
+
+# step 3 一行不写先全链跑通（骨架 Reconcile 已能终态返回）
+make install
+kubectl get crd memcacheds.cache.example.com -o jsonpath='{.status.conditions[?(@.type=="Established")].status}'
+make run   # 另终端；能看到 Starting workers {"worker count": 1} —— §2.4 的默认值实锤
+
+# step 4 建样例 CR、看状态、收链
+kubectl apply -k config/samples/
+kubectl get memcacheds.cache.example.com
+make uninstall      # 卸 CRD（CR 会同步消失——CRD 删除即清空全部 CR）
+make undeploy 2>/dev/null || true
+```
+
+踩坑表（按出现频率）：
+
+| 坑 | 现象 | 解 |
+|----|------|----|
+| `make run` 报 `no kind is registered` | create api 后忘了同步 scheme / 用了陈旧 go build 缓存 | 骨架里 main.go 的 `cachev1alpha1.AddToScheme(scheme)` 在；`go clean -cache` |
+| controller-gen 版本错位 | `make manifests` 语法错 | Makefile 钉 `CONTROLLER_TOOLS_VERSION:=v0.22.0`；团队统一 `go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.22.0`，**勿 @latest**（详见 §4.4 坑 1） |
+| CR 落地但 controller 没反应 | context 指错集群 / 忘 install | `kubectl config current-context`；`make install` |
+| 骨架 go.mod 要 go1.26 本机只有旧版 | go toolchain 自动切换失败（代理受限） | `GOTOOLCHAIN=auto` + GOPROXY 可达（`goproxy.cn,direct` 实测可行），或本机装 go1.26 |
+
+### 实验 6.2 WebApp Operator 全链（本机真实输出节选）
+
+按 §5 的代码创建一个 module（`go.mod`：`module example.com/webapp-operator` + `go 1.26.0` + `sigs.k8s.io/controller-runtime v0.25.2`）。
+
+```bash
+# step 1 装 CRD（§5.4 生成物）
+kubectl apply -f config/crd/bases/apps.ops.example.com_webapps.yaml
+kubectl api-resources --api-group=apps.ops.example.com
+#  NAME      SHORTNAMES   APIVERSION                          NAMESPACED   KIND
+#  webapps   wa           apps.ops.example.com/v1alpha1       true         WebApp
+
+# step 2 本地 controller（等价 make run）
+go run ./cmd -zap-devel=true   # 前台起步：Starting workers {"worker count": 1}
+
+# step 3 建 CR → 子对象自动出现
+cat <<'EOF' | kubectl apply -f -
+apiVersion: apps.ops.example.com/v1alpha1
+kind: WebApp
+metadata: { name: hello }
+spec: { image: nginx:1.27, replicas: 2, hostname: hello.ops.example.com }
+EOF
+kubectl get wa hello
+#  NAME    READY   URL                            AVAILABLE   AGE
+#  hello           http://hello.ops.example.com   False       7s
+kubectl get deploy,svc -l app.kubernetes.io/instance=hello
+#  → deployment.apps/hello (0/2 → 稍后 2/2) + service/hello (ClusterIP) 全部就绪
+
+# step 4 condition 翻转（kubectl wait 直接可用！）
+kubectl wait webapp hello --for=condition=Available --timeout=120s
+kubectl get wa hello
+#  NAME    READY   URL                            AVAILABLE   AGE
+#  hello   2       http://hello.ops.example.com   True        36s
+
+# step 5 漂移纠偏（人为扰乱 → 被回正）
+kubectl scale deploy/hello --replicas=1
+sleep 8 && kubectl get deploy hello -o jsonpath='{.spec.replicas}'   # → 2
+#  controller 日志：reconciled Deployment drift
+
+# step 6 服务端校验拦截（§1.2 CEL/schema；值超界/格式错当场拒）
+kubectl apply -f - <<'EOF'
+apiVersion: apps.ops.example.com/v1alpha1
+kind: WebApp
+metadata: { name: bad }
+spec: { image: nginx:1.27, replicas: 99 }
+EOF
+#  The WebApp "bad" is invalid: spec.replicas: Invalid value: 99: ... should be less than or equal to 50
+
+# step 7 删除清场（finalizer 摘除 + GC 级联）
+kubectl delete webapp hello
+kubectl get deploy,svc -l app.kubernetes.io/instance=hello
+#  No resources found in default namespace.     ← ownerReference 全链清光
+
+# step 8（反向课）控制器挂掉时的 Terminating 死锁：pkill 掉 step 2 进程后 kubectl delete webapp hello
+#  → CR 卡在 deletionTimestamp + finalizer，Deployment 留着；
+#  → 重启 controller 立即完成摘除+级联。这就是 §8.4 的运行手册活教材。
+```
+
+**踩坑实录（本章作者真实踩过）**：漂移纠偏第一版写的是「整个 `dep.Spec.Template` 换成局部构造对象」——真集群里 apiserver 当场拒：`spec.template.metadata.labels: Invalid value: null: selector does not match template labels`，错误日志被 fake client 埋掉（fake 不过这种校验）只能 kind 层现形。**这就是「只回写管理字段」纪律（§3.7 反模式 5）以及「fake→envtest→kind 三层，层层能抓住新病」（§6）的实锤论证**。
+
+### 实验 6.3 printer columns 与 conditions 体验
+
+```bash
+# step 1 categories 批量拉取（§1.4）
+kubectl get ops   # 一把拉出 categories=[ops] 的所有 WebApp
+
+# step 2 -o wide 观察自定义列（本例列 priority 为 0，全量列默认已显示）
+kubectl get webapps -o wide
+
+# step 3 wait 的两种姿势（CI/GitOps 友好）
+kubectl wait webapp hello --for=jsonpath='{.status.availableReplicas}'=2 --timeout=60s
+kubectl wait webapp hello --for=condition=Available=True --timeout=60s
+
+# step 4 新版 CR 上 CEL（§1.2，以下 YAML 即在 kind v1.37 实测过的原文）
+cat <<'EOF' | kubectl apply -f -
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: { name: celchecks.apps.ops.example.com }
+spec:
+  group: apps.ops.example.com
+  scope: Namespaced
+  names: { kind: CelCheck, plural: celchecks, singular: celcheck }
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              minReplicas: { type: integer }
+              replicas:    { type: integer }
+              maxReplicas: { type: integer }
+            x-kubernetes-validations:
+            - rule: "self.minReplicas <= self.replicas"
+              message: "replicas 不能小于 minReplicas"
+            - rule: "self.replicas <= self.maxReplicas"
+              message: "replicas 不能大于 maxReplicas"
+EOF
+cat <<'EOF' | kubectl apply -f - 2>&1 | head -3
+apiVersion: apps.ops.example.com/v1
+kind: CelCheck
+metadata: { name: c1 }
+spec: { minReplicas: 1, replicas: 5, maxReplicas: 3 }
+EOF
+#  The CelCheck "c1" is invalid: spec: Invalid value: replicas 不能大于 maxReplicas   ← 自定义中文 message 原样返回
+kubectl delete crd celchecks.apps.ops.example.com
+```
+
+### 实验 6.4 envtest 单测跑通（可选进阶）
+
+```bash
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.25
+setup-envtest use 1.37.x!
+export KUBEBUILDER_ASSETS="$(setup-envtest use -i -p path 1.37.x)"
+go test ./internal/controller/ -run TestEnvtestEndToEnd -v -count=1
+#  === RUN   TestEnvtestEndToEnd
+#  --- PASS: TestEnvtestEndToEnd (8.05s)        ← 本机真实输出：8 秒起 apiserver+etcd 全程
+go test ./internal/controller/ -v -count=1     # 不含该环境变量时自动 Skip，不拖 CI
+```
+
+清理链：`kind delete cluster --name op-exp`；删 envtest 资产 `setup-envtest cleanup <1.37`。
+
+---
+
+## 十、速查表 + 背诵要点 + 参考链接
+
+### 10.1 一页速查
+
+| 主题 | 命令 / 字段 / API（写作时版本） |
+|------|--------------------------------|
+| 版本栈 | K8s v1.37 · controller-runtime **v0.25.2**（→k8s.io v1.37）· kubebuilder **v4.16.0**（controller-gen v0.22.0）· kind **v0.33.0**（node v1.37.0）· Go **1.26** |
+| structural schema 四条 | 每节点非空 type；逻辑体字段外置；约束不进 allOf/anyOf/oneOf/not；metadata 只限 name/generateName；违规 → CRD `NonStructural` 条件 |
+| CEL 校验 | `x-kubernetes-validations`：**v1.25 Beta → v1.29 GA**；超限拒写 `CEL rule exceeded budget by more than 100x`；遍历须同步写 maxItems/maxProperties/maxLength；`oldSelf` 过渡规则；`optionalOldSelf` 自定义回退 |
+| ratcheting | `CRDValidationRatcheting`：v1.28 Alpha → v1.33 GA 默认开；量词/list-type/required/metadata 内建校验不回退；oldSelf 规则永不回退 |
+| 转换 | 多版本 served 并存，**唯一 storage**；strategy `None`（默认）/`Webhook`；接口：`Hub()` 标记 + `Convertible{ConvertTo,ConvertFrom}`（`conversion.Hub`）；`kubebuilder create webhook --conversion --spoke v2` |
+| subresources | `status: {}`（分离写/RBAC/不 bump generation）；`scale: { specReplicasPath, statusReplicasPath, labelSelectorPath }`（kubectl scale/HPA 可用） |
+| kubectl 体验 | `additionalPrinterColumns`（JSONPath，priority>0 仅 wide）；`shortNames`；`categories`（`kubectl get ops`） |
+| Builder 三件 | `For`（EnqueueRequestForObject）· `Owns`（EnqueueRequestForOwner，controllerOnly）· `Watches`（EnqueueRequestsFromMapFunc）；predicate 用 `builder.WithPredicates` 挂到具体 watch，忌 `WithEventFilter` 一把梭 |
+| 返回值语义 | err→AddRateLimited；TerminalError→丢弃不重试；RequeueAfter→Forget+定时；`Requeue:true` **已 Deprecated（用 RequeueAfter）**；err 非 nil 时 Requeue/After 被忽略 |
+| Cache/Client | **读走 cache 写直连**；`mgr.GetAPIReader()` 强一致；`cache.Options.ByObject` 收窄 watch；`EnableReadYourWritesConsistency` 实验 |
+| 并发/限速 | `MaxConcurrentReconciles` 默认 1；默认限速器 = MaxOfRateLimiter（项退避 5ms→1000s + 全局 10qps/100）；priority queue v0.23 默认开，`Result.Priority` |
+| leader election | 默认关；`--leader-elect` + `LeaderElectionID` + Leases RBAC；ReleaseOnCancel；standby 也跑 cache |
+| 写入策略 | 独占对象→Update / MergeFrom Patch；共管大对象→SSA `client.Apply` + `FieldOwner` + 骨架对象；v0.23 起 status 子资源可 SSA |
+| finalizer | 需要外部清理才挂；`deletionTimestamp != 0` 分支；RBAC `xxx/finalizers:update`；摘完即真删 |
+| kubebuilder | `init --domain` → `create api` → `make generate manifests` → `make install` → `make run` → `make docker-build/push deploy` → `make uninstall/undeploy/build-installer` |
+| 测试三层 | fake client（`WithStatusSubresource` 别忘）→ envtest（`setup-envtest use 1.37.x!` + `KUBEBUILDER_ASSETS`）→ kind e2e；每层能抓新病 |
+| 关键指标 | `controller_runtime_reconcile_total/errors_total/time_seconds`、`workqueue_depth/retries_total`；指标名随版本微调，先 `kubectl get --raw /metrics \| grep ...` 按本版核对 |
+
+### 10.2 关键要点（背诵版）
+
+1. **Operator = CRD × Controller × 运维知识**；工具链只交付前两件，第三件靠你写进代码。
+2. **structural schema 是三件套前提**：不真 structural 就没有 pruning/defaulting/CEL；CEL **v1.25 Beta → v1.29 GA**，写入 CRD 时就做成本静态估算，超限拒 CRD 本身。
+3. **多版本只有一个 storage**；结构变了上 conversion webhook；上了它可用性 = webhook 可用性，升级顺序锁死（先新代码后新 CRD）。
+4. **controller-runtime 的核心言行**：读走 cache、写直连、Manager 宿舍、Builder 声明 watch 拓扑、Reconcile 只收 namespace/name。
+5. **GenerationChangedPredicate 是主对象的默认安全网**；但要挂在 `For(..., builder.WithPredicates(...))` 上，`WithEventFilter` 会殃及 Owns。
+6. **Reconcile 三铁律**：level-based 快照收敛、幂等（adopt-or-create）、小步提交；`Result.Requeue` 已弃用，用 `RequeueAfter`；`TerminalError` 用来标记「别救我」。
+7. **`SetControllerReference` 一行三收益**：级联删除、Owns 回链、排他 ownership；status 由 `Status().Update` 写子资源，condition 遵循 `ObservedGeneration` 纪律。
+8. **RBAC markers 五条是启动条件**：主对象、status、finalizers，受管子资源全动词；少一条 = 403 或卡死。
+9. **测试三层各抓一类病**：fake 抓逻辑、envtest 抓 markers/RBAC/往返、kind 抓「真的能在集群里活」。本章漂移 bug 就是 fake 全绿而 kind 拒写的铁证。
+10. **生产四件套**：leader election 开、metrics ServiceMonitor 起、RBAC 最小、CRD 先行的升级链——外加一页「finalizer 卡死」运行手册。
+
+### 10.3 参考链接
+
+| 主题 | 链接 |
+|------|------|
+| CRD 官方页（structural schema/CEL/ratcheting/subresources/printer columns） | https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/ |
+| CRD 版本化（served/storage/conversion） | https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/ |
+| Kubebuilder Book（quick start / getting started / multiversion） | https://book.kubebuilder.io/ |
+| controller-runtime releases（v0.25.2 = k8s 1.37；v0.24 = 1.36；v0.23 = 1.35） | https://github.com/kubernetes-sigs/controller-runtime/releases |
+| controller-runtime 文档（manager/builder/predicates/cache 选项） | https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.25.2 |
+| kubebuilder releases（v4.16.0） | https://github.com/kubernetes-sigs/kubebuilder/releases |
+| setup-envtest README（分支安装/KUBEBUILDER_ASSETS/资产目录） | https://github.com/kubernetes-sigs/controller-runtime/tree/main/tools/setup-envtest |
+| controller-tools / controller-gen（v0.22.0，markers 参考） | https://github.com/kubernetes-sigs/controller-tools |
+| kind releases（v0.33.0 / v1.37.0 digest） | https://github.com/kubernetes-sigs/kind/releases |
+| Operator pattern（官方概念） | https://kubernetes.io/docs/concepts/extend-kubernetes/operator/ |
+| Operator SDK vs kubebuilder | https://sdk.operatorframework.io/docs/overview/operator-sdk-full-workflow/ |
+| API Conventions（status conditions / reason 纪律） | https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties |
+
+---
+
+> 全章 Go（types.go / controller.go / main.go / 两个测试文件）已在 **go1.26.0 + controller-runtime v0.25.2 + k8s v1.37** 上完成 `go vet` / `go build` / `go test`（fake client 与 envtest 双绿），并在 **kind v0.33.0（v1.37.0）** 集群完成 e2e：CR→子对象→condition 翻转→漂移纠偏→删除级联。下一章（总纲第 7 章）推进生产集群运维。
