@@ -300,7 +300,7 @@ df -h / /var/lib/containerd 2>/dev/null; df -i / /var/lib/containerd 2>/dev/null
 |------|--------------------------|----------------------|
 | 触发 | 该容器 usage 越过 memory **limit** | 整机内存耗尽，内核按 oom_score 选人杀 |
 | 现场 | `Reason: OOMKilled`、`Exit Code: 137`（128+9）  | **没有 OOMKilled reason**；容器/系统进程被随机杀（可能杀到 kubelet/containerd 一侧），containerd 重启后 exitCode 常显示非 137 或干脆无 lastState |
-| 判据 | jsonpath（下） | `journalctl -k \| grep -iE 'out of memory|oom-kill' \| tail`——`Memory cgroup out of memory: Killed process` = A 层；`Out of memory: Killed process ... (oom_score_adj ...)` 不带 cgroup 定语 = B 层 |
+| 判据 | jsonpath（下） | `journalctl -k \| grep -iE 'out of memory\|oom-kill' \| tail`——`Memory cgroup out of memory: Killed process` = A 层；`Out of memory: Killed process ... (oom_score_adj ...)` 不带 cgroup 定语 = B 层 |
 | 处置 | 提 limit / 降应用内存 / 找泄漏 | 找整机谁在涨（`ps aux --sort=-%mem`）；系统性杀进程还会牵连 kubelet → 更像「节点失联」；oom_score_adj 视角：Guaranteed -997/BestEffort 1000（第 7 章 §6.4） |
 
 ```bash
@@ -403,7 +403,7 @@ kubectl get pod <pod> -o jsonpath='{.spec.schedulingGates}{"\n"}'
 | 症状（STATUS 列） | 首查命令 | 高频根因排序（从上往下查） |
 |------------------|---------|---------------------------|
 | **ImagePullBackOff / ErrImagePull** | `kubectl describe pod <pod> \| sed -n '/Events/,$p'`；`kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[0].state.waiting.message}'` | ① tag/镜像名拼错或忘了 push（官方 debug-pods 三板斧：名字对？push 了？本机 `docker pull` 试）② registry 认证失败（imagePullSecrets 缺失/过期/namespace 放错）③ 仓限流（docker.io 匿名限额 429）④ 节点 egress 断/代理错（带代理集群）⑤ 国内 registry.k8s.io 可达性（mirror 配置，第 7 章 §2.4） |
-| **CreateContainerConfigError** | `kubectl describe pod` 的 Events 会点名 | ① 引用的 ConfigMap/Secret 不存在（或 key 错，env 的 `valueFrom.*KeyRef`）② volumeMounts 名字与 volumes 对不上 ③ ServiceAccount 不存在（deleted 后被照样引用） ④ `resourceFieldRef`/`fieldRef` 路径写错 |
+| **CreateContainerConfigError** | `kubectl describe pod` 的 Events 会点名 | ① 引用的 ConfigMap/Secret 不存在（或 key 错，env 的 `valueFrom.*KeyRef`）② volumeMounts 名字与 volumes 对不上 ③ 引用的 ServiceAccount 不存在（SA 被误删后 Pod 照旧引用它）④ `resourceFieldRef`/`fieldRef` 路径写错 |
 | **CreateContainerError** | `kubectl logs <pod> -c <c>`（大概率没日志）→ 节点上 `sudo crictl ps -a \| grep <name>` + `sudo crictl logs <cid>` + `sudo journalctl -u containerd --since '30m ago' \| grep <pod-name>` | ① OCI spec 层失败（镜像层损坏、`ImageVerify` 失败）② seccomp/apparmor profile 不存在或语法错 ③ mount 目标冲突/只读文件系统期望写挂载 ④ cgroups 层面异常（cgroup driver 不一致的余波，第 7 章 §2.3）⑤ 节点磁盘满拉不动层 |
 | **CrashLoopBackOff** | 三连：`kubectl logs <pod> -c <c> --previous --tail=50` + `.lastState.terminated.reason` + `.exitCode`（exit code 词典见 6.2） | ① 应用自身崩溃（exit 1：配置错/依赖连不上/未捕获异常）② OOMKilled（exit 137，§4.4 A 类）③ liveness 探针过于激进（slow start 被当死，§6.5）④ 启动命令本身执行完就退（exit 0 的「假 CrashLoop」：主进程不是常驻）⑤ entrypoint 里 segfault（139）/命令不存在（127） |
 | **Init 卡死：`Init:N/M` / `Init:Error` / `Init:CrashLoopBackOff`** | `kubectl logs <pod> -c <init-container-name>`（init 容器要 `-c` 指定）；`kubectl describe pod`（状态表引用官方 debug-init-containers 页：Init:N/M=完成 N 个共 M 个） | ① init 依赖的外部服务/DNS 没就绪（init 早于业务容器，探针也不跑）② init 里等 PVC/Secret 还没挂载好（卷在 init 前挂载，但内容源可能没供给完）③ init 脚本自身逻辑死循环 ④ native sidecar（`restartPolicy: Always` 的 init 容器，v1.29 β/v1.33 GA）的容器健康定义错——sidecar 不 Ready 业务容器永不启动 |
