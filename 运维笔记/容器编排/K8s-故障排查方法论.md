@@ -35,7 +35,7 @@ K8s 是声明式系统。你在 YAML 里写下「期望状态」，集群里几�
 | 本章域 | 机制章出处 | 本文补上什么 |
 |--------|-----------|-------------|
 | 域一·控制面（§三） | 第 1 章 §9 生产问题清单（etcd 满/重启风暴/429/慢）；第 7 章 §5 证书、§6.1 调优 | 把「kubectl 全卡/慢/429/对象不生效」归一成判读链（readyz→静态 Pod→etcd→webhook/聚合层） |
-| 域二·节点（§四） | 第 7 章 §6.4 eviction 底线、§7 NPD；第 1 章 QoS | NotReady 决策链、kubelet 日志 grep 模板、**两种 OOM 的区分**、crictl 排障速查 |
+| 域二·节点（§四） | 第 7 章 §6.4 eviction 底线与驱逐排序/QoS、§7 NPD + draino | NotReady 决策链、kubelet 日志 grep 模板、**两种 OOM 的区分**、crictl 排障速查 |
 | 域三·调度 Pending（§五） | 第 2 章 §7.3 四步排查链（完整引用）、§1.5 QueueingHints、§11.1 SchedulingGates | 两个边缘 CASE：「调度系统本身病了」「明明有空闲节点但不调」 |
 | 域四·Pod 与容器（§六） | 第 1 章 §4.3 finalizer；`K8s-Pod生命周期详解.md` | 全生命周期症状词典、exit code 词典、**kubectl debug 四形态**、**nsenter 绝招**、优雅退出时序 |
 | 域五·网络与 DNS（§七） | 第 3 章 §5.5 CoreDNS 三板斧、§6.3-6.5 NetworkPolicy 静默放行、§4.6 conntrack、§3.5 MTU | 逐跳定位法（每跳给工具与判定标准）、ndots 两个 mini 案例、MTU 黑洞症状表 |
@@ -49,9 +49,9 @@ K8s 是声明式系统。你在 YAML 里写下「期望状态」，集群里几�
 
 | 已有笔记 | 保留什么（继续在那篇看） | 本章接管什么 |
 |---------|------------------------|-------------|
-| `K8s-排障进阶-5个冷门kubectl命令详解.md` | 5 个命令的完整语法与坑点：events 跨 ns、debug 三模式、logs --previous、top+describe node、explain/api-resources | 这些命令「放在哪一步用」：events 进 §二总入口；debug 进 §6.2 四形态全解（补 profile 档与官方勘误）；--previous 进 §6.5 现场留证；top/QoS 进 §4.4 资源账本 |
-| `Docker-K8s-快捷批量操作手册.md` | jsonpath/jq/cordn-drain 批量操作与危险操作安全清单（§八「先列出再执行」仍是排障期的高压线） | 批量操作在排障场景的落点：批量删 Evicted（§4.3 eviction 后清场）、「某节点上有哪些 Pod」（§4.1 盘点）等只在对应域给一行引用 |
-| `k8s-常用操作手册.md` | kubectl 通用速查、label/亲和/Ingress/PV 资源模板 | 排障视角的命令序（describes→logs→debug→节点件），资源语法不再重复 |
+| `K8s-排障进阶-5个冷门kubectl命令详解.md` | 5 个命令的完整语法与坑点：events 跨 ns、debug 三模式、logs --previous、top+describe node、explain/api-resources | 这些命令「放在哪一步用」：events 进 §1.3/§二总入口；debug 进 §6.3 四形态全解（补 profile 档与官方勘误）；--previous 进 §6.6 现场留证；top/QoS 进 §4.3/§4.4（资源与 OOM 判读） |
+| `Docker-K8s-快捷批量操作手册.md` | jsonpath/jq/cordon-drain 批量操作与危险操作安全清单（§八「先列出再执行」仍是排障期的高压线） | 批量操作在排障场景的落点：批量删 Evicted（§4.3 eviction 后清场）、「某节点上有哪些 Pod」（域二盘点）等只在对应域给一行引用 |
+| `k8s-常用操作手册.md` | kubectl 通用速查、label/亲和/Ingress/PV 资源模板 | 排障视角的命令序（describe→logs→debug→节点件），资源语法不再重复 |
 | `K8s-组件详解.md` | 各组件功能详解与 §8 大速查（8.1-8.5 命令索引） | 「组件出故障时怎么判读」：静态 Pod 卡死（§3.2）、etcd alarm（§3.3）、kubelet 日志（§4.2）、CoreDNS（§7.3）——症状→判读→修复，命令清单不重复 |
 
 > 一句话：**这 4 篇是「命令词典」，本章是「什么时候用哪本词典哪一页」**。
@@ -60,7 +60,7 @@ K8s 是声明式系统。你在 YAML 里写下「期望状态」，集群里几�
 
 第 7 章 §9.4 列了 7 个破坏场景（错证书/删 etcd 数据/杀 CNI/停 kubelet/堵磁盘/过期 Ingress 证书/CoreDNS 黑洞），本文 §11（实验 8.1）把它们扩成**带破坏命令、预期症状、标准排查路径、恢复动作、自评耗时目标**的完整 runbook 表——每个场景演完，把实录写成一篇复盘（按 §10 模板）归档，你的「肌肉记忆」才算成型。
 
-❗ 心智前十条（先背这十条再看正文）：①症状=没 reconcile 成功，先找负责的控制循环；②先摸「面」再钻「点」；③events 是证词但有 1h TTL；④API 层状态 ≠ 节点真相；⑤一次只改一个变量；⑥先止血后根治；⑦Production 默认只读操作优先于写；⑧任何「删」字命令先 `kubectl get` 同选择器列一遍；⑨复盘不写=没修好；⑩runbook 不演练=没有 runbook。
+❗ 心智前十条（先背这十条再看正文）：①症状=没 reconcile 成功，先找负责的控制循环；②先摸「面」再钻「点」；③events 是证词但有 1h TTL；④API 层状态 ≠ 节点真相；⑤一次只改一个变量；⑥先止血后根治；⑦生产上默认只读优先于写；⑧任何「删」字命令先 `kubectl get` 同选择器列一遍；⑨复盘不写=没修好；⑩runbook 不演练=没有 runbook。
 
 ---
 
@@ -79,15 +79,15 @@ K8s 是声明式系统。你在 YAML 里写下「期望状态」，集群里几�
 三条贯穿全程的纪律：
 
 - **先读再看再动**：证据收集期坚持「只读命令」——`get/describe/logs/top/diff/get --raw` 全家都是只读；写操作（delete/patch/scale/cordon）进修复期再动，且一次一个。
-- **API 层状态 ≠ 节点真相**：apiserver 里 Pod 是 Running，节点上容器可能早挂了（kubelet 状态上报有自己的节奏，NodeLease 默认 40s 不上报会被判失联）。两边对不上时，**节点侧（crictl/journalctl/dmesg）是更接近物理的真相**——参考第 7 章 §3.5「get cs 已废」的教训：任何「替你代报」的状态都要怀疑一层。
-- **变更同时段审计**：「故障开始前 30 分钟，谁动了什么」是 60% 事故的第一问题。K8s 审计日志（第 1 章 §8，审计策略控制粒度）、GitOps 仓库 commit（Argo CD 场景）、云厂商操作审计三线对表。
+- **API 层状态 ≠ 节点真相**：apiserver 里 Pod 是 Running，节点上容器可能早挂了（kubelet 状态上报有自己的节奏，NodeLease 续约窗口默认约 40s，超窗即被判失联）。两边对不上时，**节点侧（crictl/journalctl/dmesg）是更接近物理的真相**——参考第 7 章 §3.5「get cs 已废」的教训：任何「替你代报」的状态都要怀疑一层。
+- **变更同时段审计**：「故障开始前 30 分钟，谁动了什么」是 60% 事故的第一问题。K8s 审计日志（第 1 章 §8，策略粒度与后端形态）、GitOps 仓库 commit（Argo CD 场景）、云厂商操作审计三线对表。
 
 ### 1.2 工具箱全景（按「离故障多近」分层）
 
 | 层 | 工具 | 什么时候是它 |
 |----|------|-------------|
 | **kubectl 内置件** | `get/describe/logs/exec/--previous/top/wait/diff/get --raw/api-resources/explain/rollout status/history/debug/apply --dry-run=server` | 覆盖 80% 日常排障；`kubectl wait --for=condition=ready pod/x --timeout=60s` 在演练里当「预期症状探针」用 |
-| **集群内件** | Event 对象（默认 TTL **1h**，apiserver `--event-ttl`）、ephemeral containers（v1.25 GA）、apiserver 审计日志（第 1 章 §8 策略与后端）、metrics.k8s.io 聚合层 | 事件过了 TTL 就没了——事故正在发生时先把 events 捞一遍存文件（§二 3）；审计打开前只属于 kubeadm/自建集群运维面（第 7 章 §1.4 `auditLog` extraArgs） |
+| **集群内件** | Event 对象（默认 TTL **1h**，apiserver `--event-ttl`）、ephemeral containers（v1.25 GA）、apiserver 审计日志（第 1 章 §8）、metrics.k8s.io 聚合层 | 事件过了 TTL 就没了——事故正在发生时先把 events 捞一遍存文件（§1.3 ③）；kubeadm 集群的审计开关在 kube-apiserver extraArgs（`--audit-log-path` 一族，配置方式与第 7 章 §1.4 样例同源） |
 | **节点件** | `crictl`（CRI 直连）、`journalctl -u kubelet/-k`、`systemctl status kubelet/containerd`、`dmesg -T`、`ss/ip/conntrack/tcpdump/nsenter`、`findmnt/lsblk/df -i`、`iostat -x` | kubelet/CRI/内核三层真相；本章 §四、§六大量使用 |
 | **外部件** | metrics-server 之上的 Prometheus/Grafana 告警（本仓 `监控/` 目录）、pprof（apiserver `--profiling` 默认开：`kubectl get --raw=/debug/pprof/goroutine?debug=1`）、云厂商监控 | 「面」层信息：时延水位、429 率、etcd slow 曲线——判断「是个例还是系统性」的第一手 |
 
@@ -120,7 +120,8 @@ kubectl get events -n <ns> --field-selector involvedObject.name=<pod> --sort-by=
 
 ```bash
 # ① 控制面本体健康（含 etcd、informer-sync、poststart hook 链；判读法引第 1 章 §9.6.1）
-kubectl get --raw='/readyz?verbose' | grep -- '−' || echo "all ok"
+#    readyz verbose 输出正常项形如 [+]ping ok；故障项形如 [-]etcd failed——只捞故障项：
+kubectl get --raw='/readyz?verbose' | grep '^\[-\]' || echo "all ok"
 # ② 节点面：READY 列 + 版本偏差（混版也可能是新病）
 kubectl get nodes -o wide
 # ③ 全集群最近事件（Warning 优先；这 30 行基本能圈定域）
@@ -139,7 +140,7 @@ kubectl get events -A --sort-by='.lastTimestamp' | tail -30
               kubectl 完全卡住/超时/连不上？ ─── 是 ──► 域一（§三 控制面）
                                       │否              （顺带：先看是不是自己 kubeconfig/
                                       ▼                 网络/LB 探针的问题）
-              节点面：大面积 NotReady ─── 是 ──► 域一/域二（先 §3.4 判断是不是
+              节点面：大面积 NotReady ─── 是 ──► 域一/域二（先 §3.3 判断是不是
                                       │否              级联：CNI 挂了全站 NotReady）
                                       ▼
               单个/少数节点 NotReady ─── 是 ──► 域二（§四 节点）
@@ -169,7 +170,7 @@ kubectl get events -A --sort-by='.lastTimestamp' | tail -30
 
 | 症状 | 更深一层的现象 | 首查 |
 |------|---------------|------|
-| kubectl 全卡：任何命令超时/`connection refused` | LB/跳板网络 vs apiserver 进程 vs etcd 三层分不清 | 本机 `curl -sk --connect-timeout 3 https://<endpoint>:6443/readyz` + ↑控制面节点 `journalctl -u kubelet` |
+| kubectl 全卡：任何命令超时/`connection refused` | LB/跳板网络 vs apiserver 进程 vs etcd 三层分不清 | 本机 `curl -sk --connect-timeout 3 https://<endpoint>:6443/readyz` + 控制面节点上 `journalctl -u kubelet` |
 | kubectl 能用但慢：get/list 都要几秒 | 所有请求一起慢（etcd 传导）vs 只有 LIST 大集合慢（watch cache/大对象） | `kubectl get --raw='/metrics'` 里 `apiserver_request_duration_seconds` 与 `etcd_request_duration_seconds`（第 1 章 §9.5） |
 | 客户端报 429 带 `Retry-After` | APF 拒绝/inflight 到顶/watch cache 未就绪三类（第 1 章 §9.3） | `kubectl get --raw='/metrics' \| grep apiserver_flowcontrol_rejected_requests_total` 看 reason 分布 |
 | 对象创建了但「没生效」 | admission 链塌（webhook failurePolicy=Fail）vs 控制器没在跑 | events + `kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations` |
@@ -177,15 +178,15 @@ kubectl get events -A --sort-by='.lastTimestamp' | tail -30
 
 ### 3.2 判读链（按序执行，每步给「看向哪里」）
 
-**step 1 readyz verbose：ysi给依赖链点名**
+**step 1 readyz verbose：给依赖链点名**
 
 ```bash
-kubectl get --raw='/readyz?verbose' | grep -- '−' || echo all-ok
+kubectl get --raw='/readyz?verbose' | grep '^\[-\]' || echo all-ok
 # 常见失败项含义（对照第 1 章 §9.6.1）：
-#   [−]etcd failed                → etcd 连接超时/ALARM（step 3）
-#   [−]etcd-readiness failed      → etcd 能接受连接但 quorum 没了
-#   [−]informer-sync failed       → watch cache 没灌满（此时 LIST/WATCH 会 429——保护行为，不是故障）
-#   [−]poststarthook/* failed     → admission/聚合层初始化没跑完
+#   [-]etcd failed                → etcd 连接超时/ALARM（step 3）
+#   [-]etcd-readiness failed      → etcd 能接受连接但 quorum 没了
+#   [-]informer-sync failed       → watch cache 没灌满（此时 LIST/WATCH 会 429——保护行为，不是故障）
+#   [-]poststarthook/* failed     → admission/聚合层初始化没跑完
 ```
 
 **step 2 静态 Pod 真相：API 视角与节点视角对账**
@@ -217,9 +218,9 @@ sudo ETCDCTL_API=3 etcdctl endpoint status -w=table \
 
 | 根因 | 判据 | 处置要点 |
 |------|------|---------|
-| **etcd 磁盘满 / NOSPACE** | readyz `[−]etcd`；`endpoint status` ALARM 列 `NOSPACE`；`mvcc: database space exceeded` | compact+defrag+disarm 三连（`K8s-etcd详解.md` §5.4）；查元凶（event 洪峰/大对象，第 1 章 §9.1）；升 quota 只是权宜 |
+| **etcd 磁盘满 / NOSPACE** | readyz `[-]etcd`；`endpoint status` ALARM 列 `NOSPACE`；`mvcc: database space exceeded` | compact+defrag+disarm 三连（`K8s-etcd详解.md` §5.4）；查元凶（event 洪峰/大对象，第 1 章 §9.1）；升 quota 只是权宜 |
 | **控制面证书过期/签错** | kubectl/x509 报错（域七词典 §九）；`kubeadm certs check-expiration` | `kubeadm certs renew <name>` + 静态 Pod 重启三件套（第 7 章 §5.2） |
-| **webhook 自锁**（failurePolicy=Fail + 后端挂/超时） | 写 API 大面积失败，报错里带 `failed calling webhook "xxx": ...`；读正常 | 急救：把 offending webhook `failurePolicy` 临时改 `Ignore` 或给 `namespaceSelector/objectSelector` 加排除 → 后端修好后收紧；根治：timeoutSeconds 收窄（默认 10s 偏长，官方建议 ≤5s/短）、kube-system 类系统 ns 显式排除、后端多副本 + PDB（第 5 章 §3/§8） |
+| **webhook 自锁**（failurePolicy=Fail + 后端挂/超时） | 写 API 大面积失败，报错里带 `failed calling webhook "xxx": ...`；读正常 | 急救：把 offending webhook `failurePolicy` 临时改 `Ignore` 或给 `namespaceSelector/objectSelector` 加排除 → 后端修好后收紧；根治：timeoutSeconds 刻意收窄（默认 10——admission 链的咽喉参数，「救火水位」场景 1~3s 才不至于排队堵死 APF 泳道）、kube-system 类系统 ns 显式排除、后端多副本 + PDB（设计面见第 5 章 §3） |
 | **CNI/CSI 未就绪 → 节点 NotReady → 级联成「控制面病」假象** | `kubectl get nodes` 全 NotReady 但 readyz 全绿；kubelet 日志 `plugin is not initialized: cni config uninitialized` | 这不是控制面故障——修 CNI（域二/域五）；鉴假法：readyz 绿 + 静态 Pod Running + etcd 状态正常 = 控制面没病 |
 | **聚合层后端挂** | `kubectl get apiservices` 非 Local 行 `False`；describe 看 `FailedDiscoveryCheck` 的 message | 修后端：Pod 挂了/selector 漂移/证书/NetworkPolicy（第 1 章 §6.3 的表照用） |
 | **watch 重连风暴 / informer 大并发重启** | apiserver CPU/内存尖刺 + LIST 时延涨 + `apiserver_registered_watchers` 陡增 | 错峰启动控制器副本；selector 收窄；只 watch metadata（第 1 章 §9.2/§3.8） |
@@ -234,23 +235,24 @@ sudo ETCDCTL_API=3 etcdctl endpoint status -w=table \
 ### 4.1 NotReady 决策链（先分四类，别混搭着查）
 
 ```
-Node NotReady（describe 里 Conditions Ready=Unknown/False，TAO 自动打上
-not-ready/unreachable 污点，默认 300s tolerationSeconds 后 Pod 开始被驱逐）
+Node NotReady（describe 里 Conditions Ready=Unknown/False；node lifecycle
+controller 自动打上 not-ready/unreachable 污点，默认 300s tolerationSeconds
+后 Pod 开始被驱逐）
    │
    ├─① 网络分区？     节点能 ping 通吗；kubelet 10250 能连吗
    │      curl -sk --connect-timeout 3 https://<node-ip>:10250/healthz
    │
-   ├─② kubelet 挂了？  systemctl status kubelet （/ 看是不是 §11.1 实验 4 的 kill -STOP 形态）
+   ├─② kubelet 挂了？  systemctl status kubelet （/ 看是不是实验 8.1 场景 4 的 kill -STOP 形态）
    │      journalctl -u kubelet --since '1h ago' | grep -Ei 'error|failed|fatal' | tail -30
    │
    ├─③ containerd 卡死？sudo crictl ps  超时/转圈 → systemctl restart containerd
-   │      （重启 runtime 不重启业务容器——containerd shim 兜底；但要观察 shim 违和 §6.1 Terminating）
+   │      （重启 runtime 不重启业务容器——containerd shim 兜底；但要观察 shim 残留 → §6.1 Terminating）
    │
    ├─④ 证书/授权坏了？ journalctl -u kubelet | grep -E 'x509|Unauthorized|forbidden'
    │      openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -dates -subject
    │      （kubelet client 证默认自轮转，第 7 章 §5.3；轮转出幺蛾子→这里）
    │
-   └─⑤ 资源拒活？     PIDPressure/DiskPressure/MemoryPressure=Truetable 见 §4.3；
+   └─⑤ 资源拒活？     PIDPressure/DiskPressure/MemoryPressure=True；处置见 §4.3；
                        NetworkUnavailable=True → CNI 死了（域五；级联见 §3.3）
 ```
 
@@ -259,7 +261,7 @@ not-ready/unreachable 污点，默认 300s tolerationSeconds 后 Pod 开始被�
 ```bash
 # 一屏看全：错类→类名归类（按出现率给对照）
 sudo journalctl -u kubelet --since '1h ago' \
-  | grep -EiE 'evict|oom|garbage|CNI|PLEG|image pull|FailedCreatePodSandBox|certificate|Unauthorized' \
+  | grep -EiE 'evict|oom|garbage collection|cni|PLEG|image|PullBackOff|FailedCreatePodSandBox|certificate|Unauthorized' \
   | tail -60
 ```
 
@@ -321,12 +323,12 @@ crictl 是 CRI 直连调试器（官方 debug-cluster/crictl 页，v1.11 起稳�
 | 本机所有容器（含已退出） | `sudo crictl ps -a` |
 | 按 Pod 维度看沙箱 | `sudo crictl pods`（`--name` 过滤） |
 | 日志/执行 | `sudo crictl logs --tail=100 <cid>` / `sudo crictl exec -it <cid> sh`（容器得有 sh） |
-| 看容器详情（拿 PID，§6.3 的桥） | `sudo crictl inspect <cid> \| jq '.info.pid'` |
+| 看容器详情（拿 PID，§6.4 的桥） | `sudo crictl inspect <cid> \| jq '.info.pid'` |
 | 镜像与磁盘 | `sudo crictl images` / `sudo crictl rmi --prune`（清未用镜像快照，对应 imageGC 不灵时） |
 | 清理僵尸 | `sudo crictl rmp <pod-sandbox-id>`（Terminating 残留沙箱，配合 §6.1 Terminating 段） |
 | 静态 Pod 起没起 | `sudo crictl ps \| grep kube-apiserver`（§3.2 已用） |
 
-### 4.6 字段不一致吃不准：NPD 已经替你报过一遍
+### 4.6 拿不准时：NPD 可能早就替你报过一遍
 
 节点的内核/磁盘/运行时慢病，NPD 会以 NodeCondition/Event 形式先报上来（SystemLog/Stats/CustomPlugin/HealthChecker 四 daemon，第 7 章 §7.1）。排障期先问一遍 NPD：
 
@@ -367,7 +369,7 @@ curl -sk https://127.0.0.1:10259/metrics | grep -E 'scheduler_schedule_attempts_
 # schedule_attempts_total 长时间不涨 = 调度循环停摆（QueueingHints 失联 / leader 僵尸 / stuck watch）
 ```
 
-QueueingHints（v1.34 GA；第 2 章 §1.5）把「任意集群事件都唤醒 Pod」收严成「插件声明的事件才唤醒」——代价是极端场景下**上游插件声明不全/事件丢失时 Pod 可能长期滞留 unschedulableQ**。生产识别点：这个 Pod 本来「理论上调得动」，但 `FailedScheduling` 与指标都不动；处置的最低成本动作是**重启一次 kube-scheduler Pod**（让它清空队列重新 list），其次 `kubectl delete pod <pending-pod>` 让控制器重建新对象重新入队（注意：annotate 改标签不是移队信号，别指望它）。
+QueueingHints（v1.34 GA；第 2 章 §1.5）把「任意集群事件都唤醒 Pod」收严成「插件声明的事件才唤醒」——代价是极端场景下**上游插件声明不全/事件丢失时 Pod 可能长期滞留 unschedulableQ**。生产识别点：这个 Pod 本来「理论上调得动」，但 `FailedScheduling` 与指标都不动；处置的最低成本动作是**把 kube-scheduler 静态 Pod 重启一次**（清单文件移走-等 20s-移回，第 7 章 §5.2 同款三件套；让它清空队列重新 list），其次 `kubectl delete pod <pending-pod>` 让控制器重建新对象重新入队（注意：annotate 改标签不是移队信号，别指望它）。
 
 ### 5.3 边缘 CASE 2：明明有空闲节点但不调（单 Pod 无动静）
 
@@ -401,12 +403,12 @@ kubectl get pod <pod> -o jsonpath='{.spec.schedulingGates}{"\n"}'
 | 症状（STATUS 列） | 首查命令 | 高频根因排序（从上往下查） |
 |------------------|---------|---------------------------|
 | **ImagePullBackOff / ErrImagePull** | `kubectl describe pod <pod> \| sed -n '/Events/,$p'`；`kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[0].state.waiting.message}'` | ① tag/镜像名拼错或忘了 push（官方 debug-pods 三板斧：名字对？push 了？本机 `docker pull` 试）② registry 认证失败（imagePullSecrets 缺失/过期/namespace 放错）③ 仓限流（docker.io 匿名限额 429）④ 节点 egress 断/代理错（带代理集群）⑤ 国内 registry.k8s.io 可达性（mirror 配置，第 7 章 §2.4） |
-| **CreateContainerConfigError** | `kubectl describe pod` 的 Events 会点名 | ① 引用的 ConfigMap/Secret 不存在（或 key 错，env 的 `valueFrom.*KeyRef`）② PVC 不存在/未 Bound ③ volumeMounts 名字与 volumes 对不上 ④ ServiceAccount 不存在 |
+| **CreateContainerConfigError** | `kubectl describe pod` 的 Events 会点名 | ① 引用的 ConfigMap/Secret 不存在（或 key 错，env 的 `valueFrom.*KeyRef`）② volumeMounts 名字与 volumes 对不上 ③ ServiceAccount 不存在（deleted 后被照样引用） ④ `resourceFieldRef`/`fieldRef` 路径写错 |
 | **CreateContainerError** | `kubectl logs <pod> -c <c>`（大概率没日志）→ 节点上 `sudo crictl ps -a \| grep <name>` + `sudo crictl logs <cid>` + `sudo journalctl -u containerd --since '30m ago' \| grep <pod-name>` | ① OCI spec 层失败（镜像层损坏、`ImageVerify` 失败）② seccomp/apparmor profile 不存在或语法错 ③ mount 目标冲突/只读文件系统期望写挂载 ④ cgroups 层面异常（cgroup driver 不一致的余波，第 7 章 §2.3）⑤ 节点磁盘满拉不动层 |
-| **CrashLoopBackOff** | 三连：`kubectl logs <pod> -c <c> --previous --tail=50` + `.lastState.terminated.reason` + `.exitCode`（exit code 词典见 6.2） | ① 应用自身崩溃（exit 1：配置错/依赖连不上/未捕获异常）② OOMKilled（exit 137，§4.4 A 类）③ liveness 探针过于激进（slow start 被当死，§6.4）④ 启动命令本身执行完就退（exit 0 的「假 CrashLoop」：主进程不是常驻）⑤ entrypoint 里 segfault（139）/命令不存在（127） |
+| **CrashLoopBackOff** | 三连：`kubectl logs <pod> -c <c> --previous --tail=50` + `.lastState.terminated.reason` + `.exitCode`（exit code 词典见 6.2） | ① 应用自身崩溃（exit 1：配置错/依赖连不上/未捕获异常）② OOMKilled（exit 137，§4.4 A 类）③ liveness 探针过于激进（slow start 被当死，§6.5）④ 启动命令本身执行完就退（exit 0 的「假 CrashLoop」：主进程不是常驻）⑤ entrypoint 里 segfault（139）/命令不存在（127） |
 | **Init 卡死：`Init:N/M` / `Init:Error` / `Init:CrashLoopBackOff`** | `kubectl logs <pod> -c <init-container-name>`（init 容器要 `-c` 指定）；`kubectl describe pod`（状态表引用官方 debug-init-containers 页：Init:N/M=完成 N 个共 M 个） | ① init 依赖的外部服务/DNS 没就绪（init 早于业务容器，探针也不跑）② init 里等 PVC/Secret 还没挂载好（卷在 init 前挂载，但内容源可能没供给完）③ init 脚本自身逻辑死循环 ④ native sidecar（`restartPolicy: Always` 的 init 容器，v1.29 β/v1.33 GA）的容器健康定义错——sidecar 不 Ready 业务容器永不启动 |
-| **Running 但 READY 0/1（探针不过）** | `kubectl describe pod` 看 `Unhealthy` Warning；节点上 `curl -sS http://<podIP>:<port>/<path>`（从该 Pod 所在节点探测，把 kubelet 视角重演一遍）；`kubectl get endpointslice -l kubernetes.io/service-name=<svc>` 看在不在 ready 列表 | ① 探针 path/port 配错（改了应用没改探针）② 启动慢但没配 startupProbe，liveness 先杀人（§6.4）③ 应用 listen 在 127.0.0.1 而不是 0.0.0.0（容器内回环通、节点探测不通）④ readiness 依赖外部依赖拖慢（timeoutSeconds 默认 1s 极短）⑤ 容器端口与 Service targetPort 不匹配（表现为「探针过、Service 不通」——反而去 §七） |
-| **Terminating 卡死** | `kubectl get pod <pod> -o jsonpath='{.metadata.deletionTimestamp}{"\n"}{.metadata.finalizers}{"\n"}'`；`kubectl describe pod` 看 Killing/事件 | ① finalizer 没人摘（控制器挂了/被删——第 1 章 §4.3 与第 6 章 §8）② webhook 挡 finalizer 摘除（官方 debug-pods 页：validating/mutating webhook 拦 UPDATE，则 finalizer 永远摘不掉，先查所有 webhook 配）③ 优雅退出被卡（preStop 阻塞/应用无视 SIGTERM，§6.4）④ 卸载卡死（NFS 僵死/挂载点 busy，§八）⑤ containerd shim 残留（节点 `ps aux \| grep containerd-shim \| grep <pod>`；`crictl rmp` 清沙箱或直接 kill shim）⑥ 节点本身失联（kubelet 停止上报时 Terminating 常挂） |
+| **Running 但 READY 0/1（探针不过）** | `kubectl describe pod` 看 `Unhealthy` Warning；节点上 `curl -sS http://<podIP>:<port>/<path>`（从该 Pod 所在节点探测，把 kubelet 视角重演一遍）；`kubectl get endpointslice -l kubernetes.io/service-name=<svc>` 看在不在 ready 列表 | ① 探针 path/port 配错（改了应用没改探针）② 启动慢但没配 startupProbe，liveness 先杀人（§6.5）③ 应用 listen 在 127.0.0.1 而不是 0.0.0.0（容器内回环通、节点探测不通）④ readiness 依赖外部依赖拖慢（timeoutSeconds 默认 1s 极短）⑤ 容器端口与 Service targetPort 不匹配（表现为「探针过、Service 不通」——反而去 §七） |
+| **Terminating 卡死** | `kubectl get pod <pod> -o jsonpath='{.metadata.deletionTimestamp}{"\n"}{.metadata.finalizers}{"\n"}'`；`kubectl describe pod` 看 Killing/事件 | ① finalizer 没人摘（控制器挂了/被删——第 1 章 §4.3 与第 6 章 §8）② webhook 挡 finalizer 摘除（官方 debug-pods 页：validating/mutating webhook 拦 UPDATE，则 finalizer 永远摘不掉，先查所有 webhook 配）③ 优雅退出被卡（preStop 阻塞/应用无视 SIGTERM，§6.5）④ 卸载卡死（NFS 僵死/挂载点 busy，§八）⑤ containerd shim 残留（节点 `ps aux \| grep containerd-shim \| grep <pod>`；`crictl rmp` 清沙箱或直接 kill shim）⑥ 节点本身失联（kubelet 停止上报时 Terminating 常挂） |
 
 > ❗ 排障期保命诀：**`kubectl delete pod --force --grace-period=0` 只删 API 对象，不杀进程**——节点上容器可能还在跑。之后新 Pod 起不来往往是「老进程还吃着端口/文件锁/卷」；拿 PID 到节点上确认（`crictl ps -a`/`ss -tlnp`）才算完。
 
@@ -416,7 +418,7 @@ kubectl get pod <pod> -o jsonpath='{.spec.schedulingGates}{"\n"}'
 |------|------|---------------------|
 | 0 | 正常退出 | Job 完成是正常；Deployment 里的 Pod exit 0 = 主进程写错了（不是常驻服务） |
 | 1 | 应用报错退出 | 配置/依赖/未捕获异常（看 --previous 日志最后一屏） |
-| 126 | 命令不可执行 | entrypoint 文件加了不可执行位/Windows 脚本拷进 Linux 镜像（CRLF+权限） |
+| 126 | 命令不可执行 | entrypoint 文件没有可执行位（chmod +x 缺失）/Windows 脚本拷进 Linux 镜像（CRLF 行尾 + shebang 失效） |
 | 127 | 命令不存在 | entrypoint/cmd 路径拼错、distroless 镜像被当 full 镜像用、shell 脚本 shebang 里命令没有 |
 | 128+n | 死于信号 n | 137=128+9 SIGKILL；139=128+11 SIGSEGV；143=128+15 SIGTERM |
 | **137** | SIGKILL 打死 | ① OOMKilled（lastState.reason 点名，§4.4 A 类）② liveness 杀（describe 事件 `Liveness probe failed`）③ 节点驱逐/管理员删 Pod（事件里 `Killing`，Reason `Evicted`） |
@@ -440,7 +442,7 @@ kubectl debug <pod> -it --image=nicolaka/netshoot --target=<container-name>
 kubectl debug <pod> --image=nicolaka/netshoot --target=<container-name> --profile=netadmin -- tcpdump -i any -nn 'port 53'
 ```
 
-硬约束（官方 ephemeral-containers 页核实，背下来）：ephemeral 容器**不能有 ports、livenessProbe、readinessProbe、resources**（Pod 资源分配不可变）；**不能 kubectl edit 添加**（走特殊的 ephemeralcontainers 子资源处理器）；**加进去后不能改、不能单独删**（只能连 Pod 一起没）；**静态 Pod 不支持**（控制面四大件用不了这招——所以 §3.2 要走节点上 crictl）；**从不自动重启**（应当一次性工具用）。
+硬约束（官方 ephemeral-containers 页核实，背下来）：ephemeral 容器**不能有 ports、livenessProbe、readinessProbe、resources**（Pod 资源分配不可变）；**不能 kubectl edit 添加**（走特殊的 ephemeralcontainers 子资源处理器）；**加进去后不能改、不能单独删**（只能连 Pod 一起没）；**静态 Pod 不支持**（控制面四大件用不了这招——所以 §3.2 要走节点上 crictl）；**从不自动重启**（应当一次性工具用）；**--target 需要容器运行时支持**（官方注明：不支持时 ephemeral 容器可能起不来，或以独立进程命名空间起来——ps 看不到业务进程）。
 
 **形态 B：copy Pod（改配置再造一个，不动原物）**：
 
@@ -497,7 +499,7 @@ kubectl get pod <pod> -o jsonpath='{.spec.ephemeralContainers[0].securityContext
 | `registry.k8s.io/e2e-test-images/dnsutils:1.3` | 官方 DNS 排障镜像（glibc；**而 alpine/musl 的 nslookup 不会 TCP 回放、search 行为不一致**——第 3 章 §5.5 点名的坑，排 DNS 别用 alpine 系） |
 | `curlimages/curl`、`ghcr.io/jqlang/jq` 等单工具镜像 | 供应链管控严的集群：单功能镜像好过全家桶 |
 
-> ❗ **易错点四连**（本章点名的）：① **命令对象是不同形态**：`kubectl debug <name>` 猜 pod；`kubectl debug node/<name>` 是集群级对象——node 形态不吃 `-n`，生成的调试 Pod 落当前 ns（易和「我看错了 namespace」混）。② **崩溃的容器与 ephemeral 容器是两个对象**：业务容器 CrashLoopBackOff 照样能挂 ephemeral 容器（它站 Pod 沙箱层）；但 **Pending Pod 连沙箱都没有，ephemeral 挂不上**——此时别硬补，用 `--copy-to` 造副本验证（调度之事先回域三）。③ **timed out/退出的容器不能 `kubectl exec`/不能补 ephemeral 到它身上**——`exec` 只打 Running 容器；要看「死掉那一刻」靠 `logs --previous`（容器重启过才有）或 `--copy-to` 改命令复现。④ **events 是 namespaced 对象**（官方 debug-pods 页）：Node 这种集群级对象的事件落在 default 等 ns——`kubectl get events` 不加 `-A` 默认看不到，排节点故障时这是最常见「明明有事件却搜不到」的原因。
+> ❗ **易错点四连**（本章点名的）：① **命令对象是不同形态**：`kubectl debug <name>` 猜 pod；`kubectl debug node/<name>` 是集群级对象——node 形态不吃 `-n`，生成的调试 Pod 落当前 ns（稍不留神就以为「我看错了 namespace」）。② **崩溃的容器与 ephemeral 容器是两个对象**：业务容器 CrashLoopBackOff 照样能挂 ephemeral 容器（它站 Pod 沙箱层）；但 **Pending Pod 连沙箱都没有，ephemeral 挂不上**——此时别硬挂，用 `--copy-to` 造副本验证（调度之事先回域三）。③ **已退出/超时的容器不能 `kubectl exec`、也轮不到 ephemeral 去「救」它**——`exec` 只打 Running 容器；要看「死掉那一刻」靠 `logs --previous`（容器重启过才有内容）或 `--copy-to` 改命令复现。④ **events 是 namespaced 对象**（官方 debug-pods 页原话）：Node 这种集群级对象的事件落在 default 等 ns——`kubectl get events` 不加 `-A` 默认看不到，排节点故障时这是最常见「明明有事件却搜不到」的原因。
 
 ### 6.4 nsenter 节点级绝招（容器里什么都没有也能排）
 
@@ -515,9 +517,9 @@ pid=$(sudo crictl inspect $cid | jq -r '.info.pid')
 sudo nsenter -t $pid -n ip addr          # 容器视角的网卡
 sudo nsenter -t $pid -n ip route         # 容器视角的路由（默认网关应指向 CNI 桥/隧道端）
 sudo nsenter -t $pid -n ss -tlnp         # 容器里到底在监听什么
-sudo nsenter -t $pid -n curl -sS -m 3 http://127.0.0.1:8080/healthz   # 以容器 UDP/TCP 栈看服务
+sudo nsenter -t $pid -n curl -sS -m 3 http://127.0.0.1:8080/healthz   # 以容器 TCP 栈看服务
 sudo nsenter -t $pid -n tcpdump -nn -i any udp port 53                # 容器视角抓包（节点事先装好 tcpdump）
-# ④ 其他 namespace 变体：-m 挂载命名空间（看容器看到的挂载表）；不换 ns 时
+# ④ 其他 namespace 变体：-m 挂载命名空间（看容器看到的挂载表）；不切换 ns 时
 #    /proc/<pid>/root/ 直接就是该容器根文件系统（读配置/日志零成本）
 sudo nsenter -t $pid -m mount | head
 sudo ls /proc/$pid/root/etc/ | head
@@ -545,8 +547,8 @@ DELETE /pods/<pod>（或 rollout 触发的新版替换）
 
 | 现象 | 根因链 | 排查与处置 |
 |------|--------|-----------|
-| 优雅退出期间还在丢流量 | B 线 SIGTERM 发得比 A 线摘 endpoint 快——Pod 已开始关连接，Ingress/kube-proxy 还在派新单 | 主张加 `preStop: exec: {command: ["sh","-c","sleep 5"]}`（给 endpoint 传播留窗）或入口侧 drain 配置；查法：show `kubectl get pod -o yaml \| grep preStop` + 对照 Ingress 后端摘除时间线 |
-| Terminating 挂死好几小时 | preStop 脚本阻塞 / 应用装了 SIGTERM handler 但不退出 / terminationGracePeriodSeconds 被写成 3600 | `kubectl get pod -o yaml \| grep -A4 preStop`；审计查 delete 调用方（第 1 章 §8）；`kill -CONT`? no—节点上 `crictl stop` 或直接 `kill -9` 主进程后 kubelet 会收尾 |
+| 优雅退出期间还在丢流量 | B 线 SIGTERM 发得比 A 线摘 endpoint 快——Pod 已开始关连接，Ingress/kube-proxy 还在派新单 | 主张加 `preStop: exec: {command: ["sh","-c","sleep 5"]}`（给 endpoint 传播留窗）或入口侧 drain 配置；查法：`kubectl get pod -o yaml \| grep -A3 preStop` + 对照 Ingress 后端摘除时间线 |
+| Terminating 挂死好几小时 | preStop 脚本阻塞 / 应用装了 SIGTERM handler 但不退出 / terminationGracePeriodSeconds 被写成 3600 | `kubectl get pod -o yaml \| grep -A4 terminationGracePeriodSeconds`；审计查 delete 调用方（第 1 章 §8）；软的不行上节点：`crictl stop <cid>` 或 `kill -9 <主进程PID>`，kubelet 观察到进程退出后会自己走完删除收尾 |
 | 「改了配置没生效」慢慢排查 | rollout 后被新版替换中；但 preStop 阻塞卡住旧 Pod——新旧各跑一半，看似改一半 | `kubectl rollout status` 明确定位卡在哪个 revision；`kubectl get rs` 看新旧并行期；§6.1 Terminating 表前五项逐条排 |
 
 探针参数默认值（kubelet 默认，官方 configure-liveness-readiness-startup-probes 口径）：`initialDelaySeconds=0`、`periodSeconds=10`、`timeoutSeconds=1`、`successThreshold=1`、`failureThreshold=3`。排「Running 但探针不过」时**timeoutSeconds=1 是最大暗坑**（响应超过 1s 就算失败——延迟敏感的应用必须显式调大；startup probe 的存在价值正是保护慢启动期，别让 liveness 在预热时杀人）。更深的设计权衡（三种探针怎么组合、sidecar 配合）见 `K8s-Pod生命周期详解.md` §五/§七，这里不重复。
@@ -587,7 +589,7 @@ kubectl get events -n <ns> --field-selector involvedObject.name=<pod> --sort-by=
 | ③ Service ClusterIP | `curl -sS -m 3 http://<clusterIP>:<svcport>` | 拒绝：Service 层规则在（可能是 endpoint 空/端口错）；超时：kube-proxy/数据面规则异常 → 节点上查规则（下） |
 | ④ endpoints | `kubectl get endpointslice -l kubernetes.io/service-name=<svc>`（官方 debug-service 页推荐路径） | 期望的 Pod 都在？`ready` 字段是 true？selector 漂移（svc selector vs pod labels 对不上=空 endpoints，高发） |
 | ⑤ 后端直达 | 绕过 Service，直接 `curl <podIP>:<containerPort>` | 通：问题 100% 在 Service 面（③④）；不通：回域五②或容器本身没在监听（`nsenter -t $pid -n ss -tlnp`） |
-| ⑥ 出网/入网 | egress：`curl -m 5 -sS https://识别外部端点`；ingress：从集群外 curl | egress 断：网络出口 SNAT/ELB/代理；ingress 断：LB 探针/Ingress 控制器（第七 §4.4 的「探针必须打 /readyz」同款教训） |
+| ⑥ 出网/入网 | egress：`curl -m 5 -sS https://<识别外部端点>`；ingress：从集群外 curl | egress 断：网络出口 SNAT/ELB/代理；ingress 断：LB 探针/Ingress 控制器（第 7 章 §4.4 的「探针必须打 /readyz」同款教训） |
 
 节点侧 Service 规则验证（kube-proxy 系集群；Cilium 换 `cilium service list`/`cilium bpf lb list`）：
 
@@ -602,7 +604,7 @@ kubectl -n kube-system logs ds/kube-proxy --tail=100 | grep -Ei 'error|setting e
 
 ### 7.2 tcpdump + conntrack 组合技
 
-拆包三段论（两端同时抓，各看三遍）：**客户端是否发出 → 服务端是否收到 → 回复是否返程**。
+拆包三段论（两端同时抓）：**客户端是否发出 → 服务端是否收到 → 回复是否返程**。
 
 ```bash
 # A 端（客户端 Pod 的 netns）：
@@ -610,7 +612,7 @@ kubectl debug <client> --image=nicolaka/netshoot --target=<c> --profile=netadmin
   tcpdump -i any -nn "host <dst> and (tcp or udp)"
 # B 端（服务端节点）：
 sudo tcpdump -i any -nn "host <client-podIP>"
-# 判读：发出≠收到 → 中间丢（路由/policy/MTU/overlay）；收到= 但服务端没回 → 应用/policy 在 B 侧丢；回了但 A 没收到 → 回程路径问题（conntrack/SNAT）
+# 判读：发出≠收到 → 中间丢（路由/policy/MTU/overlay）；收到但服务端没回 → 应用/policy 在 B 侧丢；回了但 A 没收到 → 回程路径问题（conntrack/SNAT）
 ```
 
 conntrack 是 UDP/DNS/短连接时代最大的暗伤（第 3 章 §4.6 已给机制）：
@@ -652,8 +654,8 @@ sudo sysctl -w net.netfilter.nf_conntrack_max=1048576
 ```bash
 # ① CNI 是什么，enforce 能力有没有
 kubectl -n kube-system get ds | grep -E 'cilium|calico|flannel|kube-router'
-#    Flannel 原生不 enforce（ch3 §6.3 表格）；Cilium/Calico 完整支持
-# ② 实弹测试（非生产 ns 先）：一份 default-deny + 一个探测 Pod
+#    Flannel 原生不 enforce（第 3 章 §6.3 表格）；Cilium/Calico 完整支持
+# ② 实弹测试（非生产 ns 先）：一份 default-deny + 一个探测 Pod——探测目标走四层 nc
 kubectl apply -n <test-ns> -f - <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -662,14 +664,18 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 EOF
-kubectl run probe -n <test-ns> --rm -it --image=busybox --restart=Never -- ping -c1 -W2 10.96.0.1
-#    还能通 → 策略没被执行（CNI 不支持/未开启）→ 回第 3 章 §6.3 选型与补偿方案
+kubectl run probe -n <test-ns> --rm -it --image=busybox --restart=Never -- \
+  nc -zvw2 10.96.0.1 443                                # kubernetes.default 的 ClusterIP
+#    结果对照：nc 成功连上 = deny 没被执行（CNI 不支持/未开启）→ 回第 3 章 §6.3 选型与补偿方案；
+#             nc 超时/被拒绝 = 策略生效（说明执行面在，去查具体白名单规则）
 kubectl delete networkpolicy probe-deny-all -n <test-ns>
 # ③ 有观测面的 CNI 直接看判决（Cilium 首选）
 cilium monitor -t policy-verdict | head     # DROP/REDIRECT 与 policy 名一行一条；或 hubble observe --verdict DROPPED
 ```
 
-「该通的被 policy 断了」的反向排查：Pod 描述里 `kubectl describe pod` 不会提示 NetworkPolicy——用 `kubectl get networkpolicy -A --field-selector` 不行（不支持），改用 ns 维度列：`kubectl get netpol -n <ns>` + `kubectl describe netpol` 对照 podSelector/pod labels；NodeLocal DNS/ClusterIP 记得在 egress 白名单里（第 3 章 §6.1 易踩点表）。
+❗ 探测别用 `ping <ClusterIP>`——kube-proxy 不为 ClusterIP 转发 ICMP，**策略生不生效 ping 都不通**，假阳性。探测一律走四层（nc/curl）。
+
+「该通的被 policy 断了」的反向排查：Pod 描述里 `kubectl describe pod` 不会提示 NetworkPolicy——`--field-selector` 也不支持按 label 查 policy，改用 ns 维度列：`kubectl get netpol -n <ns>` + `kubectl describe netpol` 对照 podSelector/pod labels；NodeLocal DNS/ClusterIP 记得在 egress 白名单里（第 3 章 §6.1 易踩点表）。
 
 ### 7.5 MTU 黑洞：「小包通、大包卡」症状表
 
@@ -698,20 +704,21 @@ for s in 1400 1420 1440 1460 1472; do ping -M do -s $s -c1 -W1 <dst-node-ip> >/d
 ### 8.1 PVC Pending → 挂载失败 → IO 慢 决策链
 
 ```
-症状分三类，先分开再合并：
+症状分四类，先分开再合并：
   A. PVC Pending（卷没造出来）
   B. Pod ContainerCreating 挂（卷造出来了，attach/mount 没完成）
   C. Pod 起来了但 IO 慢/报错（挂载成功但数据面问题）
+  D. PVC/PV 对象删不动（回收侧问题）
 ```
 
 | 类 | 首查 | 高频根因排序 |
 |----|------|-------------|
 | **A：PVC Pending** | `kubectl describe pvc <pvc>` 的 Events；`kubectl get pvc <pvc> -o jsonpath='{.status.phase}'` | ① StorageClass 不存在/名字拼错 ② provisioner 挂了（CSI controller 组件 Running 吗：`kubectl -n <csi-ns> get pods`） ③ 配额/容量不足 ④ 静态 PV 无匹配（accessModes/size/selector/storageClassName 五要素对照，第 4 章 §2.2） ⑤ WaitForFirstConsumer 设计如此（没 Pod 不来供给——**它不是故障**，第 2 章 §5.1） |
-| **B：挂载失败** | `kubectl describe pod` 看 `FailedMount`/`UnableToAttachOrMount`/`MountVolume.SetUp failed` | ① multi-attach（下 8.2） ② CSI node 插件挂了（该节点上 CSI DaemonSet 不健康） ③ NodeStage/NodePublish 报错（格式坏/凭据错/目标目录冲突） ④ secret/configmap 引用错（in-tree 老卷场景） ⑤ disk 没在云侧 attach 成功（云 API 配额/zone 不匹配） |
+| **B：挂载失败** | `kubectl describe pod` 看 `FailedMount`/`UnableToAttachOrMount`/`MountVolume.SetUp failed`；缺 PVC 时 event 直接报 `persistentvolumeclaim "x" not found` | ① multi-attach（下 8.2） ② CSI node 插件挂了（该节点上 CSI DaemonSet 不健康） ③ NodeStage/NodePublish 报错（格式坏/凭据错/目标目录冲突） ④ Pod 引用的 PVC 不存在/未 Bound（属卷引用错——不是 config 层错误，别和 §6.1 ConfigError 混） ⑤ disk 没在云侧 attach 成功（云 API 配额/zone 不匹配） |
 | **C：IO 慢/报错** | Pod 内 `dd`/`fio` 基线 + 节点 `iostat -x 1` + CSI 指标 | ① 卷档位不够（突发额度用完——VolumeAttributesClass 换档，第 4 章 §2.9） ② 节点网络盘丢包（NFS/Ceph：网络域先回 §七） ③ 单盘热点（local PV：iostat 里 `%util` 100） |
 | **D：PVC/PV 删不动** | `.metadata.finalizers` | ① `kubernetes.io/pv-protection`/`kubernetes.io/pvc-protection`（使用中保护，正常）② external-provisioner 的 finalizer（HonorPVReclaimPolicy 引入——后端删除没完成它不会摘）③ PV Released 而 reclaim 卡住（provisioner 挂了） |
 
-> 主表（症状→指标→修复的 10+ 条目）完整引用第 4 章 §7 生产问题清单——本段只做「先分 ABC 再进哪一项」的路由，不重复表格。
+> 主表（症状→指标→修复的 10+ 条目）完整引用第 4 章 §7 生产问题清单——本段只做「先分 ABCD 再进哪一项」的路由，不重复表格。
 
 ### 8.2 multi-attach 快速判定与处置
 
@@ -759,7 +766,7 @@ NFS 特定注意：服务端重启/网络抖 → 客户端默认 `hard` mount �
 | `certificate has expired or is not yet valid` | `openssl x509 -in <crt> -noout -dates`；`kubeadm certs check-expiration` | ① 真过期（叶证 1 年，第 7 章 §5.2） ② **not yet valid = 时钟漂**（chrony 挂了/VM 恢复快照，第 7 章 §2.5） ③ 用错文件（拿了旧备份） |
 | `certificate signed by unknown authority` | `openssl x509 -in <crt> -noout -issuer` vs 信任的 CA 文件是哪个 | ① kubelet serving 自签（kubeadm 默认，第 7 章 §5.3——metrics-server/`kubectl logs` 报这个的经典源） ② 客户端带的 CA 与服务端签发 CA 不是同一把（多套 CA 混） ③ webhook/APIService `caBundle` 缺失或过期 |
 | `cannot validate certificate for <IP> because it doesn't contain any IP SANs` / `x509: certificate is valid for A, B, not C` | `openssl x509 -in <crt> -noout -ext subjectAltName` | ① SAN 没覆盖现在访问的形态（新增了 LB FQDN/VIP/hostname alias） ② 用 IP 直连而证只有 DNS SAN ③ SNI 与证书 hostname 不匹配 |
-| `tls: bad certificate`（服务端日志；客户端常只见到 EOF） | 服务端组件日志里带 x509 reason；双向看 | ① 客户端证书被服务端 CA 不认 ② 客户端证书过期（自轮转断链，kubelet serving→§4.1 ④） ③ 中间链缺 |
+| `tls: bad certificate`（服务端日志；客户端常只见到 EOF） | 服务端组件日志里带 x509 reason；双向看 | ① 客户端证书被服务端 CA 不认 ② 客户端证书过期（自轮转断链，kubelet 侧 → §4.1 ④） ③ 中间链缺 |
 | `certificate relies on legacy Common Name field, use SANs or ...` | 同上 `-ext subjectAltName` | 老 CA/手工签的证只有 CN 没有 SAN——现代 Go 客户端直接拒；重签带 SAN 的证 |
 | `unknown certificate authority`（出现在组件间调用） | 两端 CA 文件 diff | front-proxy 聚合层证书链（第 7 章 §5.1 家谱第三把 CA）旋转后没同步（metrics-server/custom-metrics 典型） |
 
@@ -809,14 +816,14 @@ kubectl get csr
 | Timeline | 分钟级：变更点→首症状→诊断路径（**含走过的弯路**）→止血→根治→验证 |
 | 根因 | 一句话能说清的「哪个控制循环为什么没 reconcile」 |
 | 止血 vs 根治 | 分开记（止血动作是否需要回滚要标明） |
-| 经验 | 检测信号、runbook 链接（归档 §11.1 或独立 runbook 库）、是否需要补监控/补演练 |
+| 经验 | 检测信号、runbook 链接（归档实验 8.1 后方或独立 runbook 库）、是否需要补监控/补演练 |
 
 第 7 章 §9.4 给破坏演练定的「三行规则」同样适用真实事故：①事故前最近的一份快照/备份是什么、②事故中 `kubectl get --raw=/readyz?verbose` 与 `kubectl get events -A` 各显示了什么、③恢复中哪个对象是最大因果。三行齐备，runbook 才成立。
 
 ### 10.2 mini 案例：apiserver 429 雪崩（capstone：APF × webhook 超时 × client 重试 三方共振）
 
 - **初症状**：周二 10:04，全员 kubectl 开始报 `429 Too Many Requests`（带 Retry-After）；发布系统全线卡 Progressing。
-- **时间线**：10:00 集群开始做节点滚动重建（例行补丁）→ 大批 kubelet/控制器同时重启 → 各组件 informer 首次 LIST 洪峰（第 1 章 §9.2）→ apiserver 队列水位冲高 → 同时段全部 admission webhook（failurePolicy=Fail、timeoutSeconds=10）超时占座 → APF 按泳道开始拒绝。
+- **时间线**：10:00 集群开始做节点滚动重建（例行补丁）→ 大批 kubelet/控制器同时重启 → 各组件 informer 首次 LIST 洪峰（第 1 章 §9.2）→ apiserver 队列水位冲高 → 同时段全部 admission webhook（failurePolicy=Fail、timeoutSeconds 各 10s）超时占座 → APF 按泳道开始拒绝。
 - **走的弯路**：先扩容 apiserver 副本——LIST/WATCH 重连洪峰反而放大（弯路 30 分钟）；又怀疑 etcd 慢，查 `etcd_request_duration_seconds` 正常才回头。
 - **根因**：三方共振——重启风暴（输入）× webhook 长超时占座（咽喉）× 自研 Operator 的客户端不尊重 `Retry-After` 硬重试（放大器），把 APF 各泳道打满。
 - **止血**：临时把两个非关键 webhook 的 `failurePolicy` 改 `Ignore`（写请求瞬间恢复）；自研 Operator 降副本缩 QPS。
@@ -827,7 +834,7 @@ kubectl get csr
 
 - **初症状**：14:20 起，全集群报障「cluster.local 偶发解析失败」「出网 API 调用超时」，告警风暴 200+。
 - **走的弯路**：先 rollout restart CoreDNS（好 5 分钟又坏——弯路 1）；查 CoreDNS forward 上游 114.114 正常（弯路 2）；差点怀疑 Cilium 数据面（方向错误，Hubble 看到包确实发出了）。
-- **根因**：`dmesg -T | grep nf_conntrack` 在 3 台高流量节点上打出 `nf_conntrack: table full, dropping packet`——当天上线的批量 CronJob 每分钟产生数千条外部短连接（TCP + UDP DNS），conntrack UDP 条目默认 30s 才老化，表被打满后**新流（尤其 DNS UDP 包）被静默丢弃**。
+- **根因**：`dmesg -T | grep nf_conntrack` 在 3 台高流量节点上打出 `nf_conntrack: table full, dropping packet`——当天上线的批量 CronJob 每分钟产生数千条外部短连接（TCP + UDP DNS），conntrack 新 UDP 条目默认 30s 才老化（`nf_conntrack_udp_timeout`），表被打满后**新流（尤其 DNS UDP 包）被静默丢弃**。
 - **止血**：3 台节点 `sysctl -w net.netfilter.nf_conntrack_max=2097152`（临时从 26 万提到 200 万），丢包即刻停。
 - **根治**：① 常态化调大 max + 监控 `conntrack -S` 的 `early_drop/insert_failed` 告警；② CronJob 客户端改连接复用（HTTP keepalive）批量收敛；③ 上 NodeLocal DNSCache（第 3 章 §5.4）把 DNS 从 UDP 短连接的雷区里搬出去。
 - **经验**：① **D 类疑难先跑 dmesg**——节点层真相很少出现在 kubectl 视角；② UDP 受害先于 TCP（TCP 长连接是「老流」被保护，UDP 新短流是满表的第一批弃儿）；③ 「间歇性」是 conntrack 类问题的招牌画像（表满只打新流，已有的连接一切正常）。
@@ -851,13 +858,13 @@ kubectl get csr
 
 | # | 场景 | 破坏命令（先备份！） | 预期症状 | 标准排查路径（本文引用） | 恢复动作 | 自评耗时目标 |
 |---|------|---------------------|---------|--------------------------|---------|------------|
-| 1 | 错证书：换一张错误 CA 签的 apiserver.crt | 备份 `cp -a /etc/kubernetes/pki{,.bak}`；`openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/bad.key -out /tmp/bad.crt -days 1 -subj /CN=kube-apiserver`；替换 `pki/apiserver.{crt,key}`；mv apiserver.yaml 出进重启 | kubectl 全报 `x509: certificate signed by unknown authority` | §九 9.1 词典（unknown authority 行）+ §3.2 静态 Pod → §5.1 家谱对比 issuer | 还原 pki 备份或 `kubeadm certs renew apiserver`；静态 Pod 重启三件套（第 7 章 §5.2） | 15 min（首次 30 min） |
-| 2 | 删 etcd 数据目录（单 CP 集群上演） | **先快照**：`etcdctl snapshot save /tmp/snap.db ...`（第 7 章实验 7.2 同款）；`mv /etc/kubernetes/manifests/etcd.yaml /tmp/`；`sudo systemctl stop kubelet`；`rm -rf /var/lib/etcd` | apiserver crashloop；readyz `[−]etcd`；kubectl 全超时报 etcd timeout | §3.2 step 1→3（readyz→静态 Pod→etcd）；§9.2 恢复优先级 P1（第 7 章） | 停 apiserver → `etcdctl snapshot restore /tmp/snap.db --data-dir /var/lib/etcd` → 恢复清单 → `systemctl start kubelet`（第 7 章 §9.2） | 30 min |
+| 1 | 错证书：换一张错误 CA 签的 apiserver.crt | 备份 `cp -a /etc/kubernetes/pki{,.bak}`；`openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/bad.key -out /tmp/bad.crt -days 1 -subj /CN=kube-apiserver`；替换 `pki/apiserver.{crt,key}`；mv apiserver.yaml 出进重启 | kubectl 全报 `x509: certificate signed by unknown authority` | §九 9.1 词典（unknown authority 行）+ §3.2 静态 Pod → 第 7 章 §5.1 家谱对比 issuer | 还原 pki 备份或 `kubeadm certs renew apiserver`；静态 Pod 重启三件套（第 7 章 §5.2） | 15 min（首次 30 min） |
+| 2 | 删 etcd 数据目录（单 CP 集群上演） | **先快照**：`etcdctl snapshot save /tmp/snap.db ...`（第 7 章实验 7.2 同款）；`mv /etc/kubernetes/manifests/etcd.yaml /tmp/`；`sudo systemctl stop kubelet`；`rm -rf /var/lib/etcd` | apiserver crashloop；readyz `[-]etcd`；kubectl 全超时报 etcd timeout | §3.2 step 1→3（readyz→静态 Pod→etcd）；恢复优先级 P1（第 7 章 §9.2） | 停 apiserver → `etcdctl snapshot restore /tmp/snap.db --data-dir /var/lib/etcd` → 恢复清单 → `systemctl start kubelet` | 30 min |
 | 3 | 反复杀 CNI（Cilium agent Pod 连环删） | `watch -n5 'kubectl -n kube-system delete pod -l k8s-app=cilium --wait=false'`（或 cordon 一节点后删该节点的 cilium Pod） | 该节点新 Pod 卡 `FailedCreatePodSandBox`/`NetworkUnavailable`；业务 Pending 涨；严重时 Node NotReady | §4.1 ⑤ NetworkUnavailable + §4.2 `FailedCreatePodSandBox` grep + §七 7.1 | `kubectl -n kube-system rollout restart ds cilium`；节点上 `systemctl restart kubelet`；观察 `cilium status` | 20 min |
-| 4 | 停 kubelet | `sudo systemctl stop kubelet`（轻量：`kill -STOP $(pidof kubelet)` 可逆版） | ~40s 后 Node NotReady（Lease 陈化）；nolifecycle 污点；300s 后该节点 Pod 被逐 | §4.1 ② + `kubectl -n kube-node-lease get lease <node> -o yaml` 看 renewTime | `systemctl start kubelet`；NotReady 恢复后 uncordon 逻辑确认（本例无 cordon） | 10 min |
-| 5 | fallocate 堵根盘到 85%+ | 先记 `df -h`；`fallocate -l $(df --output=avail / \| tail -1 \| awk '{printf "%d", $1*0.98}')k /var/bigfile` ；盯 `kubectl describe node \| grep DiskPressure` | DiskPressure=True → eviction 连环（Evicted Pod 涨）→ imageGC 轰鸣 | §4.3 三条命令（conditions/Evicted 盘点/du 大户）；对照第 7 章 §6.4 默认表与 `mergeDefaultEvictionSettings` 坑 | `rm /var/bigfile`；确认 condition 回 False；清 Evicted（危险手册 §5.6 命令） | 25 min |
-| 6 | 过期 Ingress 证书 | 生成过期证：`sudo apt-get install -y faketime && faketime '2 years ago' openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout /tmp/expired.key -out /tmp/expired.crt -subj /CN=api.example.com`；`kubectl create secret tls demo-tls --cert=/tmp/expired.crt --key=/tmp/expired.key -n default --dry-run=client -o yaml \| kubectl apply -f -`；Ingress 指它 | 浏览器/`curl` 报 `certificate has expired`；s_client notAfter 在过去 | §九 9.1 首行 + 9.2 命令组（s_client -servername + Secret 解码） | 重新生成新证 → Secret 替换（§9.3 第三条）；`curl -vk https://...` 复测 | 15 min |
-| 7 | CoreDNS forward 指向黑洞 | `kubectl -n kube-system edit cm coredns`：把 `forward . /etc/resolv.conf` 改为 `forward . 10.255.255.1`；`kubectl -n kube-system rollout restart deploy coredns` | cluster.local 内解析正常；**所有外部域名超时**；业务报障但集群内互通无恙 | §7.3 三板斧第 ②③：直查 CoreDNS PodIP / 看 `/etc/resolv.conf` 前也看 Corefile（`kubectl -n kube-system get cm coredns -o yaml`）；对照三板斧命令 | 改回 `forward . /etc/resolv.conf`；再 rollout restart；`nslookup api.github.com 10.96.0.10` 验证 | 15 min |
+| 4 | 停 kubelet | `sudo systemctl stop kubelet`（轻量：`kill -STOP $(pidof kubelet)` 可逆版） | ~40s 后 Node NotReady（Lease 陈化）；nolifecycle 污点；300s 后该节点 Pod 被逐 | §4.1 ② + `kubectl -n kube-node-lease get lease <node> -o yaml` 看 renewTime | `systemctl start kubelet`；NotReady 恢复后确认污点与驱逐按计划消退 | 10 min |
+| 5 | fallocate 堵根盘到 eviction 起跳 | 先记 `df -h /`（L2 的 20G 盘、OS+镜像约占 5G）：`avail_g=$(df --output=avail -BG / \| tail -1 \| tr -dc 0-9)`；`sudo fallocate -l $(( avail_g * 92 / 100 ))G /var/bigfile`；盯 `kubectl describe node \| grep DiskPressure`（填满 92% 空闲 → available <10% 过默认硬阈值） | DiskPressure=True → eviction 连环（Evicted Pod 涨）→ imageGC 轰鸣 | §4.3 三条命令（conditions/Evicted 盘点/du 大户）；对照第 7 章 §6.4 默认表与 `mergeDefaultEvictionSettings` 坑 | `sudo rm /var/bigfile`；确认 condition 回 False；清 Evicted（危险手册 §5.6 命令） | 25 min |
+| 6 | 过期 Ingress 证书 | 生成过期证：`sudo apt-get install -y faketime && faketime '2 years ago' openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout /tmp/expired.key -out /tmp/expired.crt -subj /CN=api.example.com`（faketime 让 notBefore 落在两年前，-days 365 → notAfter 落在一年前）；`kubectl create secret tls demo-tls --cert=/tmp/expired.crt --key=/tmp/expired.key -n default --dry-run=client -o yaml \| kubectl apply -f -`；Ingress 指它 | 浏览器/`curl` 报 `certificate has expired`；s_client notAfter 在过去 | §九 9.1 首行 + 9.2 命令组（s_client -servername + Secret 解码） | 重新生成新证 → Secret 替换（§9.3 第三条）；`curl -vk https://...` 复测 | 15 min |
+| 7 | CoreDNS forward 指向黑洞 | `kubectl -n kube-system edit cm coredns`：把 `forward . /etc/resolv.conf` 改为 `forward . 10.255.255.1`；`kubectl -n kube-system rollout restart deploy coredns` | cluster.local 内解析正常；**所有外部域名超时**；业务报障但集群内互通无恙 | §7.3 三板斧第 ②③：直查 CoreDNS PodIP / 看 Corefile（`kubectl -n kube-system get cm coredns -o yaml`）；对照三板斧命令 | 改回 `forward . /etc/resolv.conf`；再 rollout restart；`nslookup api.github.com 10.96.0.10` 验证 | 15 min |
 
 ❗ 通用铁律（第 7 章 §9.4 已立，此处重申并扩成动作）：**每个场景动手前的备份指令本身就是评分项**（场景 1 的 pki 备份、场景 2 的 snapshot、场景 6 的原 Secret `-o yaml > 备份`）；演练中用 §2.1 三条止损命令记录「破坏中 readyz/events 显示什么」；恢复后按 §1.1 动作五填表复盘。演练即复盘，复盘即 runbook。
 
@@ -887,7 +894,9 @@ kubectl delete pod dbg-victim-debug
 # ④ node 形态（证据产物：拿到 /host 视图 + crictl ps 能在里面跑）
 kubectl debug node/k8s-w1 -it --image=ubuntu --profile=sysadmin
 # 容器内：chroot /host crictl ps | head
-kubectl delete pod node-debugger-k8s-w1-*    # 清理
+# 出来后按实际生成的名字清理（kubectl delete 不支持通配 Pod 名）：
+kubectl get pods | grep node-debugger        # 找到 node-debugger-k8s-w1-<rand>
+kubectl delete pod <node-debugger-k8s-w1-...>
 kubectl delete pod dbg-victim
 ```
 
@@ -907,9 +916,10 @@ multipass shell k8s-w1
 cat /proc/sys/net/netfilter/nf_conntrack_max                       # 记下原值（恢复用）
 sudo sysctl -w net.netfilter.nf_conntrack_max=1024
 
-# step 2：压力来自「大量短命 UDP/短 TCP 流」——用 debug 容器在另一节点发起
-kubectl run flood --image=nicolaka/netshoot --restart=Never --rm -it -- sh
-# 容器内循环发短连接（每轮回 1 个 SYN + 1 个 UDP DNS 查询，各自占 conntrack 条目）
+# step 2：压力源 Pod 必须钉在 k8s-w1（conntrack 是「发起侧节点」的表）——overrides 指定 nodeSelector
+kubectl run flood --image=nicolaka/netshoot --restart=Never --rm -it \
+  --overrides='{"spec":{"nodeSelector":{"kubernetes.io/hostname":"k8s-w1"}}}' -- sh
+# 容器内循环发短连接（每轮回 50 个 SYN + 50 个 UDP DNS 查询，各自占 conntrack 条目）
 while true; do
   for i in $(seq 1 50); do nc -z -w1 10.255.0.$((RANDOM % 250+1)) 80 2>/dev/null; dig +time=1 +tries=1 fake-$RANDOM.example.com @10.96.0.10 >/dev/null 2>&1; done
   sleep 0.2
@@ -919,10 +929,10 @@ while true; do curl -s -m 2 -o /dev/null -w '%{http_code}\n' http://web.default.
 # 预期：间歇 000/TIMEOUT 与 200 交替（≤30% 丢包观感）
 
 # step 3：三端取证（另外开两路 shell）
-#   端点 A（k8s-w1 节点内核）：dmesg 铁证
+#   端点 A（k8s-w1 节点内核，multipass shell k8s-w1）：dmesg 铁证
 sudo dmesg -T | grep -i 'nf_conntrack' | tail -5     # nf_conntrack: table full, dropping packet
 sudo conntrack -C; sudo conntrack -S | head -6
-#   端点 B（怕扰流，用 nsenter 在 Service 后端 Pod 的 netns 抓，不挂 ephemeral）
+#   端点 B（到 web Pod 所在节点：multipass shell <那台>；用 nsenter 在后端 Pod 的 netns 抓，不扰流）
 cid=$(sudo crictl ps | grep 'web-' | awk 'NR==1{print $1}')
 pid=$(sudo crictl inspect $cid | jq -r '.info.pid')
 sudo nsenter -t $pid -n tcpdump -i any -nn -c 20 'tcp port 80'
@@ -943,24 +953,24 @@ sudo sysctl -w net.netfilter.nf_conntrack_max=<step 1 记下的原值>
 
 | 主题 | 命令 |
 |------|------|
-| **总入口三件套** | `kubectl get --raw='/readyz?verbose' \| grep -- '−'`；`kubectl get nodes -o wide`；`kubectl get events -A --sort-by='.lastTimestamp' \| tail -30` |
+| **总入口三件套** | `kubectl get --raw='/readyz?verbose' \| grep '^\[-\]'`；`kubectl get nodes -o wide`；`kubectl get events -A --sort-by='.lastTimestamp' \| tail -30` |
 | 事件铁律 | events 是 namespaced 对象（Node 事件落 default）；TTL 默认 1h（`--event-ttl`）；事故中先把 events 存盘 |
 | 证据存盘 | `kubectl get events -A -o json > events.json`；`kubectl get pod x -o json > pod.json`；`kubectl logs x --previous > prev.log` |
 | 控制面清单 | 静态 Pod：`crictl ps \| grep -E 'apiserver\|scheduler\|controller\|etcd'`；日志：`journalctl -u kubelet`；etcd：`etcdctl endpoint status -w=table`；webhook：`kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations`；聚合层：`kubectl get apiservices \| grep -v Local` |
 | 节点 NotReady | `curl -sk https://<node>:10250/healthz`；`systemctl status kubelet`；`crictl ps` 超时？；`openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -noout -dates` |
-| kubelet 日志 | `journalctl -u kubelet --since '1h ago' \| grep -EiE 'evict\|oom\|garbage\|CNI\|PLEG\|FailedCreatePodSandBox\|x509' \| tail -60` |
+| kubelet 日志 | `journalctl -u kubelet --since '1h ago' \| grep -EiE 'evict\|oom\|garbage\|cni\|PLEG\|FailedCreatePodSandBox\|x509' \| tail -60` |
 | 压力与驱逐 | describe node 的 Conditions；默认 evictionHard 5 条（mem<100Mi/nodefs<10%/imagefs<15%/inode<5%）引用第 7 章 §6.4；清 Evicted：`kubectl delete pods -A --field-selector=status.phase=Failed` |
 | 两种 OOM | A=容器 cgroup：`lastState.terminated.reason=OOMKilled` + exit 137；B=宿主机 OOM killer：`journalctl -k \| grep -i 'out of memory'`（`Memory cgroup out of memory`=A 层，`Out of memory: Killed process`=B 层） |
 | crictl | `crictl ps -a` / `pods` / `logs --tail=100 <cid>` / `exec -it <cid> sh` / `inspect <cid> \| jq .info.pid` / `rmp <sandbox>` / `rmi --prune` |
 | Pending | 四步链照抄第 2 章 §7.3；静默绕路三查：`.spec.nodeName`、`.spec.schedulerName`、`.spec.schedulingGates` |
 | Pod 症状 | describe → Events；`logs -c <c> --previous` → `.exitCode`/`.reason`；exit 137=SIGKILL（OOMKilled/liveness/Evicted 三选一）、139=SIGSEGV、143=SIGTERM 正常落幕 |
-| kubectl debug | A：`-it <pod> --image=<img> --target=<c>`（ephemeral，v1.25 Stable）B：`--copy-to=<n> [--container=<c>] [--set-image=*=<img>]`（副本）C：`node/<node> -it --image=ubuntu`（主机命名空间 + /host）D：`--profile=general(baseline\|restricted\|netadmin\|sysadmin)`，`--custom=<file>`（v1.32 Stable） |
+| kubectl debug | A：`-it <pod> --image=<img> --target=<c>`（ephemeral，v1.25 Stable）B：`--copy-to=<n> [--container=<c>] [--set-image=*=<img>]`（副本）C：`node/<node> -it --image=ubuntu`（主机命名空间 + /host）D：`--profile={general\|baseline\|restricted\|netadmin\|sysadmin}`（默认 general），`--custom=<file>`（v1.32 Stable） |
 | nsenter | `pid=$(sudo crictl inspect $cid \| jq -r .info.pid)`→ `sudo nsenter -t $pid -n <cmd>`（跑宿主机工具：tcpdump/curl/ss/ip）；`-m` 挂载 ns；`/proc/$pid/root` 直接看容器文件系统 |
 | 优雅退出 | 摘除（endpoint 控制器→kube-proxy）∥ 终止（preStop→SIGTERM→30s 默认 grace→SIGKILL）**并行**非串行；preStop sleep 可解「退期间丢流量」；探针默认 period 10s/timeout 1s/failureThreshold 3 |
 | 网络逐跳 | Pod→同节点→跨节点→ClusterIP→endpointSlice→后端直达→egress/ingress；**timeout=半路丢，refused=四层没人监听** |
 | conntrack | `conntrack -C` vs `nf_conntrack_max`；`dmesg \| grep nf_conntrack`（table full = 丢新流）；症状=间歇 UDP/DNS + 短连接丢 |
 | DNS ndots | 默认 `options ndots:5` → <5 点多走 search 展开；FQDN 尾点（`name.`）跳过；排 DNS 用 dnsutils/netshoot（glibc），**别用 alpine** |
-| NetworkPolicy | 静默放行判定：default-deny 实弹测试（仍通=没执行）；Cilium 用 `hubble observe --verdict DROPPED`；全程引第 3 章 §6.3-6.5 |
+| NetworkPolicy | 静默放行判定：default-deny 实弹测试（nc 还能连上=没执行）；Cilium 用 `hubble observe --verdict DROPPED`；全程引第 3 章 §6.3-6.5 |
 | MTU 黑洞 | 小包通大包卡/TLS 卡握手/image 拉不动；`ping -M do -s <size>` 逐档二分；修复=CNI mtu 对齐「物理-封装头」 |
 | 存储 | PVC Pending 看 describe pvc events；挂载失败看 describe pod；multi-attach 看 `kubectl get volumeattachment`；mount 残留 `findmnt` + `umount -f -l` |
 | 证书 | `kubeadm certs check-expiration`；`openssl x509 -noout -subject -issuer -dates -ext subjectAltName`；在线 `openssl s_client -connect IP:443 -servername <sni> </dev/null`；not yet valid 先查 chrony |
@@ -981,23 +991,23 @@ sudo sysctl -w net.netfilter.nf_conntrack_max=<step 1 记下的原值>
 | Terminating 卡死 | 域四 §6.1（finalizer/webhook/卸载） |
 | 「通但慢」「间歇丢包」 | 域五 §7.2 conntrack + §7.5 MTU |
 | 解析慢/失败 | 域五 §7.3（三板斧 + ndots 两例） |
-| 挂载类/PVC 类 | 域八 §8.1（A/B/C 分类路由） |
+| 挂载类/PVC 类 | 域八 §8.1（A/B/C/D 分类路由） |
 | x509/TLS 报错 | 域九 §9.1 词典 |
 
 ### 12.3 关键要点（背诵版）
 
 1. **总纲一句话**：症状 = 某个控制循环没 reconcile 成功；排障 = 定位到那台循环 → 顺着链反查每一环的输入 → 每一跳只信一手证据（events/status/日志/节点真相）。
 2. **五动作顺序**：界定域 → 收集证据（只读） → 假设-验证（一次一个变量） → 修复（先止血后根治，分账记） → 复盘（timeline 模板 §10.1）。**没有复盘的修复等于没修**。
-3. **总入口三件套 30 秒**：`/readyz?verbose`（控制面）→ `get nodes`（节点面）→ `get events -A --sort-by=.lastTimestamp`（事件面）。多域并发按域一→四顺序收敛。
-4. **控制面判读链**：readyz（[−]etcd / informer-sync / poststarthook）→ crictl ps 静态 Pod → etcdctl endpoint status → webhook/聚合层。`get cs` 已废（v1.19 deprecated），代报状态全部要怀疑一层。
+3. **总入口三件套 30 秒**：`/readyz?verbose`（控制面）→ `get nodes`（节点面）→ `get events -A --sort-by='.lastTimestamp`（事件面）。多域并发按域一→四顺序收敛。
+4. **控制面判读链**：readyz（`[-]etcd` / informer-sync / poststarthook）→ crictl ps 静态 Pod → etcdctl endpoint status → webhook/聚合层。`get cs` 已废（v1.19 deprecated），代报状态全部要怀疑一层。
 5. **NotReady 四类分流**：网络分区（10250 不通）/ kubelet 挂（systemctl）/ runtime 卡（crictl ps 超时）/ 证书（`kubelet-client-current.pem` 过期）+ 压力条件。看 `journalctl -u kubelet` 之前别下结论。
 6. **两种 OOM 必区分**：容器 cgroup（OOMKilled reason + exit 137，好 OOM） vs 宿主机杀手（`journalctl -k` 有 `Out of memory: Killed process`，无 OOMKilled reason，失控前兆）。「memory request == limit」让 OOM 永远只在 cgroup 里发生。
 7. **Pending 静默绕路三剑客**：`.spec.nodeName` 预绑 / `.spec.schedulerName` 指了不存在的调度器 / `.spec.schedulingGates`（STATUS 显 SchedulingGated）——**全都不出 FailedScheduling 事件**。调度器本体病了看 kube-scheduler Pod + Lease + :10259 指标。口诀：**Pending 看账本（allocatable − requests），慢才看实况**。
-8. **kubectl debug 四形态**：ephemeral（v1.25 Stable；--target 共享进程 ns；不能有 ports/probes/resources；加后不可改；静态 Pod 不支持）、copy pod（--copy-to；--container 改已有容器命令、--set-image 换镜像；副本不影响原物）、node 调试（/host 挂载 + host namespaces，默认非特权）、profile 三档（general 默认/netadmin 抓包/sysadmin privileged；--custom v1.32 GA）。**Pouring Pod 容器崩了也能挂 ephemeral；Pending 无沙箱挂不上——转 copy-to。**
+8. **kubectl debug 四形态**：ephemeral（v1.25 Stable；--target 共享进程 ns；不能有 ports/probes/resources；加后不可改；静态 Pod 不支持）、copy pod（--copy-to；--container 改已有容器命令、--set-image 换镜像；副本不影响原物）、node 调试（/host 挂载 + host namespaces，默认非特权）、profile 三档（general 默认/netadmin 抓包/sysadmin privileged；--custom v1.32 GA）。**CrashLoop 的 Pod 沙箱还在，ephemeral 照挂；Pending 无沙箱挂不上——转 --copy-to**。
 9. **nsenter 是「把宿主机工具借进容器的 namespace 跑」**：`crictl inspect → .info.pid → nsenter -t <pid> -n tcpdump`——容器再 distroless 也能抓包；`/proc/<pid>/root` 零成本看容器文件系统。它绕过 K8s 层，runbook 里要记账。
 10. **优雅退出两条线并行**：endpoint 摘除（A）∥ 容器终止（preStop→SIGTERM→30s→SIGKILL，B）——B 快于 A 就丢流量，用 preStop sleep 留窗；Terminating 卡死五查：finalizer → webhook 挡 UPDATE → preStop 阻塞 → 卸载僵死 → shim 残留。
-11. **网络排障最锋利一刀**：**timeout = 半路丢，refused = 到了没人监听**；逐跳定位走 Pod→同节点→跨节点→ClusterIP→endpointSlice→后端直达。conntrack 满表的画像 = 间歇 UDP/DNS 失败但长连接稳；MTU 黑洞的画像 = 小包通大包卡（TLS 握手先死）。**alpine/musl 排 DNS 是纸老虎——用 dnsutils/netshoot**。
-12. **存储三分类**：PVC Pending（供给层）/ 挂载失败（attach/mount 层，`Unable to attach or mount` 字样）/ IO 慢（数据面层）——各走各的表；multi-attach 先 `kubectl get volumeattachment` 确认旧节点真死再松手删，数据权属永远人工确认。
+11. **网络排障最锋利一刀**：**timeout = 半路丢，refused = 到了没人监听**；逐跳定位走 Pod→同节点→跨节点→ClusterIP→endpointSlice→后端直达。conntrack 满表的画像 = 间歇 UDP/DNS 失败但长连接稳；MTU 黑洞的画像 = 小包通大包卡（TLS 握手先死）。**alpine/musl 镜像排 DNS 会给假线索——用 dnsutils/netshoot**。
+12. **存储四分类**：PVC Pending（供给层）/ 挂载失败（attach/mount 层，`Unable to attach or mount` 字样）/ IO 慢（数据面层）/ 对象删不动（回收侧 finalizer）——各走各的表；multi-attach 先 `kubectl get volumeattachment` 确认旧节点真死再松手删，数据权属永远人工确认。
 13. **x509 词典三急**：expired/not yet valid（查日期 + chrony）/ unknown authority（issuer vs 信任链，kubelet serving 自签是 kubeadm 默认）/ SAN mismatch（证书覆盖 FQDN≠访问形态）。kubeadm 叶证续期 = renew + 静态 Pod 重启三件套。
 14. **复盘是手段不是文书**：三行铁证——事故前最近快照、事故中 readyz 与 events 各显示什么、恢复中哪个对象是最大因果。L3 七场景演完按 §10.1 写复盘，runbook 才配叫 runbook。
 
@@ -1005,14 +1015,14 @@ sudo sysctl -w net.netfilter.nf_conntrack_max=<step 1 记下的原值>
 
 | 主题 | 链接 |
 |------|------|
-| Debug Running Pods（ephemeral/copy/node/profile/--target/--set-image/sysadmin 抓包/troubleshoot 命令） | https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/ |
+| Debug Running Pods（ephemeral/copy/node/profile/--target/--set-image/sysadmin 抓包/sysadmin 权限验证） | https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/ |
 | Debug Pods（Pending/Waiting/Terminating/webhook 挡 finalizer 判读、events are namespaced） | https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/ |
 | Debug Services（逐跳清单 svc→DNS→IP→endpointSlices→Pods→kube-proxy；ndots 默认 resolv.conf 示例） | https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/ |
 | Debug Init Containers（Init:N/M 状态表、init 日志取法） | https://kubernetes.io/docs/tasks/debug/debug-application/debug-init-containers/ |
-| Troubleshooting Clusters（节点真相层级、日志位置、失败模式缓解） | https://kubernetes.io/docs/tasks/debug/debug-cluster/ |
-| Ephemeral Containers 概念页（Stable since v1.25；disallowed 字段；不可改、静态 Pod 不支持） | https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/ |
+| Troubleshooting Clusters（日志位置 /var/log、失败模式与缓解列表） | https://kubernetes.io/docs/tasks/debug/debug-cluster/ |
+| Ephemeral Containers 概念页（Stable since v1.25；disallowed 字段；不可改；静态 Pod 不支持） | https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/ |
 | kubectl debug 命令参考（--profile 选项与默认 general、--custom/--keep-*/--replace/--same-node，自动生成本） | https://kubernetes.io/docs/reference/kubectl/generated/kubectl_debug/ |
-| crictl 节点调试（pods/ps/logs/exec/inspect 示例；endpoint 配置） | https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/ |
+| crictl 节点调试（pods/ps/logs/exec/inspect 示例；endpoint 配置；Stable since v1.11） | https://kubernetes.io/docs/tasks/debug/debug-cluster/crictl/ |
 | Node Pressure Eviction（默认 evictionHard、驱逐排序、static Pod 拉起） | https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/ |
 | 配置 Liveness/Readiness/Startup 探针（默认参数） | https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/ |
 | Pod 生命周期与终止时序 | https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/ |
@@ -1025,4 +1035,4 @@ sudo sysctl -w net.netfilter.nf_conntrack_max=<step 1 记下的原值>
 
 ---
 
-> 收官备注：八个章节到此闭环——第 1~7 章给了 K8s 的「零件级机制」，本章给了「出故障时的肌肉记忆」。**方法论没有终点只有演练**：§11 的七场景每季度重跑一遍（time-box 按表内自评耗时收敛），每跑一次把新踩到的坑回填进症状词典——这就是这张「排障一本通」成为活的文档的方式。
+> 收官备注：八个章节到此闭环——第 1~7 章给了 K8s 的「零件级机制」，本章给了「出故障时的肌肉记忆」。**方法论没有终点只有演练**：实验 8.1 的七场景每季度重跑一遍（time-box 按表内自评耗时收敛），每跑一次把新踩到的坑回填进症状词典——这就是这张「排障一本通」成为活的文档的方式。
