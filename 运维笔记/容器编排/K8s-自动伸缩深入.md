@@ -169,9 +169,9 @@ desiredReplicas = ceil( currentReplicas × currentMetricValue / desiredMetricVal
 | 情形 | 缩容方向的假设 | 扩容方向的假设 | 效果 |
 |------|----------------|----------------|------|
 | 某 Pod 指标缺失（metrics 链抖动/Pod 刚起） | 按 100% 目标值计 | 按 0% 目标值计 | 缺失越多，动作幅度越小（dampen） |
-| 某 Pod not-yet-ready（启动保护窗口内） | 按 0% 计 | 按 0% 计 | 进一步压低扩容量 |
+| 某 Pod not-yet-ready（启动保护窗口内） | —（官方只定义了扩容侧规则） | 按 0% 目标值计 | 进一步压低扩容量（dampen scale-up） |
 | 重算后方向反转或落入 tolerance | — | — | **本次完全不动** |
-| 带删除时间戳的 Pod / Failed Pod | 直接剔除出计算 | 剔除 |  terminating 中的 Ready Pod（external/object 指标）仍计入副本基数 |
+| 带删除时间戳的 Pod / Failed Pod | 直接剔除出计算 | 剔除 | terminating 中的 Ready Pod（external/object 指标）仍计入副本基数 |
 
 **多指标取最大**：`metrics:` 列表里每个指标独立算出一个 desiredReplicas，取**最大**者作为本轮建议。但有一个保护分支：**任何一个指标拉取失败时，如果其余指标的建议方向是缩容，本轮直接跳过**（宁可用旧副本数，也不在信息不全时缩）；扩容方向不受影响——这是「扩容激进、缩容保守」总基调的一部分。
 
@@ -345,7 +345,7 @@ kubectl get hpa web-hpa -o jsonpath='{.status.currentMetrics}' | jq .
 ### 2.8 为什么这么设计
 
 - **比例式而非 PID/深度学习**：K8s controller 设计哲学是「可解释、可回放、可静态审计」。线性比例 + tolerance + 稳定窗口三件套，让任意时刻的副本决策都能用一条日志解释——这对 SRE 的价值大于拟合精度。
-- **保守化处理缺失数据**：缩容是把钱和安全边界往后缩的动作，宁可少缩勿错缩；扩容关系可用性，宁可能的扩错也不能不扩。缺失指标的双向假设（§2.1）与「指标失败跳缩容」规则都是这一个原则的两个切面。
+- **保守化处理缺失数据**：缩容是把钱和安全边界往后缩的动作，宁可少缩勿错缩；扩容关系可用性，宁可扩错也不能不扩。缺失指标的双向假设（§2.1）与「指标失败跳缩容」规则都是这一个原则的两个切面。
 - **启动保护放在控制面而不是指标侧**：Pod 启动期是否正常，只有控制面知道其完整的 readiness 历史；metrics-server 是无状态的转发层，做不了也不该做生命周期判断。
 
 ---
@@ -924,3 +924,313 @@ requests(mem) = P99(小时粒度, 近14天 usage) × 1.15 + 启动/缓存基线�
 | 12 | 发布期副本数暴涨暴跌 | 滚动更新与 HPA/缩容同时段的度量抖动（§6.2） | 发布时间线 × HPA event 时间线 | 按 §6.2 错峰清单执行；KEDA 环境用 paused 注解 |
 
 ---
+
+## 九、实验（kind 可复现 3 个 + 云上可选 1 个）
+
+前置（三个 kind 实验共用）：
+
+```bash
+kind create cluster --name scale-lab --image kindest/node:v1.34.0  # 本机最新 kind 镜像均可，≥1.33 为佳
+kubectl cluster-info --context kind-scale-lab
+```
+
+### 实验 9.1 HPA 经典演示 + behavior 配方对照（30 分钟）
+
+目标：亲眼看「扩得快、缩得慢」的默认行为，再用 behavior 把它调成「更慢缩」。
+
+```bash
+# ① 装 metrics-server（kind 的 kubelet 是自签证书，必须加 --kubelet-insecure-tls）
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml
+kubectl patch deploy metrics-server -n kube-system --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+kubectl rollout status deploy/metrics-server -n kube-system
+kubectl get apiservice v1beta1.metrics.k8s.io   # Available: True 才算通
+
+# ② 官方示例应用（hpa-example，requests=200m limits=500m）
+kubectl apply -f https://k8s.io/examples/application/php-apache.yaml
+kubectl autoscale deployment php-apache --cpu=50% --min=1 --max=10   # 老命令展示的正好是纯利用率目标
+
+# ③ 另开端口打流（busybox 循环 wget）
+kubectl run -i --tty load-generator --rm --image=busybox:1.28 --restart=Never -- \
+  /bin/sh -c "while sleep 0.01; do wget -q -O- http://php-apache; done"
+
+# ④ 观察（重点看 REPLICAS 上冲的节奏：15s 周期 + 默认 scaleUp 双 policy）
+kubectl get hpa php-apache -w
+# 预期：TARGETS 从 0%/50% 涨到 200%+/50% → REPLICAS 1→4→8…被 max=10 卡住
+# 停压（Ctrl+C 掉 load-generator）→ 观察缩容要等满 300s 稳定窗口才动
+
+# ⑤ behavior 对照实验：把缩容改得更「钝」
+kubectl patch hpa php-apache --type=merge -p '{
+ "spec":{"behavior":{
+   "scaleUp":  {"policies":[{"type":"Percent","value":50,"periodSeconds":15}],"selectPolicy":"Max"},
+   "scaleDown":{"stabilizationWindowSeconds":600,
+                "policies":[{"type":"Pods","value":1,"periodSeconds":120}]}
+ }}}'
+# 再打一轮压：扩容从「翻倍」变成「每 15s +50%」；缩容变成「600s 冷静 + 每 2 分钟只收 1 个」
+# ⑥ 收尾验证 conditions 取数口径（§2.7）
+kubectl get hpa php-apache -o jsonpath='{.status.conditions}' | jq .
+```
+
+**观察点**：`kubectl get events --field-selector involvedObject.name=php-apache --sort-by='.lastTimestamp'` 里 `SuccessfulRescale` 事件的 reason 与新旧副本——把每个事件对应到算法公式（§2.1）人工复算一遍，本章内容就内化了。
+
+### 实验 9.2 prometheus-adapter 按 RPS 伸缩（60 分钟）
+
+目标：把 `http_requests_total` 桥成 `pods/http_requests_per_second`，让 HPA 按「每 Pod 1 RPS」扩缩。
+
+```bash
+# ① 装最小 Prometheus（不装 operator，community chart 单机版）
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install prom prometheus-community/prometheus --set alertmanager.enabled=false --set pushgateway.enabled=false
+
+# ② 部署官方 walkthrough 的示例应用（暴露 http_requests_total，带 pod/namespace label 由抓取配置注入）
+cat <<'EOF' | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sample-app}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sample-app}}
+  template:
+    metadata:
+      labels: {app: sample-app}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080"}
+    spec:
+      containers:
+      - name: app
+        image: luxas/autoscale-demo:v0.1.2     # prometheus-adapter 官方 walkthrough 样例
+        ports: [{containerPort: 8080}]
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits:   {cpu: 500m, memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: sample-app}
+spec:
+  selector: {app: sample-app}
+  ports: [{port: 8080, targetPort: 8080}]
+EOF
+
+# ③ 装 adapter，rules 用 §3.3 四件套（注意：community chart 的 key 是 rules.custom）
+cat <<'EOF' > adapter-values.yaml
+prometheus:
+  url: http://prom-prometheus-server.default.svc   # 第①步 release 名 prom + 默认 server svc 名拼接
+  port: 80                                          # community chart server svc 默认 80（非容器 9090）
+rules:
+  default: false
+  custom:
+  - seriesQuery: 'http_requests_total{namespace!="",pod!=""}'
+    resources:
+      overrides:
+        namespace: {resource: "namespace"}
+        pod:       {resource: "pod"}
+    name:
+      matches: "^(.*)_total$"
+      as: "${1}_per_second"
+    metricsQuery: 'sum(rate(<<.Series>>{<<.LabelMatchers>>}[2m])) by (<<.GroupBy>>)'
+EOF
+# 若你改过 release 名或装了别的 ns，先核对 server svc 名再改上面的 url：
+kubectl get svc | grep prometheus-server
+helm install adapter prometheus-community/prometheus-adapter -f adapter-values.yaml
+
+# ④ 验证三件套（§3.3 末尾）
+kubectl get apiservice v1beta1.custom.metrics.k8s.io
+kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 | jq '.resources[].name'
+kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/default/pods/*/http_requests_per_second" | jq .
+
+# ⑤ 挂 HPA：每 Pod 目标 100m（=0.1 RPS，kind 里这个量级最灵敏）
+cat <<'EOF' | kubectl apply -f -
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: sample-app-rps}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: sample-app}
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+  - type: Pods
+    pods:
+      metric: {name: http_requests_per_second}
+      target: {type: AverageValue, averageValue: 100m}
+EOF
+
+# ⑥ 打流量验证（autoscale-demo 的 http_requests_total 随访问量线性增长）
+kubectl run -i --tty load-gen --rm --image=busybox:1.28 --restart=Never -- \
+  /bin/sh -c "while true; do wget -q -O- http://sample-app:8080; done"
+kubectl get hpa sample-app-rps -w    # 预期 REPLICAS 随 RPS 拉升；停流后按默认窗口回落
+```
+
+**观察点再造坑**：把 rules 里 `as: "${1}_per_second"` 改成别的名但忘记同步改 HPA —— 亲手复现 §3.3 坑 2；把 `seriesQuery` 改成 `{__name__="http_requests_total"}`（labels 要求丢掉）复现坑 1。
+
+### 实验 9.3 KEDA：cron scaler + 观察「HPA 被托管」（30 分钟）
+
+目标：不依赖任何外部事件源（kind 里最稳），看 KEDA 定时把副本顶到 5，再缩回 0，并验证生成的 HPA 归 KEDA 管。
+
+```bash
+# ① 装 KEDA（helm，三件套：operator + metrics apiserver + webhooks）
+helm repo add kedacore https://kedacore.github.io/charts
+helm install keda kedacore/keda --namespace keda --create-namespace
+kubectl -n keda get pods      # keda-operator / keda-operator-metrics-apiserver / keda-admission-webhooks
+
+# ② 目标 Deployment（随便一个能起副本的就行）
+kubectl create deploy web --image=registry.k8s.io/pause:3.10 --replicas=1
+
+# ③ ScaledObject：每 2 分钟一个 2 分钟窗口的 cron（方便课堂观察）
+NOW_M=$(date -u +%M); START=$(( (NOW_M + 1) % 60 )); END=$(( (NOW_M + 3) % 60 ))
+cat <<EOF | kubectl apply -f -
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata: {name: web-cron}
+spec:
+  scaleTargetRef: {name: web}
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 60
+  triggers:
+  - type: cron
+    metadata:
+      timezone: UTC
+      start: "${START} * * * *"
+      end: "${END} * * * *"
+      desiredReplicas: "5"
+EOF
+
+# ④ 观察链（窗口内顶到 5，窗口结束 + cooldown 60s 后回 0）
+kubectl get scaledobject web-cron -w
+kubectl get hpa                        # 看到 keda-hpa-web-cron —— 它就是 KEDA 的 1↔N 抓手
+kubectl get deploy web -w
+
+# ⑤ 关键解剖：指标真名 s0-cron（§3.4 命名规则）
+kubectl get hpa keda-hpa-web-cron -o yaml | yq '.spec.metrics'
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/default/s0-cron" | jq .
+
+# ⑥ 删除 ScaledObject 看 restoreToOriginalReplicaCount: false 的默认语义（副本停在当前值）
+kubectl delete scaledobject web-cron
+kubectl get deploy web                 # replicas 保留在删除瞬间的值；HPA 一并消失
+```
+
+**观察点**：`kubectl describe scaledobject web-cron` 的 `Conditions` 里 `Active`/`Ready` 与 HPA 的 `ScalingActive` 是两层开关——前者管 0↔1，后者管 1↔N，亲手对一遍能彻底记住 §3.4 的分工图。
+
+### 实验 9.4（云上可选 · 无 AWS 可 skip）Karpenter 最小上手
+
+适用：有一个 EKS 集群（karpenter.sh 官方 Getting Started 以 EKS 为基线）+ IAM/eksctl 环境。**共 4 步，约 45 分钟**：
+
+1. 按官方指南部署（`https://karpenter.sh/docs/getting-started/`）：装 controller（helm，`--namespace karpenter`）、配 IAM（controller role/Pod Identity + 节点 instance profile）、必要时建 SQS 中断队列（spot 场景）。
+2. 落地最小 NodePool + EC2NodeClass：
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata: {name: default}
+spec:
+  template:
+    spec:
+      nodeClassRef: {group: karpenter.k8s.aws, kind: EC2NodeClass, name: default}
+      requirements:
+      - {key: karpenter.sh/capacity-type, operator: In, values: ["spot", "on-demand"]}
+      - {key: kubernetes.io/arch, operator: In, values: ["amd64"]}
+      - {key: karpenter.k8s.aws/instance-category, operator: In, values: ["c", "m", "r"]}
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+    budgets: [{nodes: "10%"}]
+  limits: {cpu: "100"}
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata: {name: default}
+spec:
+  amiFamily: Bottlerocket      # 或 AL2023，按集群选择
+  role: "<节点 IAM role 名>"
+  subnetSelectorTerms: [{tags: {"kubernetes.io/role/internal-elb": "1"}}]  # 按你的 tag 方案
+  securityGroupSelectorTerms: [{tags: {"karpenter.sh/discovery": "<cluster 名>"}}]
+```
+
+3. 压一个 30 副本 inflate Deployment（官方 inflate 样例）：看 `kubectl get nodeclaims -w` 秒级出实例、`kubectl get nodes` 陆续 Ready。
+4. 拆掉 inflate：`kubectl get events -A | grep -i consolid` 观察聚合缩容决策链、「can't replace with a lower-priced node」类 Unconsolidatable 事件对账 `consolidationPolicy`。
+
+无 AWS 账号：把本节的 NodePool YAML 换成 CA 路线研读即可（§5.1 条件表 + §5.3 选型表是该实验的纸面版）。
+
+---
+
+## 十、速查表 + 背诵要点 + 参考链接
+
+### 10.1 一页速查（对象 → 关键默认值 → 第一诊断）
+
+| 对象/参数 | 默认值（已核实） | 出处 |
+|-----------|------------------|------|
+| HPA sync 周期 | 15s（`--horizontal-pod-autoscaler-sync-period`） | v1.37 kube-controller-manager 参考 |
+| HPA tolerance | 0.1（集群级 flag）；v1.37 起 behavior 可按方向覆盖（GA） | 同上 + HPA 页 |
+| downscale 稳定窗口 | 5m（flag）；behavior 默认 scaleDown 窗口 300s | 同上 + HPA 页 |
+| cpu 初始化忽略窗 | 5m（`--horizontal-pod-autoscaler-cpu-initialization-period`） | 同上 |
+| 初始就绪延迟 | 30s（`--horizontal-pod-autoscaler-initial-readiness-delay`） | 同上 |
+| HPAScaleToZero | v1.37 Beta **默认开**；仅 object/external 指标；写 ScaledToZero 条件 | HPA 页 |
+| behavior periodSeconds 上限 | 1800s | HPA 页 |
+| metrics-server 抓取分辨率 | 1m（`--metric-resolution`，min 10s） | metrics-server flags |
+| KEDA pollingInterval / cooldownPeriod | 30s / 300s（仅管缩零） | KEDA 2.21 spec |
+| KEDA min/maxReplicaCount | 0 / 100 | 同上 |
+| VPA 默认 mode | Recreate（Auto 已 deprecated）；InPlaceOrRecreate VPA v1.6 GA | VPA api.md/features.md |
+| K8s InPlacePodVerticalScaling | v1.35 GA 锁定；SchedulerPreemption/MemoryBackedVolumes v1.37 Alpha | resize 页 |
+| CA scan/缩容阈值/冷却 | 10s / 0.5 / unneeded 10m（unready 20m）；优雅退出上限 600s | CA FAQ |
+| Karpenter budgets/expireAfter/consolidateAfter | 默认 `nodes: 10%` / 720h / 0s | Karpenter 文档 |
+
+**第一诊断一对照**：
+
+| 症状 | 第一条命令 |
+|------|-----------|
+| HPA TARGETS unknown | `kubectl get apiservices \| grep metrics` → `kubectl describe hpa` |
+| 自定义指标没有 | `kubectl get --raw /apis/custom.metrics.k8s.io/v1beta1 \| jq .` |
+| KEDA 不动 | `kubectl describe scaledobject` → `kubectl get hpa keda-hpa-*` |
+| VPA 没动作 | `kubectl get vpa -o yaml` 看 `updateMode` 与 `.status.conditions` |
+| CA 不缩 | `--v=4` 日志找 `unremovable`；`kubectl get pdb -A` |
+| Karpenter 不聚合 | `kubectl get events -A \| grep -i consolid`；NodeClaim 的 Drifted |
+
+### 10.2 背诵要点
+
+1. **三轴一扳机**：X 副本（HPA/KEDA 托管 HPA）、Y 规格（VPA 三件套）、Z 节点（CA/Karpenter），外加 KEDA 这个「外部事件→external metrics + 0↔1 激活」的扳机。先定轴再谈参数。
+2. **HPA 全部心法**：`ceil(current × 实测/目标)`、tolerance 0.1 防抖、多指标取最大、缺指标双向保守化、缩容遇指标失败直接跳过——**扩容激进、缩容保守**是单一设计原则。
+3. **`Utilization` 分母是 requests**：不给 requests 就不参与伸缩；`ContainerResource`（v1.30 GA）隔离 sidecar；AverageValue 按 Pod 均、Value 看总量。
+4. **启动保护双参数**：readiness 延迟 30s + CPU 忽略窗 5m（集群级 flag 只能控制面改）；主防线是 startupProbe 把尖峰关进未就绪。
+5. **behavior 三件套**：stabilizationWindow（缩容默认 300s 窗口取历史建议最大值）、policies（每 periodSeconds 最多变化的额度，Percent 基数是当前副本）、selectPolicy（Max 默认/Min/Disabled 方向锁死）。
+6. **指标三条链都是 APIService**：resource=metrics-server 专属，custom=prometheus-adapter（rules 四件套：seriesQuery/resources/name/metricsQuery），external=KEDA（`s<序号>-<scaler>` 命名）——链路挂了 HPA 只静默不干活，先查 APIService Available。
+7. **VPA 机制骨架**：Recommender 直方图 → Checkpoint CRD 存档 → Updater 驱逐或 InPlace 落地 → Admission 在新 Pod 创建时改值；Off→Initial→Recreate→InPlaceOrRecreate（VPA v1.6 GA，k8s≥1.33；InPlace v1.7 Alpha）→ Auto deprecated。推荐值是统计量不是真理，Off 观察先行。
+8. **CA 缩五条**：双低 0.5、全员可迁、无禁用注解、unneeded 10m（unready 20m）、非空逐台；拦截清单 PDB/kube-system/本地存储/裸 Pod/无处可迁——`safe-to-evict` 系列注解是放行的正规通道。
+9. **Karpenter 七个名词**：NodePool/NodeClaim/EC2NodeClass、consolidation 三策略（WhenEmpty/WhenEmptyOrUnderutilized/Balanced[v1.14+]）、consolidateAfter、budgets（默认 10%，支持 schedule+reasons）、expireAfter 720h、do-not-disrupt（布尔或时长）、Drift/Expiration/Repair。
+10. **PDB 一份公约管四家**：VPA/CA/Karpenter/drain 全走 eviction API；`maxUnavailable: 0` 等于禁止运维；发布期对伸缩「冻结-解冻」成对出现。
+11. **端到端延迟预算**：metrics-server 默认 60s（错背成 15s 是最常见口误）→ HPA sync 15s → behavior → Pod 冷启；**突发靠 buffer，不是靠把 sync 拧小**；overprovisioning 气球 = 用 PriorityClass 负数买反应时间。
+
+### 10.3 与其他章节的挂接索引
+
+| 主题 | 挂接点 |
+|------|--------|
+| 聚合层/APIService 机制与 `metrics.k8s.io` 判读 | 第 1 章 §6（APIService 结构、代理路径、故障表） |
+| PriorityClass 数值、抢占步骤、SchedulingGates | 第 2 章 §6、§11.1 |
+| descheduler 策略全图与部署 | 第 2 章 §8 |
+| eviction 阈值与 QoS 驱逐序列、LimitRange/ResourceQuota、CPU limit 取消趋势 | 第 7 章 §6.4、§8.2、§8.3 |
+| 事件 TTL/证据存盘/症状→控制循环反查 | 第 8 章 §1.3、§一 |
+| HPA/VPA/CA 入门 YAML | `K8s-资源全览.md` §6 |
+
+### 10.4 参考链接
+
+| 主题 | 链接 |
+|------|------|
+| HPA 总文档（算法、behavior、启动保护、scale-to-zero、tolerance GA v1.37） | https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/ |
+| HPA walkthrough（php-apache 示例 yaml 与 busybox 压测命令） | https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/ |
+| kube-controller-manager flag 参考（HPA 五 flag 默认值，v1.37） | https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/ |
+| In-place Pod resize（KEP-1287 用户面：v1.35 GA、两个 v1.37 Alpha gate、限制清单） | https://kubernetes.io/docs/tasks/configure-pod-container/resize-container-resources/ |
+| metrics-server（README 兼容矩阵 0.9.x→1.34+；flags 默认 1m） | https://github.com/kubernetes-sigs/metrics-server |
+| prometheus-adapter rules 配置参考（四件套与模板变量） | https://github.com/kubernetes-sigs/prometheus-adapter/blob/master/docs/config.md |
+| prometheus-adapter config-walkthrough（RPS 示例逐步） | https://github.com/kubernetes-sigs/prometheus-adapter/blob/master/docs/config-walkthrough.md |
+| VPA 官方文档（api.md 全字段；features.md InPlace 状态表） | https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler |
+| KEDA ScaledObject spec（2.21） | https://keda.sh/docs/2.21/reference/scaledobject-spec/ |
+| KEDA scaling-deployments 概念（0↔1/1↔N 分工、paused 注解） | https://keda.sh/docs/2.21/concepts/scaling-deployments/ |
+| KEDA cron / prometheus scaler 字段 | https://keda.sh/docs/2.21/scalers/cron/ 与 …/scalers/prometheus/ |
+| CA FAQ（scale-up/down 条件、拦截清单、默认值、expanders） | https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md |
+| Karpenter NodePools / Disruption（v1 API、budgets、consolidation、do-not-disrupt 时长形态） | https://karpenter.sh/docs/concepts/nodepools/ 与 https://karpenter.sh/docs/concepts/disruption/ |
+| Karpenter v1.14.0 release notes（Balanced consolidation 落地证据） | https://github.com/kubernetes-sigs/karpenter/releases/tag/v1.14.0 |
+| 本仓前置章节 | `K8s-API机制深入.md`（§6）、`K8s-调度器深入.md`（§6/§8）、`K8s-生产集群运维手册.md`（§6.4/§8）、`K8s-故障排查方法论.md`、`K8s-资源全览.md`（§6） |
+
+---
+
+> 收官备注：第九章把「伸缩」从「写个 HPA」升级成「三轴一扳机的系统工程」——副本、规格、节点、事件四个维度各归其位，PDB/PriorityClass/descheduler 这些老朋友在同一张图里重新碰头。下一章（若有）建议顺着 `监控/` 目录把本章所有控制器的 Prometheus 指标（`vpa_updater_*`、`karpenter_voluntary_disruption_decisions_total`、CA 的 `:8085` metrics）接成「伸缩健康度」仪表盘：机制学完了，让数据替你守着它。

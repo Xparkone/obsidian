@@ -79,7 +79,7 @@
 | 6 | `K8s-Operator开发实战.md` | CRD 进阶（structural schema / 多版本 / conversion webhook）、controller-runtime 架构、reconcile 幂等性、Informer vs Watch、finalizer、kubebuilder 上手、Go 写一个最小应用型 Operator（部署 + 观测 + 重启自愈） | 第 1、2 章 | `kubebuilder init && make run` 全流程 | ✅ |
 | 7 | `K8s-生产集群运维手册.md` | kubeadm 搭集群（v1.37、containerd、etcd 外部/堆叠选型）、升级流程（kubeadm upgrade + drain）、CA/证书轮转（1.35+ 自动轮转行为）、节点自运维（node-problem-detector、draino）、etcd/apiserer/scheduler 性能调优参数、LIMIT ranger/ResourceQuota 治理、大规模集群设计约束 | 第 1 章 | 见下方实验 L2 / L3 | ✅ |
 | 8 | `K8s-故障排查方法论.md` | 分域排障树：控制面 / 节点 / 调度 / Pod-容器 / 网络-DNS / 存储 / 证书七大域；每域「症状→工具→修复」；kubectl debug/ephemeral/nsenter/tcpdump 组合技；kubelet 日志读法；真实事故复盘模板；收敛 `排障进阶-5个冷门kubectl命令` 等内容做成一本通 | 第 1~4、7 章 | 实验 L3 破坏-恢复演练是本篇的实战战场 | ✅ |
-| 9 | `K8s-自动伸缩深入.md` | HPA 算法与冷却窗口、自定义指标（prometheus-adapter/KEDA ScaledObject 对比）、VPA 三种模式与 InPlace 更新、CA vs Karpenter 选型、Karpenter WorkerPool/EC2NodeClass、伸缩对 PDB/滚动更新的联动、容量规划方法 | 第 7 章 | Karpenter（或 CA）+ KEDA 各一个 demo | ⬜ |
+| 9 | `K8s-自动伸缩深入.md` | HPA 算法与冷却窗口、自定义指标（prometheus-adapter/KEDA ScaledObject 对比）、VPA 三种模式与 InPlace 更新、CA vs Karpenter 选型、Karpenter WorkerPool/EC2NodeClass、伸缩对 PDB/滚动更新的联动、容量规划方法 | 第 7 章 | Karpenter（或 CA）+ KEDA 各一个 demo | ✅ |
 | 10 | `K8s-多集群与进阶生态.md` | 多集群痛点与方案谱（Rancher/Fleet/Karmada/OCP/OCM 对比）、多集群 Service/网络（Submariner/云厂商实现）、Cluster API 声明式建集群、设备管理（GPU device plugin、TimeSlicing vs MIG）、kubeedge / 边缘、Wasm/KWasm/Knative、vCluster 虚拟集群 | 第 7、9 章可以之后学 | Karmada 装一套把 Deployment 推到两个 kind 集群 | ⬜ |
 
 **建议学习节奏：每章 = 读笔记 → 做配套实验 → 在仓库里补一节「我已经验证过的」心得 → 勾掉状态。**
@@ -119,7 +119,7 @@
 第 6 章 Operator 开发          ✅ 2026-10-14 → 容器编排/K8s-Operator开发实战.md
 第 7 章 生产集群运维           ✅ 2026-10-14 → 容器编排/K8s-生产集群运维手册.md
 第 8 章 故障排查方法论         ✅ 2026-10-14 → 容器编排/K8s-故障排查方法论.md
-第 9 章 自动伸缩               ⬜
+第 9 章 自动伸缩               ✅ 2026-10-14 → 容器编排/K8s-自动伸缩深入.md
 第 10 章 多集群与进阶生态      ⬜
 实验 L2 kubeadm 集群           ⬜
 实验 L3 破坏-恢复 runbook      ⬜
