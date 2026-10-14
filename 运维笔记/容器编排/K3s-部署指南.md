@@ -1,6 +1,8 @@
 # K3s 部署指南
 
-> 最后更新：2026-07-15 · 版本：v1.32+ · 项目：CNCF Sandbox
+> 最后更新：2026-10-14 · 版本：v1.37+ · 项目：CNCF Sandbox
+>
+> **基线升级记录（2026-10-14）**：原基线 v1.32.3+k3s1（K8s 1.32 已于 2026-02-28 EOL）→ 新基线 **v1.37.1+k3s1**（2026-09-30 发布，官方 latest 渠道当前版本；stable 渠道当前为 v1.36.5+k3s1）。核实来源：[k3s releases · v1.37.1+k3s1](https://github.com/k3s-io/k3s/releases/tag/v1.37.1+k3s1)、[update.k3s.io 渠道服务](https://update.k3s.io/v1-release/channels)。1.32 → 1.37 之间与本指南相关的命令行为变化已散注在各小节，要点：flannel `ipsec` 后端已从合法值中移除（见第五节）、airgap 镜像新增 `.tar.zst` 压缩格式（见 2.6）、换用第三方 CNI 时官方现建议同时 `--disable-network-policy`（见 6.2）、ingress-nginx 项目已退役（见 6.3）。未逐条核实的细项，自 v1.35 起行为请以升级时所用 k3s 版本的版本说明为准。
 
 ---
 
@@ -32,6 +34,8 @@ K3s 是 **Rancher (SUSE)** 推出的轻量级 Kubernetes 发行版，CNCF 沙箱
 | **Local Path Provisioner** | 本地存储卷 | ✅ |
 | **Helm Controller** | CRD 驱动 Helm 部署 | ✅ |
 
+> 基线 v1.37.1+k3s1 的内置组件版本：containerd v2.3.4、Flannel v0.28.4、CoreDNS v1.14.7、Traefik v3.7.13、metrics-server v0.9.0、local-path-provisioner v0.0.37、嵌入 etcd v3.7.1（来源：[v1.37.1+k3s1 release notes](https://github.com/k3s-io/k3s/releases/tag/v1.37.1+k3s1)）。
+
 ---
 
 ## 二、安装部署
@@ -61,7 +65,7 @@ curl -sfL https://get.k3s.io | sh -
 # 验证集群
 sudo kubectl get nodes
 # NAME          STATUS   ROLES                  AGE   VERSION
-# ubuntu        Ready    control-plane,master   60s   v1.32.3+k3s1
+# ubuntu        Ready    control-plane,master   60s   v1.37.1+k3s1
 
 # 查看所有 Pod
 sudo kubectl get pods -A
@@ -127,9 +131,9 @@ curl -sfL https://get.k3s.io | \
 ```bash
 sudo kubectl get nodes
 # NAME          STATUS   ROLES                  AGE   VERSION
-# server-node   Ready    control-plane,master   10m   v1.32.3+k3s1
-# agent-node1   Ready    <none>                 5m    v1.32.3+k3s1
-# agent-node2   Ready    <none>                 5m    v1.32.3+k3s1
+# server-node   Ready    control-plane,master   10m   v1.37.1+k3s1
+# agent-node1   Ready    <none>                 5m    v1.37.1+k3s1
+# agent-node2   Ready    <none>                 5m    v1.37.1+k3s1
 ```
 
 ### 2.4 高可用部署（Embedded etcd）
@@ -168,8 +172,8 @@ curl -sfL https://get.k3s.io | \
 
 ```bash
 # 1. 在有网的机器上下载
-wget https://github.com/k3s-io/k3s/releases/download/v1.32.3+k3s1/k3s
-wget https://github.com/k3s-io/k3s/releases/download/v1.32.3+k3s1/k3s-airgap-images-amd64.tar.gz
+wget https://github.com/k3s-io/k3s/releases/download/v1.37.1+k3s1/k3s
+wget https://github.com/k3s-io/k3s/releases/download/v1.37.1+k3s1/k3s-airgap-images-amd64.tar.gz
 wget https://get.k3s.io -O install.sh
 
 # 2. 复制到离线机器
@@ -182,6 +186,8 @@ sudo cp /tmp/k3s /usr/local/bin/
 sudo chmod +x /usr/local/bin/k3s
 sudo INSTALL_K3S_SKIP_DOWNLOAD=true /tmp/install.sh
 ```
+
+> 注：v1.37.1+k3s1 的 release 资产中 airgap 镜像同时提供 `.tar.gz` / `.tar.zst` / 未压缩 `.tar` 三种格式（[官方文档](https://docs.k3s.io/installation/airgap)推荐 `.tar.zst`，体积更小、解压更快，需系统装有 zstd）。另外自 v1.33 起，K3s 运行期间把新的镜像包放入 `/var/lib/rancher/k3s/agent/images/` 会被自动导入，无需重启。
 
 ---
 
@@ -283,14 +289,14 @@ sudo journalctl -u k3s -f
 ### 4.5 升级
 
 ```bash
-# 使用安装脚本升级（自动检测当前版本）
+# 重新运行安装脚本升级（默认升级到 stable 渠道的最新版）
 curl -sfL https://get.k3s.io | sh -
 
 # 升级到指定版本
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.32.3+k3s1 sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.37.1+k3s1 sh -
 
 # 手动升级
-wget https://github.com/k3s-io/k3s/releases/download/v1.32.3+k3s1/k3s
+wget https://github.com/k3s-io/k3s/releases/download/v1.37.1+k3s1/k3s
 sudo cp k3s /usr/local/bin/k3s
 sudo systemctl restart k3s
 ```
@@ -318,7 +324,7 @@ sudo /usr/local/bin/k3s-agent-uninstall.sh
 | `--cluster-init` | 初始化 etcd 集群 | false |
 | `--disable traefik` | 禁用内置 Traefik | — |
 | `--disable servicelb` | 禁用内置 ServiceLB | — |
-| `--flannel-backend` | CNI 后端：vxlan/ipsec/host-gw/wireguard-native | vxlan |
+| `--flannel-backend` | CNI 后端：vxlan/host-gw/wireguard-native/none（`ipsec` 已弃用并从合法值中移除） | vxlan |
 | `--node-taint` | 节点污点 | — |
 | `--write-kubeconfig-mode` | kubeconfig 权限 | 600 |
 | `--datastore-endpoint` | 外部数据库连接串 | — |
@@ -366,22 +372,26 @@ multipass exec k3s-server -- sudo kubectl get nodes
 
 ```bash
 # 安装时禁用 Flannel
+# （换用自带网络策略引擎的第三方 CNI 时，官方文档建议同时 --disable-network-policy 避免冲突）
 curl -sfL https://get.k3s.io | \
-  sh -s - server --flannel-backend none
+  sh -s - server --flannel-backend none --disable-network-policy
 
-# 安装 Calico
-kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+# 安装 Calico（v3.33.0 为 2026-10 当前最新 release；
+# 原短链 docs.projectcalico.org/manifests/calico.yaml 现已重定向到归档的 v3.25，勿用）
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/calico.yaml
 ```
 
 ### 6.3 替换 Ingress 为 Nginx
+
+> ⚠️ ingress-nginx 项目已于 2025-11 宣布退役：best-effort 维护持续到 2026-03，此后不再有新版本、bugfix 和安全修复；存量部署与镜像/manifest 产物仍可用（[官方退役公告](https://www.kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)）。新部署不建议使用 ingress-nginx，可改用内置 Traefik 或 Gateway API 实现。仅作学习实验时可按下方命令安装最终版本 controller-v1.15.1：
 
 ```bash
 # 安装时禁用 Traefik
 curl -sfL https://get.k3s.io | \
   sh -s - server --disable traefik
 
-# 安装 Nginx Ingress
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0/deploy/static/provider/cloud/deploy.yaml
+# 安装 Nginx Ingress（退役前最终版本）
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/cloud/deploy.yaml
 ```
 
 ### 6.4 启用内置 Registry 镜像缓存
