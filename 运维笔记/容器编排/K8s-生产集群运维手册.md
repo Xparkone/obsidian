@@ -16,14 +16,14 @@
 
 ```
 你的生产集群问题，最终都会变成这几类：
-  "kubeadm init 卡住/preflight 报错"      → 前置准备那一层（swap/sysctl/cgroup driver/镜像/端口）   §2 实验 7.1
-  "节点 join 不上，hash 校验失败"         → discovery-token-ca-cert-hash 原理（CA 公钥钉住防 MITM）   §3.3
-  "升级完，我手改的 extraArgs 没了"       → kubeadm upgrade 会重写静态 Pod 清单（升级四大坑之一）     §4.3
-  "控制面证书还有 30 天过期怎么办"         → check-expiration/renew/静态 Pod 重启三件套               §5.2
-  "metrics-server 拉不到 kubelet 指标"    → kubelet serving 证书默认自签 vs serverTLSBootstrap       §5.3
-  "apiserver 429/504，watch 重连风暴"     → inflight/APF 叠合、goaway、etcd compaction 协同面        §6.1
-  "节点 MemoryPressure 连环驱逐"          → kubelet eviction 默认表 + requests/limits 生产纪律       §6.4 §8.3
-  "整机坏了，从 etcd 快照恢复的正确顺序"   → 恢复优先级表（先静态清单、再 etcd、再 RBAC webhook）     §9 §10
+  "kubeadm init 卡住/preflight 报错"      → 前置准备那一层                    §2 实验 7.1
+  "节点 join 不上，hash 校验失败"         → discovery hash 钉住 CA 公钥       §3.3
+  "升级完，手改的 extraArgs 没了"         → upgrade 重写静态清单              §4.3
+  "控制面证书还有 30 天过期"              → check-expiration/renew/重启三件套  §5.2
+  "metrics-server 拉不到 kubelet 指标"    → kubelet serving 自签 vs 签发      §5.3
+  "apiserver 429/504，watch 重连风暴"     → inflight/APF/goaway/compaction    §6.1
+  "节点 MemoryPressure 连环驱逐"          → eviction 默认表 + 资源纪律        §6.4 §8.3
+  "整机坏了，从 etcd 快照恢复的顺序"       → 恢复优先级表                     §9 §10
 ```
 
 ### 本文与实验 L2 / L3 的映射
@@ -212,7 +212,7 @@ free -m | grep -i swap                                # Swap 行应全 0
 
 kubelet 配置字段 `failSwapOn` 默认 **true**（kubelet-config.v1beta1 页核实）：检测到 swap **直接拒绝启动**——所以这不是「建议关」，是「kubelet 起不来」。`ignorePreflightErrors: [Swap]` 可以糊弄过 preflight，但糊弄不过 kubelet 自身的 fail-on 检查。同层面的另一条硬约束：**v1.37 kubelet 只支持 cgroup v2**（cgroup v1 主机直接 `FailCgroupV1=true` 拒启动）。
 
-> ❗ 生产上有人想开 `LimitedSwap`（`memorySwap.swapBehavior`）利用 swap 扛毛刺——那是另一个方向（v1.37 仍 Beta）且改变 QoS 行为，本章生产纪律仍是「关死」。
+> ❗ 有人想开 `LimitedSwap`（`memorySwap.swapBehavior`）利用 swap 扛毛刺——v1.37 仍 Beta 且改变 QoS 行为，本章生产纪律仍是「关死」。
 
 ### 2.2 内核模块与 sysctl（bridged 流量必须过 iptables）
 
@@ -321,12 +321,7 @@ sudo ufw enable
 
 > ❗ 云主机场景：ufw 之外还有一层 security group 也要同步放行（6443 只给 API 消费方、2379-2380 只给控制面段）。第 3 章《网络原理详解》讲了 NodePort 的连回路径，这里只守端口面。
 
-### 2.7 其余一票否决项（preflight 见它们就炸）
-
-- **SELinux=permissive/disabled**（RHEL 系）：`setenforce 0` + `/etc/selinux/config` 持久化（Ubuntu AppArmor 默认不挡 kubeadm）。
-- **containerd CRI 插件不在 disabled_plugins 里**（§2.3 已讲）。
-- **`/run/containerd/containerd.sock` 存在且可连**：`crictl info | grep -E 'NAME|containerRuntime'`，kubeadm init 会用同一 socket。
-- **内核**：containerd 2.x 需要较新的 linux + cgroup v2 mount——v1.37 kubelet 遇到 cgroup v1 直接 `FailCgroupV1`。
+**其余一票否决项（preflight 见它们就炸）**：**SELinux=permissive/disabled**（RHEL 系：`setenforce 0` + `/etc/selinux/config` 持久化）；containerd CRI 插件不在 disabled_plugins 里（§2.3）；`/run/containerd/containerd.sock` 存在且可连（`crictl info`）；**kernel 支持 cgroup v2 mount**（v1.37 kubelet 遇 cgroup v1 直接 `FailCgroupV1`）。
 
 ### 2.8 安装 kubeadm / kubelet / kubectl 三件并 hold
 
@@ -357,13 +352,12 @@ kubeadm version -o short                       # 期望 v1.37.x
 
 | 维度 | stacked（默认） | external |
 |------|----------------|----------|
-| 最小节点数 | 3（3 CP） | 6（3 CP + 3 etcd） |
-| 故障耦合 | 一台 CP 挂 = 同时丢一个 etcd member + 一个 apiserver → 冗余度双倍受损 | 解耦：CP 挂只损 CP，etcd 挂只损 etcd |
+| 可靠性（最小规模） | 最少 3 台（3 CP）；一台 CP 挂 = 同时丢一个 etcd member + 一个 apiserver，**冗余度双倍受损** | 最少 6 台（3 CP + 3 etcd）；解耦：CP 挂只损 CP，etcd 挂只损 etcd |
 | 资源占用 | etcd 与控制面组件争内存/磁盘 IO | etcd 独占 SSD/内存，路径最短 |
 | 运维成本 | kubeadm init/join 一条命令起，etcd 生命周期由 kubeadm 管 | etcd 集群要自己先搭好再喂给 kubeadm；证书签发/分发复杂 |
 | 备份/恢复 | 与集群对象一锅端 | etcd 可独立于 K8s 轮换、独立 SLA |
-| 升级影响 | kubeadm upgrade 时 apiserver 会等本地 etcd 重启（官方 stall 提醒，§4.2） | 两者互不粘滞，升级可选集更灵活 |
-| 适用 | 中小集群（<100 节点）、无强 etcd 磁盘 SLA 诉求 | 大集群/合规苛刻/想跟 etcd 磁盘 IO 单独治理的场景 |
+| 升级影响 | kubeadm upgrade 时 apiserver 会等本地 etcd 重启（官方 stall 提醒，§4.2） | 两者互不粘滞，升级窗口更灵活 |
+| 适用 | 中小集群（<100 节点）、无强 etcd 磁盘 SLA 诉求 | 大集群/合规苛刻/想对 etcd 磁盘 IO 单独治理的场景 |
 
 **生产立场**：先用 stacked 3 CP；规模上来或对 etcd 磁盘 IO 有单独 SLA 再切 external。**本文实验 7.1 是 1 CP（stacked 单点）**——L2 重在把 kubeadm 流程吃透；HA 大约就在「多 join 两台」的那一步（§3.3）。
 
@@ -384,12 +378,7 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 kubectl get pods -n kube-system
 ```
 
-`--upload-certs` 的机制（官方 kubeadm-certs 页 + v1.37 源码）：
-
-- init 时 kubeadm 把**控制面间需共享**的文件（`pki/ca.*`、`pki/front-proxy-ca.*`、`pki/etcd/ca.*`，以及 `pki/sa.*` 这对 SA 密钥）用 AES-256 加密后写入 Secret `kube-system/kubeadm-certs`；
-- 加密 key 就是 InitConfiguration 里的 32 字节 hex `certificateKey`（源码 `CertificateKeySize = 32`）；
-- 上传权限经 bootstrap token 约束，**有效期 2 小时**（源码 `DefaultCertTokenDuration`）——过期要重发 token + key 重新下载；
-- 后续 `kubeadm join --control-plane --certificate-key <key>` 的 CP 解密该 Secret，拿到同一套 CA，让本机静态 Pod 直接用这些证书起 apiserver。
+`--upload-certs` 的机制（官方 kubeadm-certs 页 + v1.37 源码）：init 时 kubeadm 把**控制面间需共享**的文件（`pki/ca.*`、`pki/front-proxy-ca.*`、`pki/etcd/ca.*`，以及 `pki/sa.*` 这对 SA 密钥）用 AES-256 加密后写入 Secret `kube-system/kubeadm-certs`；加密 key 就是 InitConfiguration 里的 32 字节 hex `certificateKey`（源码 `CertificateKeySize = 32`）；上传权限经 bootstrap token 约束，**有效期 2 小时**（源码 `DefaultCertTokenDuration`）——过期要重发 token + key；后续 `kubeadm join --control-plane --certificate-key <key>` 的 CP 解密该 Secret，拿到同一套 CA 起本机 apiserver。
 
 样例里那两行（`controlPlaneEndpoint` + `certSANs`）回答的其实是同一个问题「**将来从哪、用什么身份连 API**」：
 
@@ -413,8 +402,7 @@ openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | \
 **为什么这么设计**：
 
 - token 本身只是「认证为 system:bootstrappers 成员」的低权限入场券：有了它你能读到 kube-public 的 `cluster-info` ConfigMap，但**该 ConfigMap 内容本身无防篡机制**；
-- hash 把「cluster-info 里返回的 CA 公钥」钉死——网络被劫持换 CA 时 hash 不匹配，join 直接拒绝；**TOKEN 泄漏不构成换 CA 攻击面**；
-- `unsafeSkipCAVerification: true` 只在「内网/实验/有别的带外验证」时用，生产严禁（官方：能弱化到「别的节点伪装控制面」的程度）。
+- hash 把「cluster-info 里返回的 CA 公钥」钉死——被劫持换 CA 时 hash 不匹配、join 直接拒绝；**TOKEN 泄漏不构成换 CA 攻击面**。`unsafeSkipCAVerification: true` 只在「内网/实验/有别的带外验证」时用，生产严禁。
 
 token 过期/误泄漏时的重发与废弃：
 
@@ -520,19 +508,9 @@ kubectl delete node <node>
 | kubeadm | kubeadm vs 控制面：同级或 +1；kubeadm vs kubelet：kubelet 同级或至多老 3 minor；kubeadm vs kubeadm：升/连必须同 minor 或比「上次 init/upgrade 的」最多高 1 | 升完后 join 新节点用的 kubeadm 必须 ≥ 上次 init/upgrade 的 minor |
 | etcd | kubeadm 源码 v1.37 表：K8s 1.35/1.36/1.37 → **`3.7.1-0`**；external etcd 最小 `3.5.24-0` | etcd 快照 restore 支持同 major.minor、不同 patch |
 
-「**升级顺序**」是官方写死的（顺序错了不保证工作）：
+「**升级顺序**」是官方写死的（顺序错了不保证工作）：**① 先升所有 apiserver（HA 下允许 1.36/1.37 短暂并存）→ ② CM/scheduler/ccm（彼此任意顺序、可并行）→ ③ kubelet（逐节点 drain→升包→uncordon，不可 in-place minor 升）→ ④ kube-proxy（DaemonSet，apply 阶段同步）**。
 
-```
-① 先升所有 apiserver 实例（HA 下允许 1.36 与 1.37 短暂并存）
-② kube-controller-manager / kube-scheduler / cloud-controller-manager（彼此任意顺序、可并行）
-③ kubelet（皇家每节点：drain → 升包 → uncordon；不可 in-place minor 升）
-④ kube-proxy（DaemonSet，kubeadm 在 apply 阶段同步）
-```
-
-官方另外两条「升级前好习惯」：
-
-- **先把当前 minor 升到最新 patch，再升下一个 minor**——最大限度吃到回归修复；
-- 自建的 admission webhook 要能 handle 新版 REST 资源和字段（用 `matchPolicy: Equivalent` 注册是最稳的默认姿势，官方从 v1.15 起提供）。
+官方另两条好习惯：**先把当前 minor 升到最新 patch 再升下一个 minor**（最大限度吃到回归修复）；**自建 webhook 用 `matchPolicy: Equivalent` 注册**（确保能 handle 新版 REST 资源与字段，v1.15 起提供）。
 
 ### 4.2 升级序列：首台 CP 用 apply，后续 CP / worker 用 node
 
@@ -550,8 +528,7 @@ kubeadm version -o short
 sudo kubeadm upgrade plan
 sudo kubeadm upgrade diff v1.37.x
 
-# ③ apply：重写静态清单、升控制面组件（stacked etcd 若同时升 etcd，官方建议先
-#    killall -s SIGTERM kube-apiserver && sleep 20 让在飞请求出锅，再 kubeadm upgrade apply）
+# ③ apply：重写静态清单、升控制面组件（stacked etcd 若同时升 etcd，官方建议先 killall -s SIGTERM kube-apiserver && sleep 20 让在飞请求出锅）
 sudo kubeadm upgrade apply v1.37.x
 # 成功标志：[upgrade/successful] SUCCESS! Your cluster was upgraded to "v1.37.x".
 
@@ -582,13 +559,7 @@ sudo systemctl daemon-reload && sudo systemctl restart kubelet
 kubectl uncordon <worker>
 ```
 
-**收尾**：
-
-```bash
-kubectl get nodes                                  # 全部 Ready、版本齐
-curl -sk https://<controlPlaneEndpoint>:6443/version | jq -r .gitVersion
-kubeadm certs check-expiration                     # upgrade 默认同时 auto-renew（除非 --certificate-renewal=false）
-```
+**收尾**：`kubectl get nodes` 全 Ready、版本齐；`curl -sk https://<endpoint>:6443/version | jq -r .gitVersion` 看 API 本体；`kubeadm certs check-expiration` 确认已被 upgrade 自动 renew（除非 `--certificate-renewal=false`）。
 
 ### 4.3 升级四大坑与预案（生产真实出血点）
 
@@ -609,11 +580,11 @@ kubeadm certs check-expiration                     # upgrade 默认同时 auto-r
 
 假设 3 台 CP（stacked）+ 一个 LB，升级序按 §4.2 跑：
 
-1. 升 CP1 时，CP1 的清单被拉走，API 出局——**LB 健康探针（应打 `/readyz` 而非 TCP 443）发现 CP1 挂掉，把流量切到 CP2/CP3。业务上 API 一直可用**；
-2. etcd 是三 member——CP1 的 etcd 停了后 quorum 仍余 2/3（3 member 可容 1 故障），etcd 层不丢可用性；
-3. CP1 回装上 1.37，其它两还在 1.36——官方允许（apiserver HA ±1 minor）；
-4. 升级 etcd（stacked）：单个 member 轮流滚，**瞬断受 LB 遮掩**；
-5. **唯一可能翻车点**：LB 健康探针打得不够准。如果你的 LB 把「6443 TCP 能通」作为探针而不是 `/readyz`——kubeadm 正在重建 apiserver 时 TCP 可能半通，LB 就把流量踢回正在重建的实例，造成「业务看到 5-20s 的 API 半瘫」。所以 HA 集群生产硬规矩：**LB 探针必须直接打 `/readyz`**（或 apiserver 侧走 `--shutdown-delay-duration` 优雅摘流，见 §6.1）。
+1. 升 CP1 时它的清单被拉走、API 出局——**LB 健康探针（应打 `/readyz` 而非 TCP 443）发现 CP1 挂掉，把流量切到 CP2/CP3，业务上 API 一直可用**；
+2. etcd 是三 member——CP1 停了 quorum 仍余 2/3（3 member 容 1 故障），etcd 层不丢可用性；
+3. CP1 回装上 1.37、其它两还在 1.36——官方允许（apiserver HA ±1 minor）；
+4. 升 etcd（stacked）：单个 member 轮流滚，**瞬断受 LB 遮掩**；
+5. **唯一可能翻车点**：LB 探针不准。若把「6443 TCP 能通」当探针——kubeadm 重建 apiserver 时 TCP 会半通，流量被踢回正在重建的实例 → 业务看到 5~20s 的 API 半瘫。硬规矩：**LB 探针必须直接打 `/readyz`**（或配合 §6.1 的 `--shutdown-delay-duration` 优雅摘流）。
 
 HA 的本意就在这：**单机升级产生的不可用秒数，被 LB 遮掉了**——这就是为什么生产永远是 3 个 CP。
 
@@ -627,20 +598,19 @@ kubeadm init 在 `/etc/kubernetes/pki/` 下生成 **3 把 CA 根**（`ca.crt/ca.
 
 ```
 ca.crt/ca.key (CN=kubernetes)
-├── apiserver.crt/key                CN=kube-apiserver / O:-     usages=server  SAN=节点/endpoint/k8s svc
-├── apiserver-kubelet-client         CN=kube-apiserver-kubelet-client / O=system:masters   usages=client
-├── admin.conf                       CN=kubernetes-admin / O=kubeadm:cluster-admins  （绑 cluster-admin；你日常 kubectl 用）
-├── super-admin.conf                 CN=kubernetes-super-admin / O=system:masters  （仅 init 节点；break-glass）
-├── controller-manager.conf          CN=system:kube-controller-manager / O:-
-├── scheduler.conf                   CN=system:kube-scheduler / O:-
-└── kubelet.conf（TLS bootstrap 产出）CN=system:node:<nodeName> / O=system:nodes  （CM 一年一签）
+├── apiserver.crt/key            CN=kube-apiserver / O:-                  usages=server  SAN=节点/endpoint/k8s svc
+├── apiserver-kubelet-client     CN=kube-apiserver-kubelet-client / O=system:masters   usages=client
+├── admin.conf                   CN=kubernetes-admin / O=kubeadm:cluster-admins   （绑 cluster-admin； kubectl 日常）
+├── super-admin.conf             CN=kubernetes-super-admin / O=system:masters   （仅 init 节点；break-glass）
+├── controller-manager.conf      CN=system:kube-controller-manager / O:-
+├── scheduler.conf               CN=system:kube-scheduler / O:-
+└── kubelet.conf（TLS bootstrap）CN=system:node:<nodeName> / O=system:nodes   （CM 一年一签）
 etcd/ca.crt/ca.key (CN=etcd)
-├── server.crt/key                   CN=<hostname>   usages=server,client（etcd 自检过 client/peer 两用）
-├── peer.crt/key                     CN=<hostname>   usages=server,client
-├── healthcheck-client.crt/key       CN=kube-etcd-healthcheck-client   （apiserver → etcd 健康探针用）
-└── apiserver-etcd-client.crt/key    CN=kube-apiserver-etcd-client     （apiserver → etcd 客户端证）
+├── server.crt / peer.crt        CN=<hostname>   usages=server,client（对外服务 / peer 互联两用）
+├── healthcheck-client.crt       CN=kube-etcd-healthcheck-client   （apiserver → etcd 健康探针）
+└── apiserver-etcd-client.crt    CN=kube-apiserver-etcd-client     （apiserver → etcd 客户端证）
 front-proxy-ca.crt/ca.key (CN=front-proxy)
-└── front-proxy-client.crt/key       CN=front-proxy-client  （apiserver → aggregated apiserver，如 metrics-server）
+└── front-proxy-client.crt       CN=front-proxy-client   （apiserver → aggregated apiserver，如 metrics-server）
 ```
 
 **为什么分 3 把 CA**：etcd / 主集群 / front-proxy 的**信任边界独立**——etcd 密钥泄漏的旋转半径不该蔓延到 apiserver 域。SA 密钥对是另一个域：它不是 CA，旋转粒度是「全集群 SA token 全量重签」（§5.4 步骤 4~5）。
@@ -676,9 +646,7 @@ sudo kubeadm certs check-expiration
 # admin.conf                 Dec 30 2021 23:36 UTC   364d                            no
 # apiserver                  ...                    364d           ca                no
 # apiserver-etcd-client      ...                    364d           etcd-ca           no
-# etcd-server                ...                    364d           etcd-ca           no
-# front-proxy-client         ...                    364d           front-proxy-ca    no
-# ...（kubelet.conf 不列：kubelet 走 §5.3 的自动轮转体系）
+# ...（kubelet.conf 不列：kubelet 走 §5.3 的自动轮转体系；另有 CA 三张表的 EXPIRES 段）
 ```
 
 - `EXTERNALLY MANAGED = no` = kubeadm 管；**外部 CA 签发的 kubeadm 默认不处理**（官方：kubeadm cannot manage certificates signed by an external CA）。
@@ -689,15 +657,14 @@ sudo kubeadm certs check-expiration
 
 ```bash
 sudo kubeadm certs renew all             # 或 renew apiserver / apiserver-etcd-client 等单个
-# renew 以「旧证书」为准读 CN/O/SAN/usages——不读 kubeadm-config ConfigMap（v1beta4 页原话：
-#   "kubeadm certs renew uses the existing certificates as the authoritative source for attributes"）
+# renew 以「旧证书」为准读 CN/O/SAN/usages——不读 kubeadm-config ConfigMap（v1beta4 页原话
+#   "uses the existing certificates as the authoritative source for attributes"）
 # 重启四静态 Pod（文件移走-等 20s-移回；kubelet fileCheckFrequency 检测后重启）：
 sudo mv /etc/kubernetes/manifests/kube-apiserver.yaml /tmp/ && sleep 20 && sudo mv /tmp/kube-apiserver.yaml /etc/kubernetes/manifests/
 sudo mv /etc/kubernetes/manifests/kube-controller-manager.yaml /tmp/ && sleep 20 && sudo mv /tmp/kube-controller-manager.yaml /etc/kubernetes/manifests/
 sudo mv /etc/kubernetes/manifests/kube-scheduler.yaml /tmp/ && sleep 20 && sudo mv /tmp/kube-scheduler.yaml /etc/kubernetes/manifests/
 sudo mv /etc/kubernetes/manifests/etcd.yaml /tmp/ && sleep 20 && sudo mv /tmp/etcd.yaml /etc/kubernetes/manifests/
-# 若 renew 涉及 admin.conf：普通用户 ~/.kube/config 也换
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config && sudo chown $(id -u):$(id -g) $HOME/.kube/config
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config    # renew 了 admin.conf 的话，普通用户也换
 ```
 
 > 官方 kubeadm-certs 页明确：「dynamic certificate reload is currently not supported for all components」——renew 不会自动让四大件生效，**重启静态 Pod 是必走的一步**。
@@ -716,10 +683,8 @@ kubelet 有两种证书，轮转链完全独立：
 ```bash
 # ① client 轮转开关（应为 true）
 kubectl get cm kubelet-config -n kube-system -o=jsonpath='{.data.kubelet}' | grep -E 'rotateCertificates|serverTLSBootstrap'
-
 # ② pending 的 CSR（serverTLSBootstrap 开过的话会有 serving 类在等待）
 kubectl get csr
-
 # ③ kubelet serving 证书当前是什么签发级（实验 7.3 用 openssl s_client 实探）
 openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates
 ```
@@ -754,9 +719,9 @@ openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 
 
 经验法则（什么时候、多久一次）：
 
-- **1 年叶证 + 10 年 CA 的组合下，CA 互换不属常态动作**——只在「泄漏 / 合规 / 算法更换（RSA-2048 → ECDSA-P384）」时触发；年叶证由 `kubeadm upgrade` 或 `certs renew` 续，与 CA rotation 无干。
+- **1 年叶证 + 10 年 CA 的组合下，CA 互换不属常态动作**——只在「泄漏 / 合规 / 算法更换（如 RSA-2048 → ECDSA-P384）」时触发；叶证由 `kubeadm upgrade` 或 `certs renew` 续，与 CA rotation 无干。
 - **一次完整 CA rotation 的时间窗**（3 CP + ≤100 节点、无工程化自动化时）：约 **2~4 小时/人** + 1 小时全 rollout 观察；把它当**季度级深度演练**事件，这是实验 L3 证书破坏场的深层缘由。
-- 官方临别提醒（manual-rotation 页最后一段）：「If your cluster lets you make this change, you can also roll it out by replacing nodes rather than reconfiguring them」——能用 IaC/MachineSet 换节点，**整节点替换远比 per-node 改文件优雅**。
+- 官方临别提醒（manual-rotation 页末段）：「能用 IaC/MachineSet 整节点替换就替换，远比 per-node 改文件优雅」。
 
 ### 5.5 encryption key 轮换（直接引用不重写)
 
@@ -800,8 +765,7 @@ openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 
 | `--concurrent-deployment-syncs` / `--concurrent-replicaset-syncs` | **5 / 5** | 5~10（deployment/rs 是日常热面） |
 | `--concurrent-gc-syncs` | **20** | 40~50（ownerReference GC 在「级联删作业」场景是敏感项） |
 | `--concurrent-namespace-syncs` | **10** | 10（namespace 删除慢通常不是这个闸的问题） |
-| `--concurrent-endpoint-syncs`（Endpoints 面） | **5** | 大集群 endpoint 热 10~20 |
-| `--concurrent-cron-job-syncs` | **5** | 5~10 |
+| `--concurrent-endpoint-syncs` / `--concurrent-cron-job-syncs` | **5 / 5** | endpoint 热的大集群上探 10~20 |
 | node-lifecycle | `--node-monitor-grace-period=50s` / `--node-monitor-period=5s` | 对「node 失联多久判 NotReady」强相关（kubelet lease 40s）；大网络抖动环境才有动它的理由 |
 | CSR 签发时长 | `--cluster-signing-duration=8760h0m0s` | 与 §5.2 证书一年一续周期天然耦合 |
 
@@ -827,10 +791,9 @@ openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 
 ### 6.3 etcd 侧：quota、defrag、数据量经验值（apiserver→etcd 协同面；etcdctl 运维细节不重讲）
 
 - **后端 quota 默认 2 GiB**（`--quota-backend-bytes`，K8s-etcd详解.md 已讲）。K8s 官方「operating etcd clusters」页推荐**静态 5-member、生产任何官方支持规模够用，并明确不要自动扩缩 etcd**（扩缩触发重新选举、扰动 Raft quorum）——quota 不够时，**官方给大集群的标准动作是把 Event 对象拆到独立的 etcd 实例**（large cluster 页原话），而不是单调 quota。
-- **何时该动 quota**：`etcdctl endpoint status` 看 DB SIZE + ALARM 列——对 K8s 来说真正的大头是 `/registry/events/`；NOSPACE 处置链（compact + defrag + disarm）已写在 `K8s-etcd详解.md` §5.4，不重讲。
-- **defrag 周期主张**：官方原话「as infrequently as possible」——推荐用 **`etcd-defrag` 类工具以 CronJob 定期执行**（官方 configure-upgrade-etcd 页点名），别作为人肉 cron。
-- **对象体积经验值**（非官方，作量级估算用）：一个带完整 ownerRef/status 的 K8s 对象平均 **1.5~2.5 KiB**——5 万对象（3 节点小集群 + addon，不含 event）约 **100~150 Mi**；50 万+对象的大集群叠加起来才是 GB 级。和 `etcd-compaction-interval=5m`（§6.1）协同读：**每 5 分钟一次的旧版压缩解决的是「历史副本堆积」，当前版本体积才是常驻内存/磁盘的主体**。
-- **官方限值提醒**：K8s 官方建议生产最低 etcd 版本 **3.4.29+ / 3.5.11+**（configure-upgrade-etcd 页）；升 etcd 也一样先备份。
+- **何时该动 quota**：`etcdctl endpoint status` 看 DB SIZE + ALARM 列——对 K8s 来说真正的大头是 `/registry/events/`；NOSPACE 处置链（compact + defrag + disarm）已写在 `K8s-etcd详解.md` §5.4，不重讲；**生产最低 etcd 版本 3.4.29+ / 3.5.11+**（configure-upgrade-etcd 页）。
+- **defrag 周期主张**：官方原话「as infrequently as possible」——推荐用 **`etcd-defrag` 类工具以 CronJob 定期执行**（官方页点名），别作为人肉 cron。
+- **对象体积经验值**（非官方，作量级估算用）：一个带完整 ownerRef/status 的对象平均 **1.5~2.5 KiB**——5 万对象（3 节点小集群 + addon，不含 event）约 **100~150 Mi**；50 万+对象才是 GB 级。和 `etcd-compaction-interval=5m`（§6.1）协同读：**5 分钟旧版压缩解决「历史副本堆积」，当前版本体积才是常驻内存/磁盘的主体**。
 
 ### 6.4 kubelet 生产关键配置（默认值已核实 kubelet-config.v1beta1 页 + node-pressure-eviction 页）
 
@@ -844,9 +807,8 @@ openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 
 | `evictionHard` 默认表 | **memory.available<100Mi（Linux）/ 500Mi（Windows）**、**nodefs.available<10%**、**imagefs.available<15%**、**nodefs.inodesFree<5%**、**imagefs.inodesFree<5%（Linux）** | 自定义任一阈值后必须连设 **`mergeDefaultEvictionSettings: true`**（否则其它默认一律清零——这是「为什么自定义后 eviction 反而不见动作」的第一嫌疑）；kubelet 配置 v1beta1 页的跨平台默认值列其中 4 条，官方 node-pressure-eviction 页给出全 5 条（含 Linux/Windows 分列） |
 | `evictionPressureTransitionPeriod` | **5m** | 防震荡窗；配合 `kubectl describe node` 看 condition 抖动 |
 | eviction 选 Pod 顺序 | 按「**usage 是否超 requests** → **Priority** → **同级内 usage/requests 比**」排序 | 官方原话「kubelet does not use the pod's QoS class to determine the eviction order」——QoS 只是估算排序的近似量；**这是生产 MemoryPressure 驱逐误解的第一层**（实验 7.4 实测） |
-| kubelet OOM 保护（oom_score_adj） | Guaranteed=-997 / Burstable=公式 / BestEffort=1000 / `system-node-critical` 的 Pod 也 -997 | 系统关键 Pod 被 oom_killer 杀的事故大类；PriorityClass 数值见第 2 章 §6.2 |
+| kubelet OOM 保护（oom_score_adj）＋超大页 | Guaranteed=-997 / Burstable=公式 / BestEffort=1000 / `system-node-critical` 的 Pod 也 -997；`HugepageAwareEviction`（v1.37 **Beta 默认开**——节点挂 hugepages 时内存统计更准） | 系统关键 Pod 被 oom_killer 错杀的事故大类；PriorityClass 数值见第 2 章 §6.2 |
 | `cgroupDriver`（kubelet 侧） | `cgroupfs`（kubeadm 派写 `systemd`；v1.37 起 `KubeletCgroupDriverFromCRI` Beta 默认开可自动探测 CRI） | 必须同 containerd 一致——§2.3 灾难案例 |
-| 超大页内存 | `HugepageAwareEviction`（v1.37 **Beta 默认开**） | Node 上有 hugepages 时内存统计更准；之前版本曾因此漏判 OOM |
 
 **imagefs 与 rootfs 未分离的经典事故**（kubelet 把三者当同盘看）：
 
@@ -922,19 +884,10 @@ draino 语义（社区 fork 的共同形态）：
 **NPD + draino 标准联动**（感知 → 行动 → 替换）：
 
 ```
-   节点内核/磁盘/网络出问题
-              │
-   NPD（DaemonSet，日志/健康探件）
-     SystemLogMonitor / HealthChecker 捕获
-              │
-     上报 K8s：NodeCondition（+ Event）
-              │
-   draino（Deployment；leader + dry-run 先起步）
-     命中 condition → label node → cordon + drain（遵守 PDB）
-              │
-   Pod 被 workload controller 重投到新节点（第 2 章调度）
-              │
-   节点替换：云 API 重建 / IaC 换 VM / 裸机报修（kubeadm：reset + rejoin，§3.7）
+节点内核/磁盘出问题 → NPD 上报 NodeCondition(+Event)
+  → draino 命中 → label node → cordon + drain（遵守 PDB）
+  → Pod 被 workload controller 重投到新节点（第 2 章调度）
+  → 节点替换：云 API 重建 / IaC 换 VM / 裸机报修（kubeadm：reset + rejoin，§3.7）
 ```
 
 ### 7.3 自愈节奏建议（经验纪律）
@@ -987,10 +940,9 @@ spec:
 
 **生产要点**：
 
-- **requests 与 limits 成对配**——只写 `limits.cpu` 会导致「无 request 的 Pod 的 request 被 LimitRange 默认填成 limit 值」，配额立刻被装成「它surface 等于它实际上限」；两者都写才是「请求额与上限分层管理」。
-- **`scopeSelector` 把系统 Pod 从团队配额里摘出去**——否则某天 DaemonSet 加个 agent 会让整个 namespace 建不出新业务 Pod（生产高频事故款）。
-- **配额违例是 admission 时直接 403 Forbidden**，不是 Pending spinlock——告警链直接打 API 错误量，别只盯 Pending。
-- 同 ns 多份 quota 并存时**取交集**（每类资源按最严的那份计）。
+- **requests 与 limits 成对配**——只写 `limits.cpu` 时，无 request 的 Pod 的 request 会被 LimitRange 默认填成 limit 值，配额立刻被装成「它面额等于它上限」；两者都写才是「请求额与上限分层管理」。
+- **`scopeSelector` 把系统 Pod 从团队配额里摘出去**——否则某天 DaemonSet 加个 agent 就能让整个 namespace 建不出新业务 Pod（生产高频事故款）。
+- **配额违例是 admission 时直接 403 Forbidden**，不是 Pending spinlock——告警链直接打 API 错误量，别只盯 Pending；同 ns 多份 quota 并存时**取交集**（每类资源按最严的那份计）。
 
 ### 8.2 LimitRange：单 Pod / 容器级的默认与上下界
 
@@ -1022,9 +974,9 @@ spec:
 
 **为什么这么设计**：
 
-- `defaultRequest` 与 `default` **成对**——防止「裸 Pod 没 resources」被 quota 以默认 limit 填进来就能把配额撑满（请求额会被默认推成 limit 值等于事实上默认了 request=limit 的假象）；
-- `maxLimitRequestRatio` 是**超售反制**——不做这个闸的话，request=100m + limit=100 的 Pod 可以直接「表面占一点，实际顶半天」；加上它，「我能 promise 多少」与「我可能抢多少」之间的比率被硬约束；
-- 多份 LimitRange 并存，**每份都对目标资源实例生效**——不是因为「挑了一个」，而是每一个容器都要过**所有**相关声明才算挂牌。
+- `defaultRequest` 与 `default` **成对**——防止「裸 Pod 没 resources」时被 quota 用默认 limit 填满（请求额被推成 limit 值，造成 request=limit 的假象）；
+- `maxLimitRequestRatio` 是**超售反制**——不做这个闸，request=100m + limit=100 的 Pod 可以直接「表面占一点，实际顶半天」；加了它，「我 promise 多少」与「我可能抢多少」的比值被硬约束；
+- 多份 LimitRange 并存，**每份都对目标实例生效**——每个容器都要过**所有**相关声明才算合规。
 
 ### 8.3 requests / limits 生产纪律表（为什么 CPU limit 有争议）
 
@@ -1040,8 +992,7 @@ spec:
 ### 8.4 配套基线（引用不重讲）
 
 - **PriorityClass** 生态与 preemption 细节引用第 2 章 §6.2（`preemptionPolicy: Never` 适合不想抢占别人但想插队的批任务）
-- **NetworkPolicy 基线**（default-deny + 白名单放行）引用第 3 章 NetworkPolicy 节；Cilium 体系的 `CiliumNetworkPolicy` 差序已在该章覆盖
-- **PSA**（`pod-security.kubernetes.io/enforce: restricted`）引用第 5 章 §1~§2——系统命名空间用 label 豁免（第 5 章讲了 exemptions 三类）
+- **NetworkPolicy 基线 + PSA**：default-deny + 白名单放行引用第 3 章 NetworkPolicy 节；PSA（`pod-security.kubernetes.io/enforce: restricted`）引用第 5 章 §1~§2——系统命名空间用 label 豁免
 
 ---
 
@@ -1060,16 +1011,12 @@ spec:
 ### 9.2 恢复优先级表（灾难时刻按序逐个上来）
 
 ```
-P0（根） → 控制面静态清单（/etc/kubernetes/manifests）+ pki 目录在场
-             └── 没有它们 apiserver 起不来 → 一切都是白做
-P1        → etcd 数据（stacked 在 /var/lib/etcd；用 etcdctl snapshot restore 从快照恢复）
-             └── 恢复前必须先停所有 apiserver（官方 configure-upgrade-etcd 页原话）
-P2        → apiserver / scheduler / controller-manager 起来 + 证书有效
-             └── （整机重建路径：IaC 起 VM → kubeadm init/join 重建静态清单 → §P1 恢复数据）
-P3        → RBAC / webhook（聚合层 apiserver、PSA、自建 validating/mutating）
-             └── 它们挂了：apiserver 能起、但所有写请求被 500/403 拒——查的头一个子域
-P4        → CNI / CoreDNS / kube-proxy / CSI（数据面与末梢平面）
-             └── CoreDNS Running 是「集群可操作」的标志（create-cluster 页验证步）
+P0（根） → 控制面静态清单（/etc/kubernetes/manifests）+ pki 目录在场──没有它们 apiserver 起不来
+P1        → etcd 数据（/var/lib/etcd；restore 前必须先停所有 apiserver——官方原话）
+P2        → apiserver / scheduler / controller-manager + 证书有效
+           （整机重建路径：IaC 起 VM → kubeadm init/join 重建清单 → 回到 P1 恢复数据）
+P3        → RBAC / webhook（聚合层、PSA、自建 webhook）──挂了则 apiserver 能起但写请求全 500/403
+P4        → CNI / CoreDNS / kube-proxy / CSI──CoreDNS Running 是「集群可操作」的标志
 P5        → 业务（按 PriorityClass 从高到低恢复）
 ```
 
@@ -1181,9 +1128,9 @@ kubectl -n kube-system get pods -o wide | grep -E 'cilium|coredns|kube-proxy'
 kubectl get --raw='/readyz?verbose' | tail -6
 ```
 
-> ❗ 本实验故障排查的两个文件先记：**`/tmp/kubeadm-init.log`** 与 **`journalctl -u kubelet -f`**——ImagePullBackOff、containerd cri-disabled、kubelet crashloop 的首发信号都在这里，别从 stdout 猜。
-
-**实验收获**：能从 blank VM 走到 `kubectl get nodes` 全 Ready 的每一步出处都记了；后三章所有演练都以这个集群为主场。
+> ❗ 本实验故障排查的两个文件先记：**`/tmp/kubeadm-init.log`** 与 **`journalctl -u kubelet -f`**——ImagePullBackOff、cri-disabled、kubelet crashloop 的首发信号都在这里。
+>
+> **实验收获**：从 blank VM 到 `kubectl get nodes` 全 Ready 的每一步出处都记了；后三章所有演练都以这个集群为主场。
 
 ### 实验 7.2 升级演练模板（L2 下篇：**v1.38 发布后执行**；占位的 `1.38.x-*` `/v1.38` 到时用 `apt-cache madison kubeadm` 查询替换）
 
@@ -1287,10 +1234,10 @@ kubectl get events -A --sort-by='.lastTimestamp' | grep -iE 'evict|memory'
 
 **观察要点**（对照 §6.4 排序规则）：
 
-- mem-bomb 的 **usage(3G) > requests(128Mi)**——evict 候选第一顺位；QoS 可用来**估算**排序，但真正决定的是「usage 是否超 requests」；
+- mem-bomb 的 **usage(3G) > requests(128Mi)**——evict 候选第一顺位；QoS 可用来**估算**排序，真正决定的是「usage 是否超 requests」；
 - 同时跑一个 BestEffort Pod（完全不写 resources）——它**先于** Burstable 被 evict（usage 恒超 request）；
-- 给 mem-bomb 改挂 `priorityClassName: system-node-critical` 再跑——kubelet 给它的 oom_score_adj 拉到 -997；高优 Pod 在 usage 不超 requests 时会被留到最后；Guaranteed + usage≤requests 是最后的堡垒；
-- 静态 Pod（/etc/kubernetes/manifests/，v1.37 里控制面四大件就是）即使 evict 也会被 kubelet 按「本节点必须跑的 intent」**重启拉回**（node-pressure-eviction 页原话）——这就是为什么 apiserver 不会被你真的「杀死」；
+- 给 mem-bomb 改挂 `priorityClassName: system-node-critical` 再跑——oom_score_adj 拉到 -997；高优 Pod 在不超 requests 时会被留到最后；Guaranteed + usage≤requests 是最后的堡垒；
+- 静态 Pod（v1.37 的控制面四大件就是）即使 evict 也会被 kubelet 按「本节点必须跑的 intent」**重启拉回**（node-pressure-eviction 页原话）；
 
 **清理**：
 
@@ -1311,7 +1258,7 @@ kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 |------|---------------------|
 | kubeadm 六大族 | `init / join / reset / token / certs / upgrade`；`kubeadm config print init-defaults` |
 | 配置 API | 现行唯一 `kubeadm.k8s.io/v1beta4`；v1beta3 在 **v1.37 移除**（release-1.37 源码确认）；v1.31 起 kubeadm 可做 v1beta3→v1beta4 迁移 |
-| 证书有效期 | 叶证 8760h（1 年）/ CA 87600h（10 年）——v1beta4 字段 `certificateValidityPeriod` / `caCertificateValidityPeriod`；源码常量同名 |
+| 证书有效期 | 叶证 8760h（1 年）/ CA 87600h（10 年）——v1beta4 字段 `certificateValidityPeriod` / `caCertificateValidityPeriod` |
 | swap / cgroup / sysctl | `failSwapOn=true` 默认；`cgroupDriver: systemd` 与 containerd `SystemdCgroup: true` 配对；sysctl 三件 `bridge-nf-call-iptables / bridge-nf-call-ip6tables / ip_forward` |
 | 端口表（v1.37 官方） | 控：6443 / 2379-2380 / 10250 / 10257 / 10259；worker：10250 / 10256 / 30000-32767（TCP+UDP）；kubeadm 源码附加：etcd metrics 2381、kubelet healthz 10248 |
 | 静态 Pod 心智 | `/etc/kubernetes/manifests/*.yaml` → kubelet 每 20s 扫（fileCheckFrequency）→ spec hash 变即重启；delete API 镜像对象无效 |
@@ -1323,8 +1270,7 @@ kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 | kubelet 证 | client：`rotateCertificates: true`（kubeadm 默认）+ csrapproving selfnodeclient 自动批；serving：默认自签（生产要 `serverTLSBootstrap: true` + 第三方 approver：kubernetes.io/kubelet-serving 不自动批） |
 | CA 根换新 | 11 步手册（§5.4）：新 CA → bundle（CM root/apiserver client/kubelet CA）→ SA token 全量重发 → apiserver/kubelet 换证重启 → Pod roll → 清旧 CA |
 | apiserver flag 默认 | inflight 400/200（APF 总 600）；watch-cache true；etcd-compaction-interval 5m；min-request-timeout 1800；goaway-chance 0~0.02（建议 0.001 起）；EtcdRangeStream Beta 默认开（etcd≥3.7） |
-| QPS 默认 | CM **20/30**；scheduler **50/100**；kube-proxy **5/10**；kubelet **50/100**；image pull **5/10** |
-| CM 并发默认 | deployment/rs 5、gc 20、endpoint 5、namespace 10、cronjob 5 |
+| QPS 默认 | CM **20/30**；scheduler **50/100**；kube-proxy **5/10**；kubelet **50/100**；image pull **5/10**；CM 并发默认 deployment/rs 5、gc 20、endpoint 5、namespace 10 |
 | kubelet 调优点 | maxPods=110（与 §6.5 110/节点 同源）；imageGCHigh/Low=85/80；containerLogMaxSize=10Mi×5；evictionHard 5 条默认 + mergeDefaultEvictionSettings；serializeImagePulls=true |
 | etcd 大集群 | 静态 5-member 推荐；events 拆独立 etcd；生产最低 3.4.29+/3.5.11+；quota 默认 2GiB；defrag 程序化 |
 | 大规模数字（官方 v1.37） | ≤5000 nodes / ≤150000 pods / ≤300000 containers / **≤110 pods per node** |
@@ -1349,8 +1295,7 @@ kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 
 | 主题 | 链接 |
 |------|------|
-| kubeadm config API v1beta4（逐字段与各版本增量） | https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/ |
-| kubeadm config API v1beta3（deprecation 声明） | https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta3/ |
+| kubeadm config API：v1beta4（逐字段与各版本增量）/ v1beta3（deprecation 声明） | https://kubernetes.io/docs/reference/config-api/kubeadm-config.v1beta4/ + .../kubeadm-config.v1beta3/ |
 | kubeadm 证书管理（check-expiration / renew / serverTLSBootstrap / super-admin.conf） | https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/ |
 | kubeadm 集群升级（v1.37 页） | https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/ |
 | 用 kubeadm 搭集群（controlPlaneEndpoint/join/admin.conf 警告/cleanup） | https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/create-cluster-kubeadm/ |
@@ -1368,11 +1313,9 @@ kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 | PKI 证书需求表（3 把 CA + 逐证书 CN/O/usages） | https://kubernetes.io/docs/setup/best-practices/certificates/ |
 | 大集群设计（5000/150000/110/事件拆 etcd/PriorityClass 建议） | https://kubernetes.io/docs/setup/best-practices/cluster-large/ |
 | K8s 上的 etcd 运维（5-member 建议/etcdutl/restore 须停 apiserver/EtcdRangeStream） | https://kubernetes.io/docs/tasks/administer-cluster/configure-upgrade-etcd/ |
-| Monitor Node Health（NPD 本体/4 daemon/3 exporter） | https://kubernetes.io/docs/tasks/debug/debug-cluster/monitor-node-health/ |
-| NPD Helm chart（deliveryhero repo） | https://artifacthub.io/packages/helm/deliveryhero/node-problem-detector |
+| Monitor Node Health（NPD 本体/4 daemon/3 exporter）＋ NPD Helm chart（deliveryhero repo） | https://kubernetes.io/docs/tasks/debug/debug-cluster/monitor-node-health/ + https://artifacthub.io/packages/helm/deliveryhero/node-problem-detector |
 | Container runtimes（containerd 1.x/2.x SystemdCgroup 位置、CRI autodetect、pause、cgroup v1 弃用） | https://kubernetes.io/docs/setup/production-environment/container-runtimes/ |
-| kubeadm 常量（release-1.37 源码：etcd 3.7.1-0 / CoreDNS v1.14.7 / Pause 3.10.2 / 证书效期 / timeout 默认值 / 端口常量） | https://raw.githubusercontent.com/kubernetes/kubernetes/release-1.37/cmd/kubeadm/app/constants/constants.go |
-| kubeadm API 目录（release-1.37 只剩 v1+v1beta4） | https://github.com/kubernetes/kubernetes/tree/release-1.37/cmd/kubeadm/app/apis/kubeadm |
+| kubeadm 源码（release-1.37）：constants.go（etcd 3.7.1-0 / CoreDNS v1.14.7 / Pause 3.10.2 / 效期 / timeout / 端口常量）＋ API 目录（只剩 v1+v1beta4） | https://raw.githubusercontent.com/kubernetes/kubernetes/release-1.37/cmd/kubeadm/app/constants/constants.go + https://github.com/kubernetes/kubernetes/tree/release-1.37/cmd/kubeadm/app/apis/kubeadm |
 | ComponentStatus deprecated 来源（v1.19 changelog） | https://github.com/kubernetes/kubernetes/blob/master/CHANGELOG/CHANGELOG-1.19.md |
 | draino 现状（原仓 404 与活跃 fork 搜索点） | https://github.com/search?q=draino&type=repositories |
 
