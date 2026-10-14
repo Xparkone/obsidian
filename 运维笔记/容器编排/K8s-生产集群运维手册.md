@@ -12,7 +12,7 @@
 
 ### 0.1 为什么必须亲手拥有控制面
 
-用 K3s 或云托管集群时，控制面对你是个黑盒：etcd 配额怎么判断、证书如何轮转、升级按什么顺序滚——你都没地方看。而生产事故永远发生在黑盒里：**API 响应变慢、CSR 卡住、kubelet eviction 连环驱逐、升级后静态 Pod 起不来**。前 6 章把对象机制、调度、网络、存储、安全、扩展都讲透了，这一章做一件事：**把「控制面」变成你亲手搭、亲手升、亲手修的东西**。原理不变，差别只在「全链路命令都出自你的手」。
+用 K3s 或云托管集群时，控制面对你是个黑盒：etcd 配额怎么判断、证书如何轮转、升级按什么顺序滚——你都没地方看。而生产事故永远发生在黑盒里：**API 响应变慢、CSR 卡住、kubelet eviction 连环驱逐、升级后静态 Pod 起不来**。前 6 章把机制、调度、网络、存储、安全、扩展都讲透了，这一章做一件事：**把「控制面」变成你亲手搭、亲手升、亲手修的东西**——原理不变，差别只在「全链路命令都出自你的手」。
 
 ```
 你的生产集群问题，最终都会变成这几类：
@@ -74,19 +74,14 @@ kubeadm 的官方自我定位是「**cluster lifecycle 的最小构建块**」�
 ### 1.2 六个命令族：一张图读完
 
 ```
-                        ┌─ kubeadm init      ── 首台控制面（全文的主角）
-      引导 / 搭集群 ────┼─ kubeadm join      ── CP join（--control-plane --certificate-key）/ worker join
-                        └─ kubeadm reset     ── 干净退出（best-effort，iptables/ipvs 要手工清，见 §3.7）
-      对象内省        ─── kubeadm config     ── print init-defaults / 老 API 版本迁移
-      token 生命周期  ─── kubeadm token      ── create / list / delete（默认 TTL 24h）
-      证书运维        ─── kubeadm certs      ── check-expiration / renew all / generate-csr（§5）
-                        ┌─ kubeadm upgrade plan  ── 检查可升版本 + 组件/配置版本状态表
-      升级  ────────────┼─ kubeadm upgrade apply ── 首台控制面升级
-                        ├─ kubeadm upgrade node  ── 后续 CP / 每个 worker 单节点
-                        └─ kubeadm upgrade diff  ── 当前配置 vs 目标版本的清单差
+     引导/搭集群 ─── kubeadm init / join / reset ── reset 是 best-effort，iptables/ipvs 要手工清（§3.7）
+     对象内省    ─── kubeadm config      ── print init-defaults / 老 API 版本迁移
+     token 周期  ─── kubeadm token       ── create / list / delete（默认 TTL 24h）
+     证书运维    ─── kubeadm certs       ── check-expiration / renew all / generate-csr（§5）
+     升级        ─── kubeadm upgrade plan/apply/node/diff ── 首 CP 用 apply，后续 CP 与 worker 用 node
 ```
 
-每条命令族后面挂着 **Phase 机制**：`kubeadm init phase <name>`（如 `phase certs all`、`phase kubeconfig all`、`phase etcd local`）——这是能把 kubeadm 当乐高拆着用的关键；对接外部 CA 时（§5.1）就靠 `kubeadm certs generate-csr` 配合 phase 命令链拼装凭证。
+每条命令族后面挂着 **Phase 机制**：`kubeadm init phase <name>`（如 `phase certs all`、`phase kubeconfig all`、`phase etcd local`）——能把 kubeadm 当乐高拆着用的关键；对接外部 CA 时（§5.1）就靠 `kubeadm certs generate-csr` 配合 phase 命令链拼装凭证。
 
 ### 1.3 配置文件 API 版本时间线（v1beta3 → v1beta4 官方核实）
 
@@ -368,10 +363,8 @@ kubeadm version -o short                       # 期望 v1.37.x
 # ② init（--upload-certs 是为将来多 CP/HA 预留一步）
 sudo kubeadm init --config kubeadm-config.yaml --upload-certs
 
-# ③ 输出里这三段是钱：
-#    mkdir/cp/chown 指导                  → 普通用户连 API
-#    kubeadm join <endpoint> --token <TOKEN> --discovery-token-ca-cert-hash sha256:<HASH>
-#    （若带 HA 还有一条 --certificate-key <KEY>）
+# ③ 输出里这两段是钱：mkdir/cp/chown 三行（普通用户连 API）+
+#    kubeadm join <endpoint> --token <T> --discovery-token-ca-cert-hash sha256:<H> [--control-plane --certificate-key <K>]
 mkdir -p $HOME/.kube
 sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
@@ -404,13 +397,7 @@ openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | \
 - token 本身只是「认证为 system:bootstrappers 成员」的低权限入场券：有了它你能读到 kube-public 的 `cluster-info` ConfigMap，但**该 ConfigMap 内容本身无防篡机制**；
 - hash 把「cluster-info 里返回的 CA 公钥」钉死——被劫持换 CA 时 hash 不匹配、join 直接拒绝；**TOKEN 泄漏不构成换 CA 攻击面**。`unsafeSkipCAVerification: true` 只在「内网/实验/有别的带外验证」时用，生产严禁。
 
-token 过期/误泄漏时的重发与废弃：
-
-```bash
-kubeadm token list                              # 查剩余 TTL
-kubeadm token create --print-join-command       # 重发完整 join 命令（新 token + 原 hash）
-kubeadm token delete <TOKEN>                    # 废弃旧 token
-```
+token 过期/误泄漏时的重发与废弃：`kubeadm token list`（查剩余 TTL）、`kubeadm token create --print-join-command`（重发完整 join 命令）、`kubeadm token delete <TOKEN>`（废弃）。
 
 join 命令本体（控制面/worker 差别仅两个 flag）：
 
@@ -443,7 +430,7 @@ kubectl get nodes           # CNI 起来前 Node 是 NotReady；起来后全部 
 
 ### 3.5 验证集群真正的姿势：`kubectl get cs` 已 deprecated
 
-**不要再用 `kubectl get componentstatuses`**（`kubectl get cs`）：官方 v1.19 changelog 明确 deprecated——它只在「scheduler/controller-manager 与 apiserver 同机、且暴露未加密健康端口」的时代有意义，是现在对照安全的 kube-controller-manager 的 /healthz（HTTPS + SBOM）形态下的误导信源。替代姿势分三层：
+**不要再用 `kubectl get componentstatuses`**（`kubectl get cs`）：官方 v1.19 changelog 明确 deprecated——它只在「scheduler/controller-manager 与 apiserver 同机、且组件暴露未加密健康端口」的旧时代成立；新版组件健康端点全是 HTTPS+认证，ComponentStatus 已失去信源价值（官方原文：etcd 健康由 apiserver readyz 代报，scheduler/CM 用各自 /readyz）。替代姿势分三层：
 
 ```bash
 # ① apiserver 本体 fine-grained readyz（含 etcd 与 poststart hook 链）
@@ -463,14 +450,13 @@ kubectl get events -A --sort-by='.lastTimestamp' | tail -5
 
 - kubelet 每 **20s** 扫一次目录（kubelet 配置 `fileCheckFrequency: 20s` 默认）；
 - 清单内容变了 → spec hash 变 → **kubelet 直接重建对应 Pod**（kubeadm upgrade 页原话：「All containers are restarted after upgrade, because the container spec hash value is changed」——这就是升级时所有容器必重启的根因）；
-- `kubectl get pods -n kube-system` 能看到它们，是 kubelet 以 **mirror Pod** 反哺到 API 层——你 delete 这些「镜像对象」**不会影响实际进程**，只有清单文件认了才算；
-- **manifests 目录的读取方向是 kubelet → 文件**（不是 API → 文件）——apiserver 本身停机也不影响 kubelet 拉它，这正是「控制面四大件能被 kubelet 自己拉起」的元动力；
+- `kubectl get pods -n kube-system` 能看到它们，是 kubelet 以 **mirror Pod** 反哺到 API 层——你 delete 这些「镜像对象」**不会影响实际进程**，只有清单文件认了才算；**manifests 的读取方向是 kubelet → 文件**（不是 API → 文件）——apiserver 停机也不影响 kubelet 拉它，这正是「控制面四大件能被 kubelet 自己拉起」的元动力；
 
 > ❗ **灾难形态**：手改清单时拼写错一个字符（`extraArgs` 名、证书路径），kubelet 20s 后按残文件重建 apiserver——apiserver 连环 crashloop、整个控制面不可达；此时 kubectl 全废，只能上节点看 `journalctl -u kubelet` 与清单本身——这就是实验 7.3 第一步先审 manifests 的原因。**manifests 目录必须当生产配置对待**：任何变更进版本库（或至少先 `cp kube-apiserver.yaml{,.bak}`），别一次性信任手改。
 
 ### 3.7 拆除集群：kubeadm reset 与手工清理
 
-重建才有价值的东西必须先可拆。官方 cleanup 页给出的表单（实测 v1.37 一致）：
+重建才有价值的东西必须先可拆。官方 create-cluster 页 cleanup 节给出的流程（写本文时与 v1.37 官方页一致）：
 
 ```bash
 # ① 先从集群视角淡出本节点（避免别的 CP 或 LB 把流量踢来）
@@ -532,8 +518,7 @@ sudo kubeadm upgrade diff v1.37.x
 sudo kubeadm upgrade apply v1.37.x
 # 成功标志：[upgrade/successful] SUCCESS! Your cluster was upgraded to "v1.37.x".
 
-# ④ apply 同时会更新 kubeadm-config ConfigMap（后续 CP 的 join/upgrade 基准）
-kubectl get cm kubeadm-config -n kube-system -o=jsonpath='{.data.ClusterConfiguration}' | head -2
+kubectl get cm kubeadm-config -n kube-system -o=jsonpath='{.data.ClusterConfiguration}' | head -2   # apply 也已同步 ConfigMap（后续 CP 的基准）
 
 # ⑤ 本机 kubelet/kubectl：先 drain，再升包，再重启，最后 uncordon
 kubectl drain k8s-cp1 --ignore-daemonsets
@@ -570,11 +555,7 @@ kubectl uncordon <worker>
 | **CRD/准入语义变了** | 新 minor 引入新字段/砍掉旧字段；自研 Operator 的 reconcile 会卡 | 升级前 `kubectl get crd` 逐一审；动 storageversion 迁移的组件先升级；CRD **先于**集群升级 |
 | **手工塞的 extraArgs 冲掉** | kubeadm upgrade 会**重写** `/etc/kubernetes/manifests/kube-apiserver.yaml` 等——直改清单的 `--feature-gates`/资源/卷挂载会丢 | 所有定制必须进 **ClusterConfiguration.apiServer.extraArgs / extraVolumes**（init 时就写下）；用 `kubeadm upgrade diff` 在升级前把「清单会被改成什么样」打成 review 材料 |
 
-补充三条官方明写的实做细则（升级期间）：
-
-- **所有容器都会被重启**——spec hash 变了（§3.6）；「short-lived/managed-by-none」的一次性容器要在排程前跟业务对齐；
-- **kubelet minor 升级不能 in-place**——官方原话「Before performing a minor version kubelet upgrade, drain pods from that node」；
-- **upgrade 会自动 renew kubeadm 管的叶证书**（可用 `--certificate-renewal=false` 关）；另有一条**180 天特判**：apiserver 证书距到期不足 180 天会**提前备份重签**（升级页 How it works 节）。
+补充三条官方明写的细则：**所有容器升级期间都会被重启**（spec hash 变，§3.6）；**kubelet minor 升级不可 in-place**（官方：drain pods first）；upgrade 默认自动 renew 叶证书（`--certificate-renewal=false` 关），且 apiserver 证书距到期 <180 天会**提前备份重签**（How it works 节）。
 
 ### 4.4 思想实验：HA 控制面升级期间 API 还有吗？
 
@@ -613,9 +594,7 @@ front-proxy-ca.crt/ca.key (CN=front-proxy)
 └── front-proxy-client.crt       CN=front-proxy-client   （apiserver → aggregated apiserver，如 metrics-server）
 ```
 
-**为什么分 3 把 CA**：etcd / 主集群 / front-proxy 的**信任边界独立**——etcd 密钥泄漏的旋转半径不该蔓延到 apiserver 域。SA 密钥对是另一个域：它不是 CA，旋转粒度是「全集群 SA token 全量重签」（§5.4 步骤 4~5）。
-
-逐证书对照表（kubeadm v1.37 生成件；CN/O/SAN 均从源码常量与官方 PKI 页对照核实）：
+**为什么分 3 把 CA**：etcd / 主集群 / front-proxy 的**信任边界独立**——etcd 密钥泄漏的旋转半径不该蔓延到 apiserver 域；SA 密钥对则影响「全集群 SA token 全量重签」（§5.4）。逐证书对照表（kubeadm v1.37 生成件；CN/O/SAN 均从源码常量与官方 PKI 页对照核实）：
 
 | 证书 | CN | O | usages | 签发 CA |
 |------|----|---|--------|--------|
@@ -741,7 +720,7 @@ openssl s_client -connect 127.0.0.1:10250 </dev/null 2>/dev/null | openssl x509 
 | `--min-request-timeout=1800` | watch handler 的最小连接下限（在此之上随机抖动错开重连风暴） | 一般不动；watch 风暴先查客户端行为 |
 | `--goaway-chance`（min 0 / max 0.02，官方建议 0.001 起步） | 多 apiserver + LB 时**随机发 GOAWAY 让 HTTP/2 客户端重连分摊** | HA + LB 强烈推荐；单机/无 LB 别开（官方原话：should NOT enable） |
 | `--shutdown-delay-duration` | 优雅停机牵引窗：`/readyz` 立刻失败但继续服请求 | HA 里 apiserver 滚动升级前让 LB 先摘（§4.4 联合使用） |
-| `--storage-media-type=application/vnd.kubernetes.protobuf` | v1.37 的默认——对象以 protobuf 存进 etcd | 不用动；但 `etcdctl get` 直接 dump 到的 **不再是人-readable JSON**，排障时要意识到 |
+| `--storage-media-type=application/vnd.kubernetes.protobuf` | v1.37 的默认——对象以 protobuf 存进 etcd | 不用动；排障时注意：`etcdctl get` 直出的 **不再是人类可读 JSON** |
 | `--feature-gates=EtcdRangeStream=true`（**v1.37 起 Beta 默认开**） | apiserver→etcd 的大集合读取改 streamed——两侧内存峰值降；需 etcd ≥3.7 | 看板/告警补 `operation="listStream"`，不然 list 指标会漏这块 |
 | `--min-compatibility-version=kube=1.34..1.37`（默认 1.36） | 混版期间的兼容水位线 | 升级期间自动带入，无需干预 |
 
@@ -984,8 +963,7 @@ spec:
 |------|------|------------------------------|
 | **memory request == memory limit** | 内存 limit 对应的 cgroup 上限越过即 OOMKill；request=limit 才能进 Guaranteed 级（§6.4：oom_score_adj=-997，eviction 序列靠后） | limit > request 的 Burstable Pod 在节点内存压力时**优先**进 evict 候选 |
 | **CPU 只配 request 不配 limit** | CPU limit 走 CFS throttle——**只在「超售必须硬封顶」的场景下写**；request 决定调度权重（cpu shares），limit 会造成延迟尖峰（burst 阶段超 quota 即断） | CPU limit=4 + 高峰期 Java GC/Go STW 折线超过 4 core·100ms → `container_cpu_cfs_throttled_periods_total` 冲上去 + P99 延迟放大 |
-| **裸 Pod 不许上生产**（requests 必填纪律） | LimitRange 的 defaultRequest 救急；quota 必校验 requests | 业务没写 request → 调度器与 quota 的口径全面失真 → 节点「表面还能塞，实际早撑死」 |
-| **高价值 Pod 用 PriorityClass**（第 2 章 §6） | 集群自带 `system-cluster-critical=2000000000`、`system-node-critical=2000001000` 两个保留级 | 业务 Pod 与 CoreDNS/metrics-agent 同 default Priority → 节点压力来时，基础设施与业务同顺位被 evict |
+| **裸 Pod 不许上生产**（requests 必填纪律）＋**高价值 Pod 用 PriorityClass** | LimitRange 的 defaultRequest 救急；集群自带 `system-cluster-critical=2000000000`、`system-node-critical=2000001000` 两个保留级 | 没写 request → quota/调度口径全失真；CoreDNS 与业务同级 → 压力来时基础设施被同顺位 evict |
 
 > ❗ **CPU limit 争议一句话**：CPU 是可压缩（compressible）资源——超发在统计学上有效；写死 limit 就把「统计收益」换成了「确定性节流」。生产的常见组合是「**memory 照写 limit（必写）＋CPU 只在强多租户隔离场景写 limit**」，同时**必须有 `container_cpu_cfs_throttled_periods_total` 的告警**——你不写 limit 不代表 burst 被偷光，而是显式采用「靠 statistics + Priority 的预算治理」。
 
@@ -1040,7 +1018,7 @@ P5        → 业务（按 PriorityClass 从高到低恢复）
 | 2 | 换一张错误 CA 签的 apiserver.crt | `x509: certificate signed by unknown authority` | `kubeadm certs renew apiserver` + 静态 Pod 重启（§5.2） |
 | 3 | 反复杀 Cilium DaemonSet Pod | Node NotReady、业务 Pending 大涨 | 先 `systemctl restart kubelet`、后重启 Cilium  operator，不行则删出重建（§3.4） |
 | 4 | `kill -STOP` 挂起 kubelet | 约 40s（node lease）后 NotReady、随后 node-lifecycle taint 生效 | `systemctl restart kubelet`；校正 §6.2 里 40s lease 与 50s grace period 的关系 |
-| 5 | `fallocate` 塞根盘到 95%+ | DiskPressure → eviction 连环 → kubelet 死 | 清盘 + 校验 eviction 默认表被谁改了（§6.4 + §6.4 mergeDefault） |
+| 5 | `fallocate` 塞根盘到 95%+ | DiskPressure → eviction 连环 → kubelet 死 | 清盘 + 校验 eviction 默认表被谁改了（§6.4 `mergeDefaultEvictionSettings` 坑） |
 | 6 | 放一张过期的 Ingress TLS 证书 | TLS 握手 `certificate has expired` | 证书 renew 流程 + Ingress TLS Secret 替换（§5.2 通法） |
 | 7 | 删 CoreDNS / 拦安全组 6443 | cluster.local 全面解析失败 / API 不可达 | 第 3 章 DNS 排障链 + 放开安全组（§2.6 端口表） |
 
@@ -1050,7 +1028,7 @@ P5        → 业务（按 PriorityClass 从高到低恢复）
 
 ## 十、实验（实验 L2、L3 的操作本体）
 
-以下 4 个实验都在 **Multipass VM**（参照 `云服务/Multipass-使用指南.md`）上完成——macOS 本机不直接跑 kubeadm。
+以下 4 个实验都在 **Multipass VM** 上完成——macOS 本机不直接跑 kubeadm（Multipass 命令参照 `云服务/Multipass-使用指南.md`）。
 
 ### 实验 7.1 Multipass 三节点搭建记录（L2 上篇：v1.37 三节点 kubeadm 集群）
 
@@ -1182,10 +1160,8 @@ kubectl get --raw='/readyz?verbose' | tail -3
 ### 实验 7.3 证书实验（L3 中篇）
 
 ```bash
-# ① 现状
+# ① 现状 → ② 单点 renew
 sudo kubeadm certs check-expiration
-
-# ② 单点 renew
 sudo kubeadm certs renew apiserver
 
 # ③ 静态 Pod 重启（四大件依次移走-等 20-移回）
@@ -1246,7 +1222,7 @@ kubectl delete pod mem-bomb --force --grace-period=0
 kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 ```
 
-> 实验收获：「usage vs requests → Priority → QoS 只是估算量」的 eviction 排序亲手看到了——这是在生产「MemoryPressure 连环驱逐」告警里你马上就认的格局。
+> 实验收获：「usage vs requests → Priority → QoS 只是估算量」的 eviction 排序亲手看到了——生产「MemoryPressure 连环驱逐」告警里你马上就认这个格局。
 
 ---
 
@@ -1272,8 +1248,7 @@ kubectl describe node k8s-w1 | grep -iE 'MemoryPressure|eviction manager'
 | apiserver flag 默认 | inflight 400/200（APF 总 600）；watch-cache true；etcd-compaction-interval 5m；min-request-timeout 1800；goaway-chance 0~0.02（建议 0.001 起）；EtcdRangeStream Beta 默认开（etcd≥3.7） |
 | QPS 默认 | CM **20/30**；scheduler **50/100**；kube-proxy **5/10**；kubelet **50/100**；image pull **5/10**；CM 并发默认 deployment/rs 5、gc 20、endpoint 5、namespace 10 |
 | kubelet 调优点 | maxPods=110（与 §6.5 110/节点 同源）；imageGCHigh/Low=85/80；containerLogMaxSize=10Mi×5；evictionHard 5 条默认 + mergeDefaultEvictionSettings；serializeImagePulls=true |
-| etcd 大集群 | 静态 5-member 推荐；events 拆独立 etcd；生产最低 3.4.29+/3.5.11+；quota 默认 2GiB；defrag 程序化 |
-| 大规模数字（官方 v1.37） | ≤5000 nodes / ≤150000 pods / ≤300000 containers / **≤110 pods per node** |
+| 大集群数字与 etcd 策略 | 官方上限 ≤5000 nodes / ≤150000 pods / ≤300000 containers / **≤110 pods per node**；etcd：静态 5-member + events 拆独立 etcd + quota 默认 2GiB + 生产最低 3.4.29+/3.5.11+ |
 | 节点自运维 | NPD 4 daemon（SystemLog/Stats/CustomPlugin/HealthChecker）+ 3 exporter（k8s/prometheus/stackdriver）；draino 联动：condition→label→cordon+drain（守 PDB）+leader elect；原仓 cloudflare/draino 已 404，自选活跃 fork |
 | 租户治理 | ResourceQuota（requests+limits+storage+count+scopeSelector）+ LimitRange（defaultRequest/default/min/max/maxLimitRequestRatio）+ 纪律：memory limit 照写 / CPU limit 视超售约束 / 系统 Pod 用 PriorityClass 保护 |
 | 灾备铁三角 | etcd 快照（每小时+升级前）+ IaC + Velero（每日）；恢复顺序：静态清单→etcd→组件+证书→RBAC/webhook→CNI/DNS/proxy/CSI→业务 |
