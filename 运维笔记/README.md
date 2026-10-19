@@ -84,6 +84,7 @@
 ### 存储
 
 - [RAID-原理选型与运维指南.md](存储/RAID-原理选型与运维指南.md)
+- [Longhorn-Kubernetes分布式块存储部署与运维指南.md](存储/Longhorn-Kubernetes分布式块存储部署与运维指南.md)
 
 ### 云服务
 
