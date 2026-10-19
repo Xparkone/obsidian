@@ -26,6 +26,11 @@ class Settings:
     audit_archive_s3_retention_days: int = 365
     audit_archive_s3_endpoint_url: str | None = None
     ssh_credential_dir: Path | None = None
+    # Optional bootstrap login.  It is only used when the username does not
+    # already exist, so restarting a service never overwrites a password.
+    auth_username: str | None = None
+    auth_password: str | None = None
+    session_ttl_seconds: int = 8 * 60 * 60
 
 
 def _load_local_env() -> None:
@@ -84,4 +89,7 @@ def load_settings() -> Settings:
         audit_archive_s3_retention_days=int(os.getenv("AEGIS_AUDIT_ARCHIVE_S3_RETENTION_DAYS", "365")),
         audit_archive_s3_endpoint_url=os.getenv("AEGIS_AUDIT_ARCHIVE_S3_ENDPOINT_URL") or None,
         ssh_credential_dir=(Path(os.getenv("AEGIS_SSH_CREDENTIAL_DIR")).expanduser() if os.getenv("AEGIS_SSH_CREDENTIAL_DIR") else None),
+        auth_username=os.getenv("AEGIS_AUTH_USERNAME") or None,
+        auth_password=os.getenv("AEGIS_AUTH_PASSWORD") or None,
+        session_ttl_seconds=int(os.getenv("AEGIS_SESSION_TTL_SECONDS", str(8 * 60 * 60))),
     )

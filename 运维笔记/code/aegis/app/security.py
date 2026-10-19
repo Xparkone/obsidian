@@ -30,3 +30,17 @@ def verify_api_key(api_key: str, encoded: str) -> bool:
         return hmac.compare_digest(expected.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+# Passwords use the same memory-hard primitive as API keys.  Keep separate
+# names at the call sites so it is clear which credential is being handled.
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    return hash_api_key(password, salt)
+
+
+def verify_password(password: str, encoded: str) -> bool:
+    return verify_api_key(password, encoded)
+
+
+def issue_session_token() -> str:
+    return "aegis_session_" + secrets.token_urlsafe(32)
