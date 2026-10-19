@@ -3,5 +3,6 @@
   "dataview",
   "templater-obsidian",
   "obsidian-excalidraw-plugin",
-  "open-in-new-tab"
+  "open-in-new-tab",
+  "agent-client"
 ]
