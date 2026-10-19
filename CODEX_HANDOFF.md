@@ -166,3 +166,70 @@ argocd app get demo-api-production
 - Helm 返回成功、Pod Ready、Ingress 有地址都不等于业务已经端到端可用，必须发起实际 Host/SNI 请求。
 - 不要在没有盘点业务 Ingress 的情况下卸载或替换 Controller。
 - 当前工作区可能受自动 `vault backup` 任务影响；继续修改前重新读取文件并检查 Git 状态。
+
+## 当前阶段：Aegis 登录系统（2026-10-19）
+
+更新时间：2026-10-19（Asia/Shanghai）
+当前主机：本地 macOS
+项目路径：/Users/lijiaxuan/Documents/hermes/运维笔记/code/aegis
+当前分支：main
+
+### 当前目标
+为 Aegis 控制台增加用户名/密码登录、服务端会话和前端登录界面，同时保留现有 API Key 与管理员令牌兼容路径。
+
+### 已确认事实
+- `app/security.py` 使用 scrypt 哈希密码和会话令牌；数据库只保存密码哈希和会话令牌哈希。
+- SQLite 与 PostgreSQL schema 均已增加 `users`、`sessions` 表和会话 token 前缀索引。
+- `AEGIS_AUTH_USERNAME`、`AEGIS_AUTH_PASSWORD` 只用于首次 bootstrap 用户，已有用户名不会被重启覆盖。
+- 登录接口为 `POST /api/v1/auth/login`、`GET /api/v1/auth/me`、`POST /api/v1/auth/logout`；HTTP 层使用 HttpOnly、SameSite=Lax Cookie。
+- 管理员会话可以访问控制台管理写接口；AI/脚本继续使用 API Key，执行接口仍要求身份密钥和服务器授权。
+
+### 基于证据的判断
+- 当前实现适合单实例/内部控制台登录；生产环境应通过 HTTPS 开启 `AEGIS_SESSION_COOKIE_SECURE=true`，并把初始密码放入 Secret Manager。
+- 登录会话和现有 API Key 是两套用途不同的凭据，未把管理员会话自动当作命令执行身份。
+
+### 尚未验证的可能性
+- 本地沙箱禁止绑定监听端口，未完成真实 HTTP `Set-Cookie`、浏览器 Cookie 保存和页面交互验收；已完成服务层生命周期测试与 JavaScript 语法检查。
+- PostgreSQL 真实实例迁移和生产反向代理 HTTPS 行为尚未联调。
+
+### 已完成
+- 新增用户/会话 schema、bootstrap、登录/当前用户/退出登录接口、会话过期和撤销校验。
+- 增加前端登录遮罩、退出登录、`credentials: same-origin` 请求和无登录配置时的旧凭据兼容入口。
+- 补充 `.env.example`、README 登录说明和登录生命周期测试。
+
+### 修改文件
+- `运维笔记/code/aegis/app/config.py`
+- `运维笔记/code/aegis/app/db.py`
+- `运维笔记/code/aegis/app/security.py`
+- `运维笔记/code/aegis/app/server.py`
+- `运维笔记/code/aegis/.env.example`
+- `运维笔记/code/aegis/static/index.html`
+- `运维笔记/code/aegis/static/styles.css`
+- `运维笔记/code/aegis/static/app.js`
+- `运维笔记/code/aegis/tests/test_core.py`
+- `运维笔记/code/aegis/README.md`
+
+### 验证结果
+- `PYTHONPATH=. python3 -m unittest discover -s tests -v`：40 项通过。
+- `python3 -m py_compile main.py app/*.py tests/*.py`：通过。
+- `node --check static/app.js`：通过。
+- `git diff --check`：通过。
+
+### 未解决问题
+- 需要在允许监听端口的环境中完成一次 HTTP 登录、Cookie、`/me`、退出和管理员写接口验收。
+- 生产部署前需要确认 HTTPS、Cookie Secure、密码轮换和账号禁用流程。
+
+### 下一步
+1. 用非示例的 `AEGIS_AUTH_USERNAME` / `AEGIS_AUTH_PASSWORD` 启动服务。
+2. 通过浏览器或 `curl -c/-b` 验证登录、刷新、退出和管理员操作。
+3. 在 PostgreSQL 测试实例执行启动迁移并确认会话过期清理策略。
+
+### 重要命令
+```bash
+PYTHONPATH=. python3 -m unittest discover -s tests -v
+python3 -m py_compile main.py app/*.py tests/*.py
+node --check static/app.js
+```
+
+### 注意事项
+不得在交接文档中记录密码、Token、Cookie、完整认证头、私钥或完整环境变量；示例配置值必须替换后再使用。

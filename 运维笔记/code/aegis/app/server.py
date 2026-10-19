@@ -139,7 +139,7 @@ class AegisService:
         if not user or not verify_password(password, user["password_hash"]):
             return None
         token = issue_session_token()
-        ttl = max(60, int(self.settings.session_ttl_seconds))
+        ttl = max(1, int(self.settings.session_ttl_seconds))
         expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat(timespec="seconds")
         self.db.insert(
             "INSERT INTO sessions(user_id,token_prefix,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)",
