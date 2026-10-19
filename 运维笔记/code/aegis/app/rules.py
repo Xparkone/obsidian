@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import re
+import shlex
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Any, Protocol
 
 
@@ -11,10 +14,63 @@ from typing import Any, Protocol
 # user-supplied patterns.
 MAX_RULE_PATTERN_LENGTH = 512
 MAX_ENABLED_RULES = 256
+DEFAULT_ALLOWED_COMMANDS = frozenset({"date", "df", "free", "hostname", "id", "ls", "pwd", "uname", "uptime", "whoami"})
+NEVER_ALLOWED_COMMANDS = frozenset({"bash", "csh", "dash", "env", "fish", "ksh", "node", "perl", "python", "python2", "python3", "ruby", "scp", "sh", "sftp", "ssh", "su", "sudo", "tcsh", "zsh"})
+MAX_COMMAND_ARGS = 16
+MAX_COMMAND_TOKEN_LENGTH = 256
+SHELL_SYNTAX = frozenset(";&|$><`'\"\\\n\r\x00(){}[]*?")
+SAFE_COMMAND_TOKEN = re.compile(r"[A-Za-z0-9_./:@%+=,-]+\Z")
 
 
 class RegexValidationError(ValueError):
     """Raised when a rule pattern is too expensive or cannot be compiled."""
+
+
+class CommandValidationError(ValueError):
+    """Raised when a command is outside the structured execution allowlist."""
+
+
+@dataclass(frozen=True)
+class CommandAllowlist:
+    """Validate shell-like input as a small, tokenized command allowlist.
+
+    The allowlist intentionally accepts only simple command/argument tokens.
+    It does not attempt to make an arbitrary shell script safe; shell syntax is
+    rejected before the executor sees the command.
+    """
+
+    commands: frozenset[str] = DEFAULT_ALLOWED_COMMANDS
+    max_args: int = MAX_COMMAND_ARGS
+    max_token_length: int = MAX_COMMAND_TOKEN_LENGTH
+
+    @classmethod
+    def from_env(cls) -> "CommandAllowlist":
+        raw = os.getenv("AEGIS_ALLOWED_COMMANDS", "")
+        commands = frozenset(item.strip() for item in raw.split(",") if item.strip()) if raw.strip() else DEFAULT_ALLOWED_COMMANDS
+        return cls(commands=commands)
+
+    def parse(self, command: str) -> tuple[str, ...]:
+        if not isinstance(command, str) or not command.strip():
+            raise CommandValidationError("命令不能为空")
+        if any(char in SHELL_SYNTAX for char in command):
+            raise CommandValidationError("命令包含未允许的 Shell 语法")
+        try:
+            argv = tuple(shlex.split(command, posix=True))
+        except ValueError as exc:
+            raise CommandValidationError("命令参数无法解析") from exc
+        if not argv:
+            raise CommandValidationError("命令不能为空")
+        command_name = PurePosixPath(argv[0]).name
+        if command_name in NEVER_ALLOWED_COMMANDS:
+            raise CommandValidationError(f"命令被永久禁止: {argv[0]}")
+        if argv[0] not in self.commands:
+            raise CommandValidationError(f"命令不在白名单中: {argv[0]}")
+        if len(argv) - 1 > self.max_args:
+            raise CommandValidationError(f"命令参数不能超过 {self.max_args} 个")
+        for token in argv:
+            if len(token) > self.max_token_length or not SAFE_COMMAND_TOKEN.fullmatch(token):
+                raise CommandValidationError("命令参数包含未允许的字符或长度超限")
+        return argv
 
 
 @dataclass

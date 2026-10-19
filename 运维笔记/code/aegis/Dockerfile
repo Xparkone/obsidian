@@ -10,6 +10,7 @@ COPY . /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openssh-client \
     && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 aegis \
     && mkdir -p /var/lib/aegis \
     && chown -R aegis:aegis /app /var/lib/aegis

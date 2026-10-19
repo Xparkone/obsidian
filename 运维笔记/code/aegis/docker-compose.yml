@@ -9,5 +9,23 @@ services:
       - aegis-data:/var/lib/aegis
     restart: unless-stopped
 
+  # Optional local PostgreSQL bootstrap. Production credentials and
+  # AEGIS_DATABASE_URL must come from a secret manager, not this file.
+  postgres:
+    profiles: ["production"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   aegis-data:
+  postgres-data:

@@ -64,7 +64,9 @@ class Rule:
 
 ## 容器部署
 
-`docker-compose.yml` 只运行一个 Aegis 容器，SQLite 数据写入 named volume。单实例验证完成后再替换为 PostgreSQL，并把审计事件复制到不可变对象存储；多副本模式需要共享数据库和分布式任务队列，不能直接把 SQLite volume 挂到多个副本。
+本地 `docker-compose.yml` 默认使用 SQLite named volume。生产环境通过 `AEGIS_DATABASE_URL` 使用 PostgreSQL backend，并由版本化迁移工具管理 schema；当前代码的 PostgreSQL schema bootstrap 只用于首次启动验证。审计事件可以先追加到本地 hash-chain JSONL staging，但真正的不可变归档必须写入启用 Object Lock/WORM、保留策略和独立权限的对象存储。多副本模式需要共享 PostgreSQL 和可靠的归档投递/重试机制，不能直接把 SQLite volume 挂到多个副本。
+
+配置 `AEGIS_AUDIT_ARCHIVE_S3_BUCKET` 时，服务使用 S3 兼容 Object Lock 适配器，以 `COMPLIANCE` 保留模式写入每个审计事件；bucket 的版本控制、Object Lock 和保留策略必须在服务外预先创建并由独立权限管理。归档投递失败是否阻断请求由 `AEGIS_AUDIT_ARCHIVE_REQUIRED` 决定；数据库写入与对象归档不是同一个事务，仍需补偿扫描和重试任务。
 
 执行器通过 `app/executor.py` 的 `Executor` 接口隔离。当前 `DryRunExecutor` 只返回计划执行内容；真实 SSH、Kubernetes Exec 或云厂商 Session Manager 都应实现新的 adapter，并继续复用身份、范围、规则和审计路径。
 
@@ -76,3 +78,5 @@ class Rule:
 - `/api/v1/dashboard`：前端用的资产、身份、规则、审计和阻断汇总。
 
 默认 dry-run executor 不连接真实服务器，不能把 `accepted` 当成真实命令已执行；设置 `AEGIS_EXECUTOR_MODE=ssh` 后会使用 `SSHExecutor`，仍要求资产中登记用户、端口和 known_hosts。接入 Kubernetes Exec、云厂商 Session Manager 或交互式会话时必须新增独立 adapter，并在 adapter 层再次实施超时、命令 allowlist、凭据隔离和会话审计。
+
+命令执行入口采用“结构化命令白名单 + 规则拒绝”的顺序：先把输入拆成命令名和参数，拒绝 Shell 元字符与不在白名单中的命令，再执行现有危险规则。SSH 适配器会再次分词并以参数数组调用客户端；这不是 Shell 沙箱，生产环境仍应使用最小权限账号、按环境收敛 `AEGIS_ALLOWED_COMMANDS`，并用目标主机防火墙或安全组阻断绕过 Aegis 的直连路径。

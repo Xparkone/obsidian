@@ -3,29 +3,45 @@ from __future__ import annotations
 import json
 import re
 import hmac
-import sqlite3
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .archive import ArchiveUnavailable, AuditArchive, JsonlAuditArchive, S3ObjectLockAuditArchive
 from .config import Settings
-from .db import Database, utc_now
-from .executor import DryRunExecutor, SSHExecutor
+from .db import Database, DatabaseIntegrityError, utc_now
+from .executor import DisabledCredentialProvider, DryRunExecutor, SecretDirectoryCredentialProvider, SSHExecutor
 from .notify import WebhookNotifier
-from .rules import MAX_ENABLED_RULES, RegexValidationError, built_in_rules, compile_rule_pattern
+from .rules import CommandAllowlist, CommandValidationError, MAX_ENABLED_RULES, RegexValidationError, built_in_rules, compile_rule_pattern
 from .security import api_key_prefix, hash_api_key, issue_api_key, verify_api_key
 
 
 class AegisService:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.db = Database(settings.db_path)
+        self.db = Database(settings.db_path, settings.database_url)
         self.db.seed([r.__dict__ for r in built_in_rules()], settings.seed_demo)
+        if settings.audit_archive_s3_bucket:
+            self.audit_archive: AuditArchive | None = S3ObjectLockAuditArchive(
+                bucket=settings.audit_archive_s3_bucket,
+                prefix=settings.audit_archive_s3_prefix,
+                retention_days=settings.audit_archive_s3_retention_days,
+                endpoint_url=settings.audit_archive_s3_endpoint_url,
+            )
+        else:
+            self.audit_archive = JsonlAuditArchive(settings.audit_archive_path) if settings.audit_archive_path else None
+        if settings.audit_archive_required and self.audit_archive is None:
+            raise RuntimeError("AEGIS_AUDIT_ARCHIVE_REQUIRED=true 但未配置审计归档适配器")
         self.notifier = WebhookNotifier({"feishu": settings.feishu_webhook, "dingtalk": settings.dingtalk_webhook, "wecom": settings.wecom_webhook})
-        self.executor = SSHExecutor(settings.ssh_timeout) if settings.executor_mode == "ssh" else DryRunExecutor()
+        if settings.executor_mode == "ssh":
+            provider = SecretDirectoryCredentialProvider(settings.ssh_credential_dir) if settings.ssh_credential_dir else DisabledCredentialProvider()
+            self.executor = SSHExecutor(settings.ssh_timeout, provider)
+        else:
+            self.executor = DryRunExecutor()
         self.counters = {"requests": 0, "commands": 0, "blocked": 0, "alerts": 0}
+        self.command_allowlist = CommandAllowlist.from_env()
         self._compiled_rules: tuple[tuple[str, re.Pattern[str], str, str], ...] = ()
         self._rules_error: str | None = None
         self.refresh_rules()
@@ -85,10 +101,24 @@ class AegisService:
         for rule_id, pattern, reason, severity in self._compiled_rules:
             if pattern.search(command):
                 return False, rule_id, reason, severity
+        try:
+            self.command_allowlist.parse(command)
+        except CommandValidationError as exc:
+            return False, "__command_allowlist__", str(exc), "critical"
         return True, None, None, "info"
 
     def audit(self, principal_id: int | None, server_id: int | None, action: str, command: str | None, decision: str, rule_id: str | None = None, reason: str | None = None, metadata: dict[str, Any] | None = None) -> int:
-        return self.db.insert("INSERT INTO audit_events(principal_id,server_id,action,command,decision,rule_id,reason,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (principal_id, server_id, action, command, decision, rule_id, reason, json.dumps(metadata or {}), utc_now()))
+        created_at = utc_now()
+        metadata_json = json.dumps(metadata or {})
+        event_id = self.db.insert("INSERT INTO audit_events(principal_id,server_id,action,command,decision,rule_id,reason,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (principal_id, server_id, action, command, decision, rule_id, reason, metadata_json, created_at))
+        if self.audit_archive is not None:
+            event = {"id": event_id, "principal_id": principal_id, "server_id": server_id, "action": action, "command": command, "decision": decision, "rule_id": rule_id, "reason": reason, "metadata_json": metadata_json, "created_at": created_at}
+            try:
+                self.audit_archive.append(event)
+            except ArchiveUnavailable:
+                if self.settings.audit_archive_required:
+                    raise
+        return event_id
 
     def dashboard(self, principal: dict[str, Any] | None = None, is_admin: bool = False) -> dict[str, Any]:
         counts = {k: self.db.row(sql)["count"] for k, sql in {
@@ -120,7 +150,7 @@ class AegisService:
         if route == "/readyz":
             if self._rules_error:
                 return 503, {"status": "not_ready", "reason": "规则配置不可用"}
-            return 200, {"status": "ready", "db": str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "executor_mode": self.settings.executor_mode}
+            return 200, {"status": "ready", "db": "postgresql" if self.settings.database_url else str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "executor_mode": self.settings.executor_mode}
         if route == "/api/v1/dashboard" and method == "GET":
             return 200, self.dashboard(principal, is_admin)
         if route == "/api/v1/servers" and method == "GET":
@@ -153,7 +183,7 @@ class AegisService:
             key = issue_api_key()
             try:
                 principal_id = self.db.insert("INSERT INTO principals(name,kind,key_prefix,key_hash,created_at) VALUES(?,?,?,?,?)", (name.strip(), kind, api_key_prefix(key), hash_api_key(key), utc_now()))
-            except sqlite3.IntegrityError:
+            except DatabaseIntegrityError:
                 return 409, {"error": "name 已存在"}
             return 201, {"id": principal_id, "name": name.strip(), "kind": kind, "api_key": key, "warning": "密钥只在本次响应显示，请立即保存"}
         if route == "/api/v1/servers" and method == "POST":
@@ -176,7 +206,7 @@ class AegisService:
                 return 400, {"error": "port 必须在 1 到 65535 之间"}
             try:
                 server_id = self.db.insert("INSERT INTO servers(name,address,environment,tags_json,username,port,known_hosts_path,credential_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (name, address, body.get("environment", "production"), json.dumps(body.get("tags", [])), username, port, str(body.get("known_hosts_path", "")), str(body.get("credential_ref", "")), utc_now()))
-            except sqlite3.IntegrityError:
+            except DatabaseIntegrityError:
                 return 409, {"error": "name 已存在"}
             return 201, {"id": server_id, "name": name}
         if route == "/api/v1/access-grants" and method == "POST":
@@ -197,7 +227,7 @@ class AegisService:
                 return 404, {"error": "服务器不存在"}
             try:
                 self.db.insert("INSERT OR REPLACE INTO access_grants(principal_id,server_id,actions_json) VALUES(?,?,?)", (principal_id, server_id, json.dumps(actions)))
-            except sqlite3.IntegrityError:
+            except DatabaseIntegrityError:
                 return 404, {"error": "身份或服务器不存在"}
             return 201, {"status": "granted"}
         if route == "/api/v1/rules" and method == "POST":
@@ -215,7 +245,7 @@ class AegisService:
                 return 400, {"error": f"启用规则数量不能超过 {MAX_ENABLED_RULES}"}
             try:
                 self.db.insert("INSERT INTO rules(id,name,pattern,reason,severity,created_at) VALUES(?,?,?,?,?,?)", (body["id"], body["name"], body["pattern"], body["reason"], body.get("severity", "critical"), utc_now()))
-            except sqlite3.IntegrityError:
+            except DatabaseIntegrityError:
                 return 409, {"error": "id 已存在"}
             self.refresh_rules()
             return 201, {"id": body["id"]}

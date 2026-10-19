@@ -8,7 +8,7 @@ from pathlib import Path
 from app.config import Settings, load_settings
 from app.db import Database
 from app.executor import SSHExecutor
-from app.rules import MAX_ENABLED_RULES, MAX_RULE_PATTERN_LENGTH, built_in_rules, compile_rule_pattern
+from app.rules import CommandAllowlist, CommandValidationError, MAX_ENABLED_RULES, MAX_RULE_PATTERN_LENGTH, built_in_rules, compile_rule_pattern
 from app.server import AegisService
 from app.security import hash_api_key, verify_api_key
 
@@ -152,6 +152,28 @@ class AegisCoreTest(unittest.TestCase):
     def test_ssh_executor_fails_closed_without_asset_identity(self):
         result = SSHExecutor(0.1).execute({"name": "missing"}, "id")
         self.assertEqual(result.status, "failed")
+
+    def test_command_allowlist_rejects_shell_syntax_and_unknown_commands(self):
+        allowlist = CommandAllowlist()
+        self.assertEqual(allowlist.parse("uname -a"), ("uname", "-a"))
+        for command in ("uname -a; id", "uname $(id)", "ls /tmp/*", "cat /etc/passwd", "bash -c id", "/bin/sh -c id"):
+            with self.assertRaises(CommandValidationError):
+                allowlist.parse(command)
+
+    def test_command_allowlist_can_be_extended_with_explicit_command_names(self):
+        allowlist = CommandAllowlist(frozenset({"kubectl"}))
+        self.assertEqual(allowlist.parse("kubectl get pods --namespace=ops"), ("kubectl", "get", "pods", "--namespace=ops"))
+        with self.assertRaises(CommandValidationError):
+            CommandAllowlist(frozenset({"bash"})).parse("bash -c id")
+
+    def test_execute_blocks_command_outside_allowlist_and_audits_it(self):
+        _, principal = self.service.dispatch("POST", "/api/v1/principals", {"name": "allowlist-agent", "kind": "ai"}, None, "test-admin")
+        _, server = self.service.dispatch("POST", "/api/v1/servers", {"name": "allowlist-host", "address": "10.0.0.11"}, None, "test-admin")
+        self.service.dispatch("POST", "/api/v1/access-grants", {"principal_id": principal["id"], "server_id": server["id"], "actions": ["execute"]}, None, "test-admin")
+        status, response = self.service.dispatch("POST", "/api/v1/execute", {"server_id": server["id"], "command": "cat /etc/passwd"}, principal["api_key"])
+        self.assertEqual(status, 403)
+        self.assertEqual(response["rule_id"], "__command_allowlist__")
+        self.assertEqual(self.service.db.row("SELECT decision FROM audit_events ORDER BY id DESC LIMIT 1")["decision"], "blocked")
 
     def test_admin_token_required_for_control_plane_writes(self):
         status, response = self.service.dispatch("POST", "/api/v1/principals", {"name": "blocked", "kind": "ai"}, None)

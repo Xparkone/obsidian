@@ -18,6 +18,14 @@ class Settings:
     admin_token: str
     executor_mode: str
     ssh_timeout: float
+    database_url: str | None = None
+    audit_archive_path: Path | None = None
+    audit_archive_required: bool = False
+    audit_archive_s3_bucket: str | None = None
+    audit_archive_s3_prefix: str = "aegis-audit"
+    audit_archive_s3_retention_days: int = 365
+    audit_archive_s3_endpoint_url: str | None = None
+    ssh_credential_dir: Path | None = None
 
 
 def _load_local_env() -> None:
@@ -68,4 +76,12 @@ def load_settings() -> Settings:
         admin_token=os.getenv("AEGIS_ADMIN_TOKEN", ""),
         executor_mode=os.getenv("AEGIS_EXECUTOR_MODE", "dry-run").lower(),
         ssh_timeout=float(os.getenv("AEGIS_SSH_TIMEOUT", "15")),
+        database_url=os.getenv("AEGIS_DATABASE_URL") or None,
+        audit_archive_path=(Path(os.getenv("AEGIS_AUDIT_ARCHIVE_PATH")).expanduser() if os.getenv("AEGIS_AUDIT_ARCHIVE_PATH") else None),
+        audit_archive_required=os.getenv("AEGIS_AUDIT_ARCHIVE_REQUIRED", "false").lower() in {"1", "true", "yes"},
+        audit_archive_s3_bucket=os.getenv("AEGIS_AUDIT_ARCHIVE_S3_BUCKET") or None,
+        audit_archive_s3_prefix=os.getenv("AEGIS_AUDIT_ARCHIVE_S3_PREFIX", "aegis-audit"),
+        audit_archive_s3_retention_days=int(os.getenv("AEGIS_AUDIT_ARCHIVE_S3_RETENTION_DAYS", "365")),
+        audit_archive_s3_endpoint_url=os.getenv("AEGIS_AUDIT_ARCHIVE_S3_ENDPOINT_URL") or None,
+        ssh_credential_dir=(Path(os.getenv("AEGIS_SSH_CREDENTIAL_DIR")).expanduser() if os.getenv("AEGIS_SSH_CREDENTIAL_DIR") else None),
     )
