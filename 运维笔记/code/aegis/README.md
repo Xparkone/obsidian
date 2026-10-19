@@ -22,7 +22,19 @@ python3 main.py
 `main.py` 会自动读取当前目录的 `.env`，已经存在的 shell 环境变量优先；修改 `.env` 后需要重启进程。打开 <http://127.0.0.1:8080/>。本地默认数据库写入项目下的 `data/aegis.db`，不需要 root 权限；Docker Compose 会把数据写入容器 Volume。首次启动默认创建两台演示服务器；生产环境将 `AEGIS_SEED_DEMO=false`。不要使用 `file://.../static/index.html` 打开，因为浏览器不会把它当成 Aegis 服务，也无法请求 `/api/v1/*`。
 生产环境设置 `AEGIS_DATABASE_URL=postgresql://...` 后，服务会使用 PostgreSQL backend；镜像已安装 `psycopg[binary]`。当前启动时的 schema 创建只适合 bootstrap，正式环境仍应使用受审查的版本化迁移流程，不要把自动建表当成完整迁移系统。
 管理接口（创建身份、服务器、授权和规则）必须带 `X-Aegis-Admin`；未配置 `AEGIS_ADMIN_TOKEN` 时管理写接口默认拒绝，请把 `.env` 里的示例值换成随机值并放入 Secret Manager。
-前端右上角可以分别保存管理员令牌和身份密钥。它们只保存在当前浏览器 `localStorage`，保存后会用 `X-Aegis-Admin` / `X-Aegis-Key` 请求对应接口；未提供身份密钥时不会返回服务器资产详情。
+前端打开后会先显示登录页。设置 `AEGIS_AUTH_USERNAME` 和 `AEGIS_AUTH_PASSWORD` 后，服务首次启动会把这组凭据写入 `users` 表（只保存 scrypt 哈希），之后重启不会覆盖已有密码。登录成功后服务通过 `HttpOnly; SameSite=Lax` 的 `aegis_session` Cookie 识别会话，默认有效期 8 小时；HTTPS 部署时设置 `AEGIS_SESSION_COOKIE_SECURE=true`。接口为 `POST /api/v1/auth/login`、`GET /api/v1/auth/me` 和 `POST /api/v1/auth/logout`。会话管理员可以直接访问控制台管理接口，AI 和脚本仍使用原来的 API Key；两套身份互不替代。
+前端右上角仍可以分别保存管理员令牌和身份密钥，作为 API Key 登录之外的兼容方式。它们只保存在当前浏览器 `localStorage`，保存后会用 `X-Aegis-Admin` / `X-Aegis-Key` 请求对应接口；未提供身份密钥时不会返回服务器资产详情。
+
+登录接口示例：
+
+```bash
+curl -i -c /tmp/aegis.cookies -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"change-this-password"}'
+
+curl -sS -b /tmp/aegis.cookies http://127.0.0.1:8080/api/v1/auth/me
+curl -i -b /tmp/aegis.cookies -X POST http://127.0.0.1:8080/api/v1/auth/logout
+```
 
 容器方式：
 

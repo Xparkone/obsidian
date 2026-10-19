@@ -5,7 +5,7 @@ import re
 import hmac
 import uuid
 from datetime import datetime, timedelta, timezone
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -107,6 +107,9 @@ class AegisService:
             (username, hash_password(password), "admin", "active", utc_now()),
         )
 
+    def auth_configured(self) -> bool:
+        return bool(self.db.row("SELECT id FROM users WHERE status='active' LIMIT 1"))
+
     def user_from_session(self, session_token: str | None) -> dict[str, Any] | None:
         if not session_token:
             return None
@@ -128,8 +131,6 @@ class AegisService:
         return None
 
     def login(self, username: str, password: str) -> tuple[dict[str, Any], str, int] | None:
-        if not self.settings.auth_username or not self.settings.auth_password:
-            return None
         if not isinstance(username, str) or not isinstance(password, str):
             return None
         if not username or len(username) > 128 or not password or len(password) > 512:
@@ -226,7 +227,7 @@ class AegisService:
         if route == "/readyz":
             if self._rules_error:
                 return 503, {"status": "not_ready", "reason": "规则配置不可用"}
-            return 200, {"status": "ready", "db": "postgresql" if self.settings.database_url else str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "auth_configured": bool(self.settings.auth_username and self.settings.auth_password), "executor_mode": self.settings.executor_mode}
+            return 200, {"status": "ready", "db": "postgresql" if self.settings.database_url else str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "auth_configured": self.auth_configured(), "executor_mode": self.settings.executor_mode}
         if route == "/api/v1/auth/login" and method == "POST":
             username = body.get("username")
             password = body.get("password")
@@ -425,7 +426,7 @@ def create_handler(service: AegisService, static_dir: Path):
             cookie = SimpleCookie()
             try:
                 cookie.load(self.headers.get("Cookie", ""))
-            except (KeyError, ValueError):
+            except (CookieError, KeyError, ValueError):
                 return None
             morsel = cookie.get("aegis_session")
             return morsel.value if morsel else None

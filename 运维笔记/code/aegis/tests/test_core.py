@@ -65,6 +65,41 @@ class AegisCoreTest(unittest.TestCase):
         self.assertTrue(verify_api_key(key, encoded))
         self.assertFalse(verify_api_key("aegis_other", encoded))
 
+    def test_login_session_lifecycle_and_secret_storage(self):
+        root = Path(self.tmp.name) / "auth"
+        settings = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin", "dry-run", 1.0, auth_username="admin", auth_password="correct-password")
+        service = AegisService(settings)
+
+        status, response = service.dispatch("POST", "/api/v1/auth/login", {"username": "admin", "password": "wrong"}, None)
+        self.assertEqual(status, 401)
+        self.assertNotIn("__session_token", response)
+
+        status, response = service.dispatch("POST", "/api/v1/auth/login", {"username": "admin", "password": "correct-password"}, None)
+        self.assertEqual(status, 200)
+        token = response["__session_token"]
+        self.assertNotIn(token, service.db.row("SELECT token_hash FROM sessions")['token_hash'])
+        self.assertNotIn("correct-password", service.db.row("SELECT password_hash FROM users")['password_hash'])
+
+        status, current = service.dispatch("GET", "/api/v1/auth/me", {}, None, None, token)
+        self.assertEqual(status, 200)
+        self.assertEqual(current["user"]["username"], "admin")
+        status, created = service.dispatch("POST", "/api/v1/principals", {"name": "session-admin", "kind": "user"}, None, None, token)
+        self.assertEqual(status, 201)
+        self.assertEqual(created["name"], "session-admin")
+
+        service.dispatch("POST", "/api/v1/auth/logout", {}, None, None, token)
+        status, response = service.dispatch("GET", "/api/v1/auth/me", {}, None, None, token)
+        self.assertEqual(status, 401)
+
+    def test_bootstrap_login_does_not_overwrite_existing_password(self):
+        root = Path(self.tmp.name) / "bootstrap"
+        first = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin", "dry-run", 1.0, auth_username="admin", auth_password="first-password")
+        AegisService(first)
+        second = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin", "dry-run", 1.0, auth_username="admin", auth_password="second-password")
+        service = AegisService(second)
+        self.assertEqual(service.dispatch("POST", "/api/v1/auth/login", {"username": "admin", "password": "first-password"}, None)[0], 200)
+        self.assertEqual(service.dispatch("POST", "/api/v1/auth/login", {"username": "admin", "password": "second-password"}, None)[0], 401)
+
     def test_new_principal_stores_only_a_lookup_prefix(self):
         status, created = self.service.dispatch(
             "POST", "/api/v1/principals", {"name": "prefix-agent", "kind": "ai"}, None, "test-admin"
