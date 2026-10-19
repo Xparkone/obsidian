@@ -6,6 +6,7 @@ import secrets
 
 
 KEY_PREFIX_LENGTH = 22
+SESSION_TOKEN_PREFIX_LENGTH = 22
 
 
 def issue_api_key() -> str:
@@ -44,3 +45,8 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def issue_session_token() -> str:
     return "aegis_session_" + secrets.token_urlsafe(32)
+
+
+def session_token_prefix(token: str) -> str:
+    """Return a lookup prefix without storing the session token itself."""
+    return token[:SESSION_TOKEN_PREFIX_LENGTH]

@@ -24,6 +24,8 @@
       <header class="topbar">
         <div><p class="eyebrow">SECURITY OPERATIONS</p><h1 id="page-title">控制台总览</h1><p class="muted">身份、资产、权限和策略共同决定每一次操作。</p></div>
         <div class="top-actions">
+          <span class="session-user" id="session-user"></span>
+          <button class="button secondary" id="logout" type="button" hidden>退出登录</button>
           <label class="token-field"><span>管理员令牌</span><input id="admin-key" type="password" placeholder="与 .env 完全一致" autocomplete="off" /></label>
           <label class="token-field"><span>身份密钥</span><input id="identity-key" type="password" placeholder="X-Aegis-Key" autocomplete="off" /></label>
           <button class="button secondary" id="save-credentials">保存</button>
@@ -60,6 +62,20 @@
   </div>
   <div class="toast" id="toast" role="status"></div>
   <div class="modal" id="secret-modal"><div class="modal-card"><div class="panel-head"><div><span class="eyebrow">ONE-TIME SECRET</span><h3>请立即保存密钥</h3></div><button class="icon-button" data-close-modal>×</button></div><p class="muted">关闭后 Aegis 不会再次显示这段明文密钥。</p><code id="secret-value"></code><button class="button primary" data-close-modal>我已保存</button></div></div>
+  <div class="login-gate" id="login-gate">
+    <div class="login-card">
+      <span class="eyebrow cyan">AEGIS ACCESS</span>
+      <h2>登录控制台</h2>
+      <p class="muted">使用服务端配置的用户名和密码登录。会话只保存在 HttpOnly Cookie 中。</p>
+      <form id="login-form">
+        <label>用户名<input id="login-username" autocomplete="username" required /></label>
+        <label>密码<input id="login-password" type="password" autocomplete="current-password" required /></label>
+        <button class="button primary" type="submit">登录</button>
+      </form>
+      <p class="login-error" id="login-error" role="alert"></p>
+      <button class="link-button legacy-continue" id="legacy-continue" type="button" hidden>继续使用 API 凭据</button>
+    </div>
+  </div>
   <script src="./app.js"></script>
 </body>
 </html>

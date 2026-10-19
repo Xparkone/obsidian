@@ -4,6 +4,8 @@ import json
 import re
 import hmac
 import uuid
+from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,16 @@ from .db import Database, DatabaseIntegrityError, utc_now
 from .executor import DisabledCredentialProvider, DryRunExecutor, SecretDirectoryCredentialProvider, SSHExecutor
 from .notify import WebhookNotifier
 from .rules import CommandAllowlist, CommandValidationError, MAX_ENABLED_RULES, RegexValidationError, built_in_rules, compile_rule_pattern
-from .security import api_key_prefix, hash_api_key, issue_api_key, verify_api_key
+from .security import (
+    api_key_prefix,
+    hash_api_key,
+    hash_password,
+    issue_api_key,
+    issue_session_token,
+    session_token_prefix,
+    verify_api_key,
+    verify_password,
+)
 
 
 class AegisService:
@@ -23,6 +34,7 @@ class AegisService:
         self.settings = settings
         self.db = Database(settings.db_path, settings.database_url)
         self.db.seed([r.__dict__ for r in built_in_rules()], settings.seed_demo)
+        self.bootstrap_auth_user()
         if settings.audit_archive_s3_bucket:
             self.audit_archive: AuditArchive | None = S3ObjectLockAuditArchive(
                 bucket=settings.audit_archive_s3_bucket,
@@ -77,6 +89,69 @@ class AegisService:
                 return
         self._compiled_rules = tuple(compiled)
         self._rules_error = None
+
+    @staticmethod
+    def _public_user(user: dict[str, Any]) -> dict[str, Any]:
+        return {key: user[key] for key in ("id", "username", "role", "status", "created_at")}
+
+    def bootstrap_auth_user(self) -> None:
+        """Create the optional initial web user once, without overwriting it."""
+        username = (self.settings.auth_username or "").strip()
+        password = self.settings.auth_password or ""
+        if not username or not password:
+            return
+        if self.db.row("SELECT id FROM users WHERE username=?", (username,)):
+            return
+        self.db.insert(
+            "INSERT OR IGNORE INTO users(username,password_hash,role,status,created_at) VALUES(?,?,?,?,?)",
+            (username, hash_password(password), "admin", "active", utc_now()),
+        )
+
+    def user_from_session(self, session_token: str | None) -> dict[str, Any] | None:
+        if not session_token:
+            return None
+        sessions = self.db.rows(
+            "SELECT s.*, u.username,u.role,u.status,u.created_at AS user_created_at "
+            "FROM sessions s JOIN users u ON u.id=s.user_id "
+            "WHERE u.status='active' AND s.revoked_at IS NULL AND s.token_prefix=? AND s.expires_at>?",
+            (session_token_prefix(session_token), utc_now()),
+        )
+        for session in sessions:
+            if verify_api_key(session_token, session.get("token_hash", "")):
+                return {
+                    "id": session["user_id"],
+                    "username": session["username"],
+                    "role": session["role"],
+                    "status": session["status"],
+                    "created_at": session["user_created_at"],
+                }
+        return None
+
+    def login(self, username: str, password: str) -> tuple[dict[str, Any], str, int] | None:
+        if not self.settings.auth_username or not self.settings.auth_password:
+            return None
+        if not isinstance(username, str) or not isinstance(password, str):
+            return None
+        if not username or len(username) > 128 or not password or len(password) > 512:
+            return None
+        user = self.db.row("SELECT * FROM users WHERE username=? AND status='active'", (username,))
+        if not user or not verify_password(password, user["password_hash"]):
+            return None
+        token = issue_session_token()
+        ttl = max(60, int(self.settings.session_ttl_seconds))
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat(timespec="seconds")
+        self.db.insert(
+            "INSERT INTO sessions(user_id,token_prefix,token_hash,expires_at,created_at) VALUES(?,?,?,?,?)",
+            (user["id"], session_token_prefix(token), hash_api_key(token), expires_at, utc_now()),
+        )
+        return self._public_user(user), token, ttl
+
+    def logout(self, session_token: str | None) -> None:
+        if session_token:
+            self.db.execute(
+                "UPDATE sessions SET revoked_at=? WHERE token_prefix=? AND revoked_at IS NULL",
+                (utc_now(), session_token_prefix(session_token)),
+            )
 
     def visible_servers(self, principal_id: int | None = None) -> list[dict[str, Any]]:
         public_columns = "id,name,address,environment,tags_json,status,username,port,created_at"
@@ -138,19 +213,35 @@ class AegisService:
             events = []
         return {**counts, "blocked_commands": blocked, "executor_mode": self.settings.executor_mode, "recent_events": events}
 
-    def dispatch(self, method: str, path: str, body: dict[str, Any], api_key: str | None, admin_key: str | None = None) -> tuple[int, dict[str, Any]]:
+    def dispatch(self, method: str, path: str, body: dict[str, Any], api_key: str | None, admin_key: str | None = None, session_token: str | None = None) -> tuple[int, dict[str, Any]]:
         self.counters["requests"] += 1
         if not isinstance(body, dict):
             return 400, {"error": "请求体必须是 JSON 对象"}
         route = urlparse(path).path
         principal = self.principal_from_key(api_key)
-        is_admin = bool(admin_key and self.settings.admin_token and hmac.compare_digest(admin_key, self.settings.admin_token))
+        user = self.user_from_session(session_token)
+        is_admin = bool(admin_key and self.settings.admin_token and hmac.compare_digest(admin_key, self.settings.admin_token)) or bool(user and user["role"] == "admin")
         if route == "/healthz":
             return 200, {"status": "ok"}
         if route == "/readyz":
             if self._rules_error:
                 return 503, {"status": "not_ready", "reason": "规则配置不可用"}
-            return 200, {"status": "ready", "db": "postgresql" if self.settings.database_url else str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "executor_mode": self.settings.executor_mode}
+            return 200, {"status": "ready", "db": "postgresql" if self.settings.database_url else str(self.settings.db_path), "admin_token_configured": bool(self.settings.admin_token), "auth_configured": bool(self.settings.auth_username and self.settings.auth_password), "executor_mode": self.settings.executor_mode}
+        if route == "/api/v1/auth/login" and method == "POST":
+            username = body.get("username")
+            password = body.get("password")
+            result = self.login(username, password)
+            if result is None:
+                return 401, {"error": "用户名或密码错误"}
+            logged_in_user, token, ttl = result
+            return 200, {"user": logged_in_user, "__session_token": token, "__session_max_age": ttl}
+        if route == "/api/v1/auth/me" and method == "GET":
+            if not user:
+                return 401, {"error": "尚未登录"}
+            return 200, {"user": self._public_user(user)}
+        if route == "/api/v1/auth/logout" and method == "POST":
+            self.logout(session_token)
+            return 200, {"status": "logged_out", "__clear_session": True}
         if route == "/api/v1/dashboard" and method == "GET":
             return 200, self.dashboard(principal, is_admin)
         if route == "/api/v1/servers" and method == "GET":
@@ -294,12 +385,15 @@ def create_handler(service: AegisService, static_dir: Path):
     class Handler(BaseHTTPRequestHandler):
         server_version = "Aegis/0.1"
 
-        def _json(self, status: int, payload: dict[str, Any]) -> None:
+        def _json(self, status: int, payload: dict[str, Any], set_cookie: str | None = None) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Access-Control-Allow-Origin", "*")
+            if set_cookie:
+                self.send_header("Set-Cookie", set_cookie)
+                self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(encoded)
 
@@ -326,6 +420,15 @@ def create_handler(service: AegisService, static_dir: Path):
 
         def _admin(self) -> str | None:
             return self.headers.get("X-Aegis-Admin")
+
+        def _session(self) -> str | None:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except (KeyError, ValueError):
+                return None
+            morsel = cookie.get("aegis_session")
+            return morsel.value if morsel else None
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
@@ -373,16 +476,24 @@ def create_handler(service: AegisService, static_dir: Path):
                 ]
                 self._text(200, "\n".join(lines) + "\n")
                 return
-            status, payload = service.dispatch("GET", self.path, {}, self._key(), self._admin())
+            status, payload = service.dispatch("GET", self.path, {}, self._key(), self._admin(), self._session())
             self._json(status, payload)
 
         def do_POST(self) -> None:  # noqa: N802
             try:
                 body = self._body()
-                status, payload = service.dispatch("POST", self.path, body, self._key(), self._admin())
+                status, payload = service.dispatch("POST", self.path, body, self._key(), self._admin(), self._session())
             except (ValueError, json.JSONDecodeError) as exc:
                 status, payload = 400, {"error": str(exc)}
-            self._json(status, payload)
+            set_cookie = None
+            token = payload.pop("__session_token", None)
+            max_age = payload.pop("__session_max_age", 0)
+            if token:
+                secure = "; Secure" if service.settings.session_cookie_secure else ""
+                set_cookie = f"aegis_session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={int(max_age)}{secure}"
+            elif payload.pop("__clear_session", False):
+                set_cookie = "aegis_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+            self._json(status, payload, set_cookie)
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return

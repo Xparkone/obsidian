@@ -31,6 +31,7 @@ class Settings:
     auth_username: str | None = None
     auth_password: str | None = None
     session_ttl_seconds: int = 8 * 60 * 60
+    session_cookie_secure: bool = False
 
 
 def _load_local_env() -> None:
@@ -92,4 +93,5 @@ def load_settings() -> Settings:
         auth_username=os.getenv("AEGIS_AUTH_USERNAME") or None,
         auth_password=os.getenv("AEGIS_AUTH_PASSWORD") or None,
         session_ttl_seconds=int(os.getenv("AEGIS_SESSION_TTL_SECONDS", str(8 * 60 * 60))),
+        session_cookie_secure=os.getenv("AEGIS_SESSION_COOKIE_SECURE", "false").lower() in {"1", "true", "yes"},
     )

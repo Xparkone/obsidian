@@ -101,8 +101,26 @@ class Database:
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin','user')),
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_prefix TEXT NOT NULL,
+                    token_hash TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    created_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_audit_principal_id ON audit_events(principal_id, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_sessions_token_prefix ON sessions(token_prefix);
                 """
             )
             self._ensure_columns(c, "servers", {
@@ -145,6 +163,16 @@ class Database:
         with self.connect() as c:
             row = c.execute(sql, args).fetchone()
             return dict(row) if row else None
+
+    def execute(self, sql: str, args: tuple[Any, ...] = ()) -> int:
+        """Run a write statement that does not need an inserted id."""
+        if self._postgres is not None:
+            return self._postgres.execute(sql, args)
+        try:
+            with self.connect() as c:
+                return int(c.execute(sql, args).rowcount)
+        except sqlite3.IntegrityError as exc:
+            raise DatabaseIntegrityError("数据库约束冲突") from exc
 
     def seed(self, seed_rules: list[dict[str, str]], seed_demo: bool) -> None:
         if self._postgres is not None:
@@ -254,9 +282,27 @@ class PostgresDatabase:
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin','user')),
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token_prefix TEXT NOT NULL,
+                    token_hash TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    created_at TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_audit_principal_id ON audit_events(principal_id, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_principals_key_prefix ON principals(key_prefix);
+                CREATE INDEX IF NOT EXISTS idx_sessions_token_prefix ON sessions(token_prefix);
                 """
             for statement in schema.split(";"):
                 if statement.strip():
@@ -285,6 +331,10 @@ class PostgresDatabase:
         with self.connect() as conn:
             row = conn.execute(self._sql(sql), args).fetchone()
             return dict(row) if row else None
+
+    def execute(self, sql: str, args: tuple[Any, ...] = ()) -> int:
+        with self.connect() as conn:
+            return int(conn.execute(self._sql(sql), args).rowcount)
 
     def seed(self, seed_rules: list[dict[str, str]], seed_demo: bool) -> None:
         for rule in seed_rules:
