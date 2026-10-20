@@ -91,6 +91,11 @@ class AegisCoreTest(unittest.TestCase):
         status, response = service.dispatch("GET", "/api/v1/auth/me", {}, None, None, token)
         self.assertEqual(status, 401)
 
+        _, second_login = service.dispatch("POST", "/api/v1/auth/login", {"username": "admin", "password": "correct-password"}, None)
+        expired_token = second_login["__session_token"]
+        service.db.execute("UPDATE sessions SET expires_at=? WHERE revoked_at IS NULL", ("2000-01-01T00:00:00+00:00",))
+        self.assertEqual(service.dispatch("GET", "/api/v1/auth/me", {}, None, None, expired_token)[0], 401)
+
     def test_bootstrap_login_does_not_overwrite_existing_password(self):
         root = Path(self.tmp.name) / "bootstrap"
         first = Settings(root, root / "aegis.db", "127.0.0.1", 0, False, None, None, None, "test-admin", "dry-run", 1.0, auth_username="admin", auth_password="first-password")
