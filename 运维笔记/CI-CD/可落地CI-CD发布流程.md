@@ -117,6 +117,8 @@ flowchart TD
 10. **记下四个号码。** 源码提交、流水线链接、指纹、生产记录的提交。预期：以后要撤回，不用靠记忆。
 11. **撤回走记录。** 优先再开一次申请，把那次生产变更撤回。生产已经不能等时，先关掉自动同步，退回上一份健康指纹，当天把记录补成同一份。预期：自动同步还开着时，只在界面点回滚，坏版本会马上被同步回来；所以要先关门，再退。
 
+上面 11 步把一条发布走通。要把它当成生产系统，还得满足第 4.12 章：权限收死、镜像能验签、发布有窗口和第二个批准人、运行中挂了能发现、备份真的恢复过、回滚演练有记录。缺任何一条证据，就还只是预发链路。
+
 ## 2. 前置条件
 
 ### 2.1 环境要求
@@ -460,7 +462,7 @@ curl -fsS http://127.0.0.1:8080/healthz
 | 第 2 天 | main 流水线推出第一个真实摘要；staging Merge Request 已合并；`demo-api-staging` 为 `Synced Healthy` |
 | 第 3 天 | 生产 Merge Request 由第二个人合并；生产健康检查通过；按第 4.11 章完成一次回滚演练并再次发布回来 |
 
-三天都做完，这条流程才算落地。只看到流水线变绿不算。
+三天都做完，说明预发和生产的链路走得通。要承载真实用户，还要按第 4.12.7 章把七行证据补齐。只看到流水线变绿不算。
 
 ### 4.10 发布单
 
@@ -477,6 +479,11 @@ staging GitOps SHA:
 prod GitOps SHA:
 staging 验证人 / 时间:
 生产合并人 / 时间:
+批准人是否为源码作者: 否
+发布窗口:
+扫描结论:
+签名校验:
+观察链接和 15 分钟结论:
 健康检查:
 回滚点（上一份 prod GitOps SHA）:
 例外说明:
@@ -529,6 +536,162 @@ argocd app set demo-api-prod --sync-policy automated --self-heal --auto-prune=fa
 `<HISTORY_ID>` 从 `argocd app history` 的输出里抄，不要手填一个记得的数字。
 
 数据库结构变更不在这条回滚里。镜像回到旧版本，不会把已经执行的表结构变更退回去。【需要确认】服务是否带迁移。有迁移时，迁移单独发布，并事先写清对应的回退脚本。
+
+### 4.12 生产级标准
+
+第 4.9 章的三天只证明链路能走通。生产级是指：同一次发布可以重复做、能被拦住、能核对、能撤回，而且事后拿得出证据。下表任何一行没有证据，就不要让真实用户流量进这个服务。
+
+| 门禁 | 生产上必须成立的事 | 要留下的证据 |
+|---|---|---|
+| 权限 | 开发者不能直接推主干，也不能改生产集群；CI 没有 kubeconfig | 保护分支设置、一次被拒绝的推送、`kubectl auth can-i` 输出 |
+| 供应链 | 只构建一次；严重漏洞、密钥泄漏、验签失败都会停 | 扫描报告、软件清单、签名校验输出 |
+| 发布 | 预发和生产是同一枚指纹；生产由第二个人在窗口内合并 | 生产 Merge Request、发布单 |
+| 运行 | 有资源限制、健康检查、滚动发布和中断预算 | `kubectl get deploy,pdb` |
+| 观测 | 发布后 15 分钟内有人看错误和重启 | 仪表盘或日志链接写进发布单 |
+| 密钥 | 密码不进 Git；机器人账号没有删除权限 | 变量设置截图或清单，仓库扫描结果 |
+| 备份 | GitLab 备份能恢复出仓库；Harbor 的这份镜像还在 | 一次恢复记录 |
+| 演练 | 做过一次真回滚，并且又发布回来 | 第 5.3 章第 7、8 步的记录 |
+
+#### 4.12.1 把权限收死
+
+**做什么：**
+
+1. 两个仓库的 `main` 都不允许直接推送，合并前流水线必须成功。GitOps 仓库的 `overlays/prod/` 由 `platform/release-owners` 批准。打开「作者不能批准自己的合并申请」。CI 用的项目令牌保持 Developer，不能合并 `main`。
+2. 生产相关 Job 使用受保护的 Runner 标签。构建 Pod 不要特权模式，不要挂载宿主机 `docker.sock`。
+3. 用开发者自己的账号执行：
+
+```bash
+kubectl auth can-i update deployments -n demo-prod
+kubectl auth can-i delete secrets -n demo-prod
+```
+
+**为什么：** 生产事故里，很多是同一个人既能改代码、又能改集群，出了问题没有第二个人看过。CI 一旦拿着集群管理员凭证，流水线变量泄漏就等于生产被改掉。
+
+**预期结果：** 两条 `can-i` 都是 `no`。向 `main` 直接推送被拒绝。生产合并申请在作者本人那里点不了批准。
+
+【需要确认】现场是否已经把开发者和平台工程师分成两个 Kubernetes 身份。如果所有人都用同一份管理员 kubeconfig，这一条不算通过。
+
+#### 4.12.2 供应链要能验
+
+**做什么：**
+
+1. 合并申请阶段增加密钥扫描，扫到密钥就失败。不要把私有密钥、Harbor 密码、kubeconfig 提交进仓库。
+2. `scan-image` 维持严重漏洞失败即停。高危漏洞给一个有截止日期的豁免清单，到期仍未处理就同样失败。豁免写在仓库里，写明漏洞编号、原因和日期。
+3. 扫描通过后、写预发申请之前，给这枚指纹签名。`open-staging-mr` 和 `open-prod-mr` 都要依赖签名成功。生产合并前再验一次：
+
+```bash
+cosign verify --key cosign.pub \
+  "harbor.example.com/apps/demo-api@sha256:真实指纹"
+```
+
+4. Dockerfile 的基础镜像改成现场镜像仓库里的指纹，不要长期使用浮动标签。
+
+**为什么：** 标签可以被后一次推送改掉，未签名的镜像也可以被换成同名的另一份。签名把「这次构建的产物」和「集群里跑的那一份」钉在一起。密钥扫描挡住的是把密码写进 Git 这种一次就泄漏的错误。
+
+**预期结果：** 故意放一个测试用密钥进分支时，合并申请失败。删掉之后才能合并。`cosign verify` 对这次指纹成功，对一个没签名的旧标签失败。软件清单作为流水线产物至少保留 90 天。
+
+签名私钥放在受保护的 CI 变量里，不要写进仓库。公钥 `cosign.pub` 可以放进 GitOps 仓库，给批准人核对。Runner 如果出不了公网，就不要用依赖公网证书的 keyless 签名。【需要确认】签名私钥由谁生成、放在哪、多久轮换。工具版本也要钉死，不要用浮动标签。
+
+密钥扫描可以加在 `verify` 阶段：
+
+```yaml
+secret-scan:
+  stage: verify
+  image:
+    name: ghcr.io/gitleaks/gitleaks:v8.21.2
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --redact --verbose
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+```
+
+【需要确认】`v8.21.2` 换成当时验证过的版本。扫描输出要打码，避免日志里再印出一次密钥。
+
+#### 4.12.3 发布门
+
+生产合并除了第 4.8 章的三件事，再加四条：
+
+1. 批准人不是这批源码的作者。只有一个人的小组做不到时，不能把该服务标成生产级，发布单写明缺口。
+2. 在约定的发布窗口内合并。【需要确认】窗口，例如工作日 10:00 到 18:00。窗口外要有发布负责人的书面例外，写进发布单。
+3. 这次指纹已经在预发健康跑过，发布单里有验证人和时间。没有预发记录的指纹不能进生产。
+4. 数据库结构变更单独走一次发布，并事先写好退回脚本。不要把「换镜像」和「改表结构」绑成同一步还指望镜像回滚把表也退回去。
+
+同一服务的生产晋级保持 `resource_group`，避免两次发布叠在一起。
+
+#### 4.12.4 运行时撑得住一次发布
+
+第 5.2 章的 Deployment 要带滚动策略：最多多起一个新 Pod，旧 Pod 在新 Pod 就绪前不退出，并给一个明确的超时。副本数至少 2 时，加一个中断预算，避免节点维护时把两个副本同时赶下去。
+
+```yaml
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 180
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+```
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: demo-api
+```
+
+**预期结果：**
+
+```bash
+kubectl -n demo-prod get deploy demo-api \
+  -o jsonpath='{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}'
+kubectl -n demo-prod get pdb demo-api
+```
+
+第一条输出 `0`。第二条能看到 `demo-api`。健康检查、资源请求和限制、非 root、只读根文件系统保持第 5.2 章的写法。
+
+#### 4.12.5 发布之后能看见
+
+**做什么：** 生产合并后的 15 分钟，发布负责人看着这三件事：就绪副本数没有掉下去、Pod 没有反复重启、业务错误没有比发布前明显变多。把仪表盘或一条日志查询链接写进发布单。
+
+**为什么：** `Synced Healthy` 只说明 Kubernetes 认为进程起来了。用户请求失败、错误率升高，往往要到日志和指标里才看得到。
+
+**预期结果：** 发布单上有观察链接、观察人和结论。结论是「维持」或「已撤回」。没有结论的发布不算完成。
+
+【需要确认】现场仪表盘的地址。没有现成仪表盘时，至少留下这段时间的 `kubectl get pods` 和一次真实业务请求的结果，并写明缺口。
+
+#### 4.12.6 备份和恢复
+
+生产级不是「有备份任务」，而是有人在隔离环境里恢复过。上线前留下两份记录：
+
+1. 从 GitLab 备份恢复出 `demo-api` 和 `demo-api-gitops` 的 `main`，提交号和现网一致。
+2. 用 Harbor 的拉取账号还能拉到发布单上的那枚指纹。拉不到，就说明镜像仓库的备份或保留策略不够。
+
+【需要确认】现网用的备份工具和保留天数。GitOps 仓库在 GitLab 里，所以它跟着 GitLab 备份走。Argo CD 的应用定义以 Git 为准，不要只备份界面里的手工修改。
+
+#### 4.12.7 上线判定
+
+对照下面的清单。每一行都要有证据才能把服务交给真实用户。
+
+| 编号 | 通过标准 |
+|---|---|
+| 1 | 第 5.3 章 8 步都做过，包括一次真回滚再发布回来 |
+| 2 | 开发者账号对生产命名空间的写操作是 `no` |
+| 3 | 密钥扫描、严重漏洞扫描、签名校验都会让流水线失败 |
+| 4 | 生产目录有第二个批准人，并且作者不能自批 |
+| 5 | 发布单有四个号码、预发验证人、观察链接和回滚点 |
+| 6 | Deployment 滚动策略和 PodDisruptionBudget 已生效 |
+| 7 | GitLab 恢复和 Harbor 拉镜像各有一次成功记录 |
+
+第 4.9 章做完，只算预发链路可用。这 7 行都有证据，才算这个服务的发布系统达到生产级。
 
 ## 5. 完整示例
 
@@ -893,6 +1056,13 @@ metadata:
   name: demo-api
 spec:
   replicas: 2
+  progressDeadlineSeconds: 180
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: demo-api
@@ -951,6 +1121,22 @@ spec:
       targetPort: 8080
 ```
 
+`base/pdb.yaml`：
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: demo-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: demo-api
+```
+
+副本数少于 2 时不要加这份预算，否则单副本会被预算卡住，无法正常驱逐。
+
 `base/kustomization.yaml`：
 
 ```yaml
@@ -959,6 +1145,7 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
+  - pdb.yaml
 ```
 
 `overlays/staging/kustomization.yaml`：
@@ -1218,7 +1405,7 @@ git show main:overlays/prod/kustomization.yaml
 - `open-prod-mr` 保持手工，并且不要设 `allow_failure: true`。设了之后，流水线会在没人决定是否上生产时显示成功。
 - 发布单不是可选笔记。没有四个标识，后面的回滚只能靠记忆。
 - 一个服务跑通第 5.3 章的 8 项之后，再复制给下一个服务。复制时改的是参数表、镜像名和命名空间，不是阶段顺序。
-- 下一阶段再加，不要挡第一周：镜像签名、准入控制器校验签名、把 `HIGH` 也设为失败、飞书或钉钉审批、按环境拆分的 Harbor 项目。审批如果改到飞书，仍然要保留「未批准的生产摘要不能进入 Argo CD 正在跟踪的 `main`」这条规则。
+- 第 4.12 章是生产流量的门槛。签名、第二个批准人、备份恢复记录和回滚演练都在这道门槛里。飞书或钉钉审批、准入控制器验签、按环境拆分 Harbor 项目，可以在这道门槛之后再加。外部审批仍然不能让未批准的指纹进入 Argo CD 正在跟踪的生产分支。
 
 角色可以按这个分工，人少时可以兼任，生产合并人和源码作者尽量不是同一人：
 
@@ -1234,11 +1421,11 @@ git show main:overlays/prod/kustomization.yaml
 
 这条流程的核心是：main 上构建一次，Harbor 留下不可变标签和摘要，staging 与 prod 通过 GitOps Merge Request 使用同一个摘要，Argo CD 负责同步，回滚时 revert 那次 Git 提交。
 
-落地是否完成，看第 5.3 章的 8 项，而不是看流水线颜色。其中回滚演练是必做项。
+链路走通看第 5.3 章的 8 项。能不能承载生产流量，看第 4.12.7 章的 7 行是不是都有证据。只看到流水线变绿，两边都不算完成。
 
 建议的下一步：
 
 1. 填写第 4.1 章参数表，把所有 `example.com` 换成现场值。
-2. 按第 4.9 章的三天安排做完 staging、生产和一次 revert。
-3. 把第一次的发布单和回滚记录留在 GitOps Merge Request 或工单里。
-4. 一个服务稳定发布两周后，再把同一套文件复制到第二个服务，并决定要不要补镜像签名或外部审批。
+2. 按第 4.9 章做完预发、生产和一次撤回。
+3. 按第 4.12.7 章补齐权限、签名、备份恢复和观察记录。
+4. 七行都有证据之后，再把同一套门禁复制到下一个服务。复制时改参数表、镜像名和命名空间，不改阶段顺序。
