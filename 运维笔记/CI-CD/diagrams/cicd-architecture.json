@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "一次发布里，谁干什么",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "code-in",
+        "label": "代码怎么进主干",
+        "focus": ["developer", "gitlab", "gitops", "reviewer"],
+        "note": "开发者只能提交合并申请。主干受保护，不能直接推送。"
+      },
+      {
+        "id": "image-id",
+        "label": "镜像靠什么认",
+        "focus": ["runner", "harbor", "cluster"],
+        "note": "工人只构建一次。集群按 sha256 指纹来取，不认会改指向的标签。"
+      },
+      {
+        "id": "who-deploys",
+        "label": "谁去改集群",
+        "focus": ["reviewer", "gitops", "argocd", "cluster"],
+        "note": "负责人合并记录之后，只有 Argo CD 按记录启动程序。"
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [48, 56],
+    "cols": 3,
+    "gapX": 64,
+    "gapY": 52,
+    "cellW": 196,
+    "cellH": 76
+  },
+  "components": [
+    {
+      "id": "developer",
+      "type": "external",
+      "label": "开发者",
+      "sublabel": "写代码的人",
+      "row": 0,
+      "col": 0
+    },
+    {
+      "id": "gitlab",
+      "type": "backend",
+      "label": "GitLab",
+      "sublabel": "收合并申请",
+      "tag": "主干受保护",
+      "row": 0,
+      "col": 1
+    },
+    {
+      "id": "runner",
+      "type": "backend",
+      "label": "Runner",
+      "sublabel": "流水线里的工人",
+      "row": 0,
+      "col": 2
+    },
+    {
+      "id": "reviewer",
+      "type": "security",
+      "label": "发布负责人",
+      "sublabel": "最后点头的人",
+      "row": 1,
+      "col": 0
+    },
+    {
+      "id": "gitops",
+      "type": "backend",
+      "label": "GitOps 仓库",
+      "sublabel": "记下该跑哪份镜像",
+      "tag": "主干受保护",
+      "row": 1,
+      "col": 1
+    },
+    {
+      "id": "harbor",
+      "type": "database",
+      "label": "Harbor",
+      "sublabel": "存放镜像的柜子",
+      "tag": "按指纹取货",
+      "row": 1,
+      "col": 2
+    },
+    {
+      "id": "argocd",
+      "type": "cloud",
+      "label": "Argo CD",
+      "sublabel": "照着记录改集群",
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "cluster",
+      "type": "cloud",
+      "label": "Kubernetes",
+      "sublabel": "真正跑程序的地方",
+      "row": 2,
+      "col": 2
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "主干不能直接推送",
+      "wraps": ["gitlab", "gitops"]
+    },
+    {
+      "kind": "region",
+      "label": "只有 Argo CD 能改这里",
+      "wraps": ["argocd", "cluster"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "open-request",
+      "from": "developer",
+      "to": "gitlab",
+      "label": "提交合并申请",
+      "variant": "emphasis"
+    },
+    {
+      "id": "dispatch",
+      "from": "gitlab",
+      "to": "runner",
+      "label": "合并后派工"
+    },
+    {
+      "id": "store-image",
+      "from": "runner",
+      "to": "harbor",
+      "label": "放入一份镜像",
+      "labelDy": 24
+    },
+    {
+      "id": "write-digest",
+      "from": "runner",
+      "to": "gitops",
+      "label": "申请写入指纹"
+    },
+    {
+      "id": "approve",
+      "from": "reviewer",
+      "to": "gitops",
+      "label": "点头后才合并",
+      "variant": "security"
+    },
+    {
+      "id": "read-git",
+      "from": "gitops",
+      "to": "argocd",
+      "label": "读取最新记录",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "sync",
+      "from": "argocd",
+      "to": "cluster",
+      "label": "按指纹启动"
+    },
+    {
+      "id": "pull",
+      "from": "cluster",
+      "to": "harbor",
+      "label": "按指纹拉取"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "合并申请",
+      "items": [
+        "想改主干，先发申请，让别人看见改了什么",
+        "测试通过、有人同意，改动才进主干"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "保护分支",
+      "items": [
+        "主干这扇门不收直接推送",
+        "代码仓库和发布记录都是这样"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "镜像指纹",
+      "items": [
+        "sha256 是这份镜像内容的指纹",
+        "标签像外号，可以改指别的内容；指纹不能"
+      ]
+    }
+  ]
+}

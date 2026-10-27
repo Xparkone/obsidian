@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "一次发布从写代码到上线",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "into-main",
+        "label": "代码进主干",
+        "focus": ["write", "ask"],
+        "note": "先开分支。合并申请通过后，改动才进受保护的主干。"
+      },
+      {
+        "id": "one-image",
+        "label": "只做一份镜像",
+        "focus": ["build", "stage", "check"],
+        "note": "构建时算出 sha256。预发先跑这份指纹，确认程序能起来。"
+      },
+      {
+        "id": "go-live",
+        "label": "放到生产",
+        "focus": ["check", "allow", "live", "undo"],
+        "note": "负责人核对是同一份指纹才放行。出问题就撤回这次合并。"
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "people", "label": "人" },
+    { "id": "pipeline", "label": "流水线" },
+    { "id": "runtime", "label": "运行环境" }
+  ],
+  "phases": [
+    { "id": "change", "label": "改代码", "fromCol": 0, "toCol": 1 },
+    { "id": "image", "label": "定下一份镜像", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "release", "label": "放到生产", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["write", "ask", "build", "stage", "check", "allow", "live"],
+  "nodes": [
+    {
+      "id": "write",
+      "lane": "people",
+      "col": 0,
+      "type": "frontend",
+      "label": "另开一条分支",
+      "sublabel": "先不要碰主干"
+    },
+    {
+      "id": "ask",
+      "lane": "people",
+      "col": 1,
+      "type": "frontend",
+      "label": "提交合并申请",
+      "sublabel": "请别人看过再进去",
+      "tag": "主干有门禁"
+    },
+    {
+      "id": "build",
+      "lane": "pipeline",
+      "col": 2,
+      "type": "backend",
+      "label": "只构建一次",
+      "sublabel": "算出 sha256 指纹",
+      "tag": "只此一份"
+    },
+    {
+      "id": "stage",
+      "lane": "pipeline",
+      "col": 3,
+      "type": "backend",
+      "label": "申请更新预发",
+      "sublabel": "把指纹写进记录"
+    },
+    {
+      "id": "check",
+      "lane": "runtime",
+      "col": 3,
+      "type": "cloud",
+      "label": "预发先跑起来",
+      "sublabel": "用这份指纹试一试"
+    },
+    {
+      "id": "allow",
+      "lane": "people",
+      "col": 4,
+      "type": "security",
+      "label": "负责人点头",
+      "sublabel": "核对是同一份指纹",
+      "tag": "人来放行"
+    },
+    {
+      "id": "live",
+      "lane": "runtime",
+      "col": 5,
+      "type": "cloud",
+      "label": "生产跑起来",
+      "sublabel": "还是这份指纹"
+    },
+    {
+      "id": "stop",
+      "lane": "runtime",
+      "col": 2,
+      "type": "security",
+      "label": "停在原地",
+      "sublabel": "测试或扫描没过"
+    },
+    {
+      "id": "undo",
+      "lane": "runtime",
+      "col": 4,
+      "type": "messagebus",
+      "label": "撤回这次发布",
+      "sublabel": "回到上一份指纹"
+    }
+  ],
+  "edges": [
+    { "from": "write", "to": "ask" },
+    { "from": "ask", "to": "build", "label": "合进主干", "variant": "emphasis" },
+    { "from": "build", "to": "stage", "label": "带上指纹" },
+    { "from": "stage", "to": "check", "label": "合并后同步", "variant": "emphasis" },
+    { "from": "check", "to": "allow", "label": "试过没问题" },
+    { "from": "allow", "to": "live", "label": "同一个 sha256", "variant": "security" },
+    { "from": "build", "to": "stop", "label": "没通过", "variant": "security", "role": "error" },
+    { "from": "live", "to": "undo", "label": "运行不正常", "variant": "security", "role": "error" },
+    { "from": "undo", "to": "live", "label": "换回旧指纹", "variant": "dashed", "role": "return" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "合并申请",
+      "items": [
+        "像交作业：把改动拿出来，等人看完再收进主干",
+        "没通过就停，不会偷偷进主干"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "保护分支",
+      "items": [
+        "主干不收直接推送，只收合并进来的改动",
+        "生产记录也有这扇门，流水线自己合不进去"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "镜像指纹",
+      "items": [
+        "构建时算出的 sha256，钉死这一份内容",
+        "预发和生产用同一份，回滚就是换回旧指纹"
+      ]
+    }
+  ]
+}
