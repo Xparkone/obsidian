@@ -4952,7 +4952,7 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"into-main","label":"代码进主干","focus":["write","ask"],"note":"先开分支。合并申请通过后，改动才进受保护的主干。"},{"id":"one-image","label":"只做一份镜像","focus":["build","stage","check"],"note":"构建时算出 sha256。预发先跑这份指纹，确认程序能起来。"},{"id":"go-live","label":"放到生产","focus":["check","allow","live","undo"],"note":"负责人核对是同一份指纹才放行。出问题就撤回这次合并。"}]</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"into-main","label":"代码进主干","focus":["write","ask","build","stop"],"note":"合并申请上先测试。没过就停，不会推镜像。"},{"id":"one-image","label":"只做一份镜像","focus":["build","scan","stage","check"],"note":"主干上构建一次。严重漏洞不过，就不能写预发。"},{"id":"go-live","label":"放到生产","focus":["check","stay","allow","live","undo"],"note":"预发不对就停。负责人确认同一枚指纹后，生产才跑。"}]</script>
 
     <script id="archify-i18n-data" type="application/json">{"locale":"zh-CN","messages":{"viewer.kind.frontend":"前端","viewer.kind.backend":"后端","viewer.kind.database":"数据库","viewer.kind.cloud":"云服务","viewer.kind.security":"安全","viewer.kind.messagebus":"消息总线","viewer.kind.external":"外部系统","viewer.kind.neutral":"中性","viewer.kind.node":"节点","viewer.kind.start":"开始","viewer.kind.active":"活动","viewer.kind.waiting":"等待","viewer.kind.decision":"决策","viewer.kind.success":"成功","viewer.kind.failure":"失败","viewer.toolbar.actions":"图表操作","viewer.theme.toggle.title":"切换主题（T）","viewer.theme.toggle":"切换颜色主题","viewer.theme.dark":"深色","viewer.theme.light":"浅色","viewer.preset.choose.title":"选择视觉风格（S 循环切换）","viewer.preset.choose":"选择视觉风格","viewer.preset.style":"风格","viewer.preset.menu":"视觉风格","viewer.preset.identity":"视觉表达","viewer.preset.cycles":"S 循环切换","viewer.preset.classic":"经典","viewer.preset.classic.short":"经典","viewer.preset.classic.hint":"稳定的技术默认风格","viewer.preset.flow":"信号流","viewer.preset.flow.short":"流动","viewer.preset.flow.hint":"突出动态流向","viewer.preset.blueprint":"蓝图","viewer.preset.blueprint.hint":"工程评审","viewer.preset.editorial":"编辑风格","viewer.preset.editorial.hint":"适合发布与上线说明","viewer.preset.badge.signalFlow":"信号流","viewer.preset.badge.blueprint":"蓝图 / 修订 01","viewer.preset.badge.editorial":"编辑风格 / 现场笔记","viewer.preset.badge.editorialPlate":"ARCHIFY / 图版 04","viewer.preset.current":"当前视觉风格：{style}。选择视觉风格","viewer.motion.live":"动态","viewer.motion.still":"静态","viewer.motion.pause":"暂停动效","viewer.motion.resume":"恢复动效","viewer.motion.reduced":"已根据减少动态效果偏好暂停动效","viewer.motion.hidden":"页面不可见时已暂停动效","viewer.motion.yielding":"暂停动效；当前让位于{owner}","viewer.motion.yielding.title":"动态预览已启用 · 正在让位于{owner}","viewer.owner.story":"引导故事","viewer.owner.chapter":"当前章节","viewer.owner.chapterPreview":"章节差异预览","viewer.owner.handoff":"章节交接","viewer.owner.route":"路径探测","viewer.owner.lens":"语义透镜","viewer.owner.relationship":"关系预览","viewer.owner.intent":"意图追踪","viewer.owner.focus":"语义聚焦","viewer.owner.legend":"图例预览","viewer.owner.reader":"读者交互","viewer.present.enter":"进入演示模式","viewer.present.enter.title":"演示模式（F）","viewer.present.exit":"退出演示模式","viewer.present.exit.title":"退出演示模式（F 或 Escape）","viewer.present.present":"演示","viewer.present.exit.label":"退出","viewer.export.button":"导出","viewer.export.button.title":"导出图表（E）","viewer.export.diagram":"导出图表","viewer.export.menu":"导出","viewer.export.subtitle":"便携、整洁的输出","viewer.export.share":"分享","viewer.export.shareCard":"分享卡片","viewer.export.routeShareCard":"路径分享卡片","viewer.export.reachShareCard":"可达范围分享卡片","viewer.export.copyShareCard":"复制分享卡片","viewer.export.copyDiagram":"复制图表","viewer.export.clipboardPng":"复制 PNG 到剪贴板","viewer.export.raster":"位图","viewer.export.image":"图像","viewer.export.lossless":"无损图像","viewer.export.compact":"紧凑图像","viewer.export.modern":"现代图像格式","viewer.export.vectorMotion":"矢量与动效","viewer.export.vectorMotion.heading":"矢量与动效","viewer.export.editable":"可编辑矢量图","viewer.export.motion6s":"6 秒动效","viewer.export.unsupported":"当前浏览器不支持","viewer.export.clipboardUnsupported":"当前浏览器不支持写入图片剪贴板","viewer.export.clipboardUnsupported.period":"当前浏览器不支持写入图片剪贴板。","viewer.export.clipboardUnsupported.short":"此浏览器不支持写入图片剪贴板。","viewer.export.motionUnavailable":"当前浏览器无法录制动效","viewer.export.webmUnavailable":"当前浏览器不支持 WebM","viewer.export.failed":"导出失败：{message}","viewer.export.unknownVariant":"未知的分享卡片类型：{variant}","viewer.export.routeRequired":"请先追踪路径，再导出路径分享卡片","viewer.export.reachRequired":"请先追踪编写可达范围，再导出可达范围分享卡片","viewer.export.unknown":"未知错误","viewer.export.routeFailed":"路径分享卡片导出失败：{message}","viewer.export.reachFailed":"可达范围分享卡片导出失败：{message}","viewer.export.copyFailed":"复制失败：{message}","viewer.export.copiedPng":"已将 PNG 复制到剪贴板","viewer.export.copiedShare":"已复制分享卡片","viewer.export.downloadedShare":"已下载分享卡片","viewer.export.downloadedRoute":"已下载路径分享卡片","viewer.export.downloadedReach":"已下载可达范围分享卡片","viewer.export.downloadedWebm":"已下载 WebM","viewer.export.recording":"正在录制 6 秒动效…","viewer.export.card.routeSummary.one":"路径：{source} → {target} · {count} 个有向跳转","viewer.export.card.routeSummary.other":"路径：{source} → {target} · {count} 个有向跳转","viewer.export.card.reachSummary":"从{origin}开始的编写{direction} · {nodes} · {links} · 最深 {hops}","viewer.export.card.node.one":"{count} 个节点","viewer.export.card.node.other":"{count} 个节点","viewer.export.card.link.one":"{count} 条连接","viewer.export.card.link.other":"{count} 条连接","viewer.export.card.hop.one":"{count} 跳","viewer.export.card.hop.other":"{count} 跳","viewer.export.card.routeBadge":"ARCHIFY · 路径 · {hops}","viewer.export.card.reachBadge":"ARCHIFY · {direction}可达范围","viewer.export.card.defaultBadge":"ARCHIFY · {preset} · {theme}","viewer.export.direction.upstream":"上游","viewer.export.direction.downstream":"下游","viewer.export.error.canvasUnavailable":"无法为{label}使用画布","viewer.export.error.contextUnavailable":"无法为{label}创建二维画布上下文","viewer.export.error.toBlobUnavailable":"{label}无法使用 canvas.toBlob","viewer.export.error.toBlobNull":"{label}的 canvas.toBlob 未返回数据","viewer.export.error.variantsCombined":"无法同时组合多种分享卡片类型","viewer.export.error.viewerState":"分享卡片导出无法移除临时 Viewer 状态","viewer.export.error.routeState":"路径卡片导出无法安全保留已解析路径","viewer.export.error.reachState":"可达范围卡片导出无法安全保留编写的可达范围","viewer.export.error.webmRequirements":"WebM 动效导出需要追踪动画及浏览器 MediaRecorder 支持","viewer.export.error.mediaRecorder":"MediaRecorder 录制失败","viewer.export.error.emptyWebm":"MediaRecorder 生成了空的 WebM","viewer.export.error.webmBackground":"无法为 WebM 导出加载 SVG 背景","viewer.guided.region":"图表引导视图","viewer.guided.previous":"上一个引导视图","viewer.guided.previous.title":"上一个引导视图（[）","viewer.guided.next":"下一个引导视图","viewer.guided.next.title":"下一个引导视图（]）","viewer.guided.views":"引导视图","viewer.guided.explore":"探索此系统","viewer.guided.intro":"沿精选路径逐步查看，而不改变源图表。","viewer.guided.trail":"故事轨迹","viewer.guided.beat":"节点","viewer.guided.nextBeat":"下一步","viewer.guided.play":"播放引导故事","viewer.guided.play.title":"播放引导故事（P）","viewer.guided.pause":"暂停引导故事","viewer.guided.pause.title":"暂停引导故事（P）","viewer.guided.replay":"重播引导故事","viewer.guided.replay.title":"重播引导故事（P）","viewer.guided.playStory":"播放故事","viewer.guided.pauseStory":"暂停","viewer.guided.replayStory":"重播故事","viewer.guided.motionUnavailable":"静态模式下无法播放故事","viewer.guided.enableMotion":"切换为动态模式以播放引导故事","viewer.guided.selectBeatLink":"选择故事节点以复制其精确链接","viewer.guided.copyMoment":"复制此刻","viewer.guided.momentCopied":"已复制时刻链接","viewer.guided.momentCopyFailed":"无法复制故事时刻链接","viewer.guided.copied":"已复制","viewer.guided.copyFailed":"复制失败","viewer.guided.showAll":"显示全部","viewer.guided.showAll.aria":"显示完整图表","viewer.guided.chapters":"故事章节","viewer.guided.storyTrail":"{label}的故事轨迹：{count} 个节点","viewer.guided.chapter.open":"打开第 {index}/{total} 章：{label}，{count} 个停靠点","viewer.guided.chapter.current":"当前第 {index}/{total} 章：{label}，{count} 个停靠点","viewer.guided.chapter.selectedNodes":"已选择 {count} 个节点","viewer.guided.chapter.stops":"{count} 个停靠点","viewer.guided.chapter.stop.one":"{count} 个停靠点","viewer.guided.chapter.stop.other":"{count} 个停靠点","viewer.guided.chapter.current.title":"{label} — 当前章节，{count} 个停靠点","viewer.guided.chapter.delta.expanded":"{stay} 个保留，{enter} 个进入，{leave} 个离开","viewer.guided.chapter.delta.aria":"打开第 {index}/{total} 章：{label}。章节聚焦差异：{delta}","viewer.guided.chapter.delta.title":"{label} — 章节聚焦 {delta}","viewer.guided.handoff":"{from} → {to} · 经由{label}","viewer.guided.share.chapter":"章节 {index} / {total}","viewer.guided.share.initial":"章节 01 / 01","viewer.guided.share.default":"引导章节","viewer.guided.state.ready":"就绪","viewer.guided.state.playing":"播放中","viewer.guided.state.settled":"已完成","viewer.guided.state.paused":"已暂停","viewer.guided.state.pinned":"已固定","viewer.guided.state.still":"静态","viewer.guided.share.step":"步骤 {index} / {total} · {label}","viewer.guided.share.staticMoment":"{step} · 静态时刻","viewer.guided.share.complete":"{count} 个步骤已完成 · {note}","viewer.guided.share.settled":"路径已稳定，可供阅读。","viewer.guided.share.staticPath":"{count} 个步骤 · 静态路径","viewer.guided.share.ready":"{count} 个步骤 · 就绪","viewer.guided.share.aria":"{state}，第 {index}/{total} 章：{label}。{beat}。{route}","viewer.guided.beat.start":"节点 {index} / {total} · {label} · 起点","viewer.guided.beat.forward":"节点 {index} / {total} · {from} → {to}","viewer.guided.beat.reverse":"节点 {index} / {total} · {from} → {to} · 反向编写连接","viewer.guided.beat.multiple":"节点 {index} / {total} · {from} ⇄ {to} · {count} 条编写连接","viewer.guided.beat.group":"节点 {index} / {total} · {from} · {to} · 分组 · 无直接连接","viewer.guided.beat.aria.prefix":"故事节点 {index}/{total}：{label}。","viewer.guided.beat.aria.start":"起点。","viewer.guided.beat.aria.forward":"从{from}经一条正向编写关系到达。","viewer.guided.beat.aria.reverse":"从{from}出发；编写关系实际由{to}指向{from}。","viewer.guided.beat.aria.multiple":"从{from}经 {count} 条编写关系到达；不使用任意动效。","viewer.guided.beat.aria.group":"与{from}分组展示，没有直接编写关系。","viewer.guided.caption.start":"起点","viewer.guided.caption.grouped":"分组过渡 · 无直接编写连接","viewer.guided.caption.more":" +另外 {count} 条","viewer.guided.caption.reverse":"反向编写关系","viewer.guided.caption.relationships":"{count} 条编写关系","viewer.guided.caption.relationship":"编写关系","viewer.guided.caption.direction":"编写方向：{from} → {to}","viewer.guided.caption.starting":"编写起点","viewer.guided.beatLink":"复制当前故事时刻链接：第 {index}/{total} 个节点：{label}","viewer.guided.noStory":"此图表没有编写引导故事。","viewer.guide.eyebrow":"图表指南","viewer.guide.close":"关闭图表指南","viewer.guide.inspecting":"正在检查已编译语义","viewer.guide.actions":"图表探索操作","viewer.guide.find":"查找任意节点","viewer.guide.find.hint":"搜索标签、职责、类型和稳定 ID。","viewer.guide.route":"追踪路径","viewer.guide.route.aria":"追踪有向路径","viewer.guide.route.hint":"查看两个语义节点如何按编写方向连接。","viewer.guide.map":"查看完整系统","viewer.guide.map.hint":"打开带实时视口和稳定节点的语义雷达。","viewer.guide.lens":"比较语义类型","viewer.guide.lens.hint":"统计角色、显示流量并比较直接编写的连接。","viewer.guide.story":"播放引导故事","viewer.guide.story.hint":"浏览已编写的章节和真实关系。","viewer.guide.present":"进入演示模式","viewer.guide.present.hint":"让实时图表占满视口，同时不改变导出。","viewer.guide.shortcuts":"其他键盘快捷键","viewer.guide.shortcut.export":"导出","viewer.guide.shortcut.theme":"主题","viewer.guide.shortcut.style":"风格","viewer.guide.shortcut.reset":"重置","viewer.guide.shortcut.zoomIn":"放大","viewer.guide.shortcut.zoomOut":"缩小","viewer.guide.shortcut.close":"关闭","viewer.guide.facts":"{nodes} · {relationships} · {views}","viewer.guide.fact.node.one":"{count} 个语义节点","viewer.guide.fact.node.other":"{count} 个语义节点","viewer.guide.fact.relationship.one":"{count} 条关系","viewer.guide.fact.relationship.other":"{count} 条关系","viewer.guide.fact.view.one":"{count} 个引导视图","viewer.guide.fact.view.other":"{count} 个引导视图","viewer.guide.story.available.one":"浏览 {count} 个已编写章节及其真实关系。","viewer.guide.story.available.other":"浏览 {count} 个已编写章节及其真实关系。","viewer.guide.story.unavailable":"此图表没有编写引导故事。","viewer.guide.open":"打开图表指南","viewer.guide.noStory":"此图表没有编写引导故事。","viewer.finder.title":"查找节点","viewer.finder.close":"关闭节点查找器","viewer.finder.placeholder":"搜索标签或 ID","viewer.finder.search":"搜索图表节点","viewer.finder.results":"图表节点","viewer.finder.empty":"没有匹配的节点","viewer.finder.result.focus":"聚焦{label}","viewer.finder.result.routeStart":"选择{label}作为路径起点","viewer.finder.result.routeTarget":"选择{label}作为路径终点，{links}","viewer.finder.status.empty":"没有匹配的节点","viewer.finder.status.count.one":"{count} 个匹配节点","viewer.finder.status.count.other":"{count} 个匹配节点","viewer.finder.noun.nodes":"个节点","viewer.finder.link.one":"{count} 条连接","viewer.finder.link.other":"{count} 条连接","viewer.finder.result.focus.one":"聚焦{label}，{count} 条相关连接","viewer.finder.result.focus.other":"聚焦{label}，{count} 条相关连接","viewer.finder.status.filtered":"{visible}/{available} {noun}","viewer.finder.status.all":"{available} {noun}","viewer.passport.eyebrow":"语义护照","viewer.passport.metadata":"节点元数据","viewer.passport.evidence":"已验证的源代码证据","viewer.passport.verified":"已验证来源","viewer.passport.reach":"编写可达范围","viewer.passport.reach.trace":"追踪编写的可达性","viewer.passport.upstream":"上游","viewer.passport.downstream":"下游","viewer.passport.upstream.trace":"追踪上游编写可达性","viewer.passport.downstream.trace":"追踪下游编写可达性","viewer.passport.close":"关闭语义护照","viewer.passport.copy":"复制链接","viewer.passport.copy.focus":"复制聚焦节点的链接","viewer.passport.relations":"关系","viewer.passport.relations.show":"显示关联关系","viewer.passport.relations.hide":"隐藏关联关系","viewer.passport.relations.list":"关联关系","viewer.passport.copyRelation":"复制关系","viewer.passport.copyNode":"复制节点","viewer.passport.copyPinned":"复制固定关系的链接","viewer.passport.copySource":"复制来源节点的链接","viewer.passport.copy.focused.success":"已复制聚焦节点链接","viewer.passport.copy.pinned.success":"已复制固定关系链接","viewer.passport.copy.focused.failed":"无法复制聚焦节点链接","viewer.passport.copy.pinned.failed":"无法复制固定关系链接","viewer.passport.relationship.none":"没有关联关系","viewer.passport.relationship.count.one":"{count} 条关系","viewer.passport.relationship.count.other":"{count} 条关系","viewer.passport.relationship.show.one":"显示 {count} 条关联关系","viewer.passport.relationship.show.other":"显示 {count} 条关联关系","viewer.passport.relationship.summary":"{out} 条出向 · {in} 条入向{loops}","viewer.passport.relationship.loops":" · {count} 条自环","viewer.passport.relationship.explorer":"直接关系浏览器","viewer.passport.relationship.help":"使用方向键浏览关系。按 Enter 或空格键固定详情；按 Escape 清除。","viewer.passport.relationship.loopsBack":"回环","viewer.passport.relationship.connectsTo":"连接到","viewer.passport.relationship.connectsFrom":"连接自","viewer.passport.relationship.pinned":"已固定关系 · {from} → {to} · {label}","viewer.passport.relationship.inspect":"检查第 {index}/{total} 条关系：{from} 到 {to}，{label}。按 Enter 查看详情。","viewer.passport.relationship.group.out":"出向","viewer.passport.relationship.group.in":"入向","viewer.passport.relationship.group.loop":"自环","viewer.passport.relationship.row":"{group}：{relationship}，{neighbor}","viewer.passport.relationship.direction.out":"出 →","viewer.passport.relationship.direction.in":"← 入","viewer.passport.relationship.direction.loop":"自环","viewer.passport.sourceCount.one":"{count} 个已验证来源引用","viewer.passport.sourceCount.other":"{count} 个已验证来源引用","viewer.passport.sourceMarker":"来源","viewer.passport.beacon.one":"{count} 个已验证来源；聚焦此节点以检查","viewer.passport.beacon.other":"{count} 个已验证来源；聚焦此节点以检查","viewer.passport.repository.open":"打开已验证的仓库修订版本 {revision}","viewer.passport.source.open":"打开修订版本 {revision} 中已验证的来源 {path}","viewer.passport.source.openLink":"打开 ↗","viewer.passport.reach.upstream.one":"追踪 {count} 个上游编写节点","viewer.passport.reach.upstream.other":"追踪 {count} 个上游编写节点","viewer.passport.reach.downstream.one":"追踪 {count} 个下游编写节点","viewer.passport.reach.downstream.other":"追踪 {count} 个下游编写节点","viewer.passport.reach.noUpstream":"没有上游编写节点","viewer.passport.reach.noDownstream":"没有下游编写节点","viewer.passport.reach.status":"{direction} · {nodes} 个节点 · {links} 条连接 · 最深 {hops} 跳","viewer.route.eyebrow":"路径探测","viewer.route.start":"选择起点节点","viewer.route.start.find":"查找起点","viewer.route.start.find.aria":"查找路径起点","viewer.route.copy":"复制链接","viewer.route.copy.aria":"复制已追踪路径的链接","viewer.route.clear":"清除","viewer.route.clear.aria":"清除路径探测","viewer.route.traced":"已追踪路径","viewer.route.pickTwo":"在图表中选择两个语义节点","viewer.route.pickOne":"在图表中选择一个语义节点","viewer.route.controls":"路径旅程控制","viewer.route.previous":"上一个路径位置","viewer.route.play":"播放路径旅程","viewer.route.pause":"暂停路径旅程","viewer.route.replay":"重播路径旅程","viewer.route.next":"下一个路径位置","viewer.route.journey":"旅程","viewer.route.pause.label":"暂停","viewer.route.replay.label":"重播","viewer.route.overview":"总览","viewer.route.overview.aria":"显示完整路径总览","viewer.route.instructions":"先选择来源，再选择目标；方向很重要。","viewer.route.destination":"选择从{label}出发的目标","viewer.route.destination.find":"查找目标","viewer.route.destination.find.aria":"查找可达的路径目标","viewer.route.differentDestination":"选择其他目标","viewer.route.distinct":"一条路径需要两个不同的语义节点。","viewer.route.unreachable":"没有通往{label}的有向路径","viewer.route.unreachable.detail":"从{source}无法到达{target}。请选择高亮的目标。","viewer.route.start.instructions":"选择来源。下一步只会显示有向可达的目标。","viewer.route.copy.success":"已复制路径链接","viewer.route.copy.failed":"无法复制路径链接","viewer.route.position":"路径位置 {index}/{total}：{label}","viewer.route.step":"第 {index}/{total} 步 · {phase} · {label}","viewer.route.motionRequired":"自动旅程需要动态模式","viewer.route.trigger.clear":"清除已追踪路径","viewer.route.overview.status":"{nodes} · {hops} · 最短编写路径","viewer.route.overview.node.one":"{count} 个节点","viewer.route.overview.node.other":"{count} 个节点","viewer.route.overview.hop.one":"{count} 个有向跳转","viewer.route.overview.hop.other":"{count} 个有向跳转","viewer.route.phase.playing":"播放中","viewer.route.phase.complete":"已完成","viewer.route.phase.inspecting":"检查中","viewer.route.destination.count.one":"有 {count} 个有向目标可用。请选择高亮节点。","viewer.route.destination.count.other":"有 {count} 个有向目标可用。请选择高亮节点。","viewer.route.noOutgoing":"此处没有可用的出向路径。请清除后选择其他来源。","viewer.route.result.title":"{source} 到 {target}","viewer.route.finder.source.title":"选择路径起点","viewer.route.finder.source.placeholder":"搜索路径来源","viewer.route.finder.source.empty":"没有匹配的路径来源","viewer.route.finder.source.results":"可作为路径起点的节点","viewer.route.finder.source.noun":"个路径来源","viewer.route.finder.source.badge":"起点","viewer.route.finder.target.title":"从{label}出发的目标","viewer.route.finder.target.placeholder":"搜索可达目标","viewer.route.finder.target.empty":"没有匹配的可达目标","viewer.route.finder.target.results":"可达路径目标","viewer.route.finder.target.noun":"个可达目标","viewer.route.hop.one":"{count} 跳","viewer.route.hop.other":"{count} 跳","viewer.lens.eyebrow":"语义透镜","viewer.lens.title":"比较系统角色","viewer.lens.close":"关闭语义透镜","viewer.lens.instruction":"最多选择两种语义类型。选择一种可显示其真实流量；选择两种只比较直接编写的关系。","viewer.lens.kinds":"语义类型","viewer.lens.choose":"选择一种类型以检查其节点和相连关系。","viewer.lens.copy":"复制语义透镜链接","viewer.lens.clear":"清除语义透镜","viewer.lens.open":"打开语义透镜","viewer.lens.openActive":"打开当前语义透镜","viewer.lens.legend":"语义图例","viewer.lens.legend.inspect.one":"检查{label}，{count} 个节点","viewer.lens.legend.inspect.other":"检查{label}，{count} 个节点","viewer.lens.kind.count.one":"{label}，{count} 个节点","viewer.lens.kind.count.other":"{label}，{count} 个节点","viewer.lens.compare.one":"{first} → {second}：{forward} · {second} → {first}：{reverse} · 共 {count} 条直接关系","viewer.lens.compare.other":"{first} → {second}：{forward} · {second} → {first}：{reverse} · 共 {count} 条直接关系","viewer.lens.single":"{nodes} · {relationships} · 已连接节点保持可见","viewer.lens.node.one":"{count} 个{label}节点","viewer.lens.node.other":"{count} 个{label}节点","viewer.lens.relationship.one":"{count} 条相连关系","viewer.lens.relationship.other":"{count} 条相连关系","viewer.radar.title":"语义雷达","viewer.radar.building":"正在构建总览","viewer.radar.openFull":"打开完整语义雷达","viewer.radar.open":"打开雷达","viewer.radar.close":"关闭语义雷达","viewer.radar.surface":"图表总览。点击节点进行聚焦，或使用方向键平移。","viewer.radar.click":"点击节点","viewer.radar.drag":"拖动平移","viewer.radar.space":"语义雷达需要更多地图可见空间。","viewer.radar.nodes":"语义图表雷达节点","viewer.radar.focus":"从语义雷达聚焦{label}","viewer.radar.status":"{count} 个节点 · {viewport}","viewer.radar.fullMap":"{count} 个节点 · 完整地图","viewer.radar.compacted":"已收紧雷达，避免遮挡语义护照或地图控件。","viewer.radar.cancelWaiting":"取消等待更多地图空间的语义雷达","viewer.radar.needsSpace":"语义雷达需要更多可见地图空间","viewer.radar.viewport.full":"完整地图","viewer.radar.viewport.width":"宽度 {percent}%","viewer.radar.viewport.scale":"视口 {percent}%","viewer.nav.controls":"图表视图控制","viewer.nav.route":"追踪有向路径","viewer.nav.route.title":"追踪路径（R）","viewer.nav.route.short":"路径","viewer.nav.radar":"打开语义雷达","viewer.nav.radar.title":"语义雷达（M）","viewer.nav.radar.short":"地图","viewer.nav.lens":"打开语义透镜","viewer.nav.lens.title":"语义透镜（L）","viewer.nav.lens.short":"透镜","viewer.nav.find":"查找节点","viewer.nav.find.title":"查找节点（/）","viewer.nav.guide":"打开图表指南","viewer.nav.guide.title":"图表指南（?）","viewer.nav.zoomOut":"缩小","viewer.nav.zoomOut.title":"缩小（-）","viewer.nav.reset":"重置图表视图","viewer.nav.reset.title":"重置视图（0）","viewer.nav.read":"阅读","viewer.nav.zoomIn":"放大","viewer.nav.zoomIn.title":"放大（+）","viewer.nav.camera":"{hint}。重置图表视图","viewer.nav.camera.title":"{semantic}{hint} · 重置视图（0）","viewer.nav.camera.semantic":"语义相机已启用 · ","viewer.nav.level.map":"概览","viewer.nav.level.read":"阅读","viewer.nav.level.full":"完整","viewer.nav.level.auto":"自动","viewer.nav.detail.map":"放大以显示关系标签和节点上下文","viewer.nav.detail.read":"再次放大以显示标签和注释","viewer.nav.detail.full":"完整图表详情","viewer.intent.summary":"{label}。{out} 条出向，{in} 条入向{loops}。共 {total} 条连接。按 Enter 查看详情。","viewer.intent.loops":"，{count} 条自环","viewer.common.copied":"已复制","viewer.common.copyFailed":"复制失败","viewer.common.copyLink":"复制链接","viewer.common.clear":"清除","viewer.common.close":"关闭"}}</script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="图表引导视图">
@@ -5037,7 +5037,7 @@
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-4" x="40" y="548" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
         <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-4-exception" x="46" y="554" width="628" height="92" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="570" class="t-security" font-size="10" font-weight="600">EX / 出了问题</text>
+        <text x="54" y="570" class="t-security" font-size="10" font-weight="600">EX / 先停一下</text>
 
         <!-- Phase headers -->
         <line x1="42" y1="35" x2="266" y2="35" class="a-default" stroke-width="1.1"/>
@@ -5048,7 +5048,7 @@
         <text x="365" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">定下一份镜像</text>
         <line x1="454" y1="35" x2="671" y2="35" class="a-default" stroke-width="1.1"/>
         <rect x="454" y="27" width="217" height="16" rx="4" class="c-mask"/>
-        <text x="562.5" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">放到生产</text>
+        <text x="562.5" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">放到环境上</text>
 
         <!-- Workflow groups -->
 
@@ -5056,17 +5056,20 @@
         <!-- Edge paths -->
         <path data-edge-from="write" data-edge-to="ask" data-edge-key="0" data-composition-points="134,119;174,119" d="M 134 119 L 174 119" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="ask" data-edge-to="build" data-edge-label="合进主干" data-edge-key="1" data-composition-points="220,153;220,243;254,243" d="M 220 153 L 220 243 L 254 243" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="build" data-edge-to="stage" data-edge-label="带上指纹" data-edge-key="2" data-composition-points="346,243;384,243" d="M 346 243 L 384 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="stage" data-edge-to="check" data-edge-label="合并后同步" data-edge-key="3" data-composition-points="430,269;430,352;430,352;430,465" d="M 430 269 L 430 352 L 430 352 L 430 465" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="check" data-edge-to="allow" data-edge-label="试过没问题" data-edge-key="4" data-composition-points="430,465;430,367;454,367" d="M 430 465 L 430 367 L 454 367" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="allow" data-edge-to="live" data-edge-label="同一个 sha256" data-edge-key="5" data-composition-points="500,401;500,484;579,484" d="M 500 401 L 500 484 L 579 484" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="build" data-edge-to="stop" data-edge-label="没通过" data-edge-key="6" data-composition-points="300,277;300,414;300,414;300,589" d="M 300 277 L 300 414 L 300 414 L 300 589" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="live" data-edge-to="undo" data-edge-label="运行不正常" data-edge-key="7" data-composition-points="625,517;625,615;546,615" d="M 625 517 L 625 615 L 546 615" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="undo" data-edge-to="live" data-edge-label="换回旧指纹" data-edge-key="8" data-composition-points="500,589;500,498;579,498" d="M 500 589 L 500 498 L 579 498" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="ask" data-edge-to="stop" data-edge-label="测试没过" data-edge-key="2" data-composition-points="220,153;220,352;220,352;220,589" d="M 220 153 L 220 352 L 220 352 L 220 589" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="build" data-edge-to="scan" data-edge-key="3" data-composition-points="300,269;300,290;300,290;300,341" d="M 300 269 L 300 290 L 300 290 L 300 341" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="scan" data-edge-to="stage" data-edge-label="漏洞通过" data-edge-key="4" data-composition-points="346,367;430,367;430,269" d="M 346 367 L 430 367 L 430 269" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="scan" data-edge-to="stop" data-edge-label="漏洞没过" data-edge-key="5" data-composition-points="300,393;300,615;266,615" d="M 300 393 L 300 615 L 266 615" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="stage" data-edge-to="check" data-edge-label="合并后同步" data-edge-key="6" data-composition-points="430,269;430,352;430,352;430,465" d="M 430 269 L 430 352 L 430 352 L 430 465" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="check" data-edge-to="allow" data-edge-label="健康且一致" data-edge-key="7" data-composition-points="430,465;430,367;454,367" d="M 430 465 L 430 367 L 454 367" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="check" data-edge-to="stay" data-edge-label="预发不对" data-edge-key="8" data-composition-points="430,517;430,538;430,538;430,589" d="M 430 517 L 430 538 L 430 538 L 430 589" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="allow" data-edge-to="live" data-edge-label="同一枚指纹" data-edge-key="9" data-composition-points="500,401;500,491;579,491" d="M 500 401 L 500 491 L 579 491" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="live" data-edge-to="undo" data-edge-label="生产不健康" data-edge-key="10" data-composition-points="618,517;618,538;618,538;618,589" d="M 618 517 L 618 538 L 618 538 L 618 589" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="undo" data-edge-to="live" data-edge-label="换回旧指纹" data-edge-key="11" data-composition-points="632,589;632,538;632,538;632,517" d="M 632 589 L 632 538 L 632 538 L 632 517" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Nodes -->
-        <g id="node-write" data-node-id="write" data-node-label="另开一条分支" tabindex="0" role="button" aria-label="聚焦另开一条分支，先不要碰主干, 开发者 › 改代码" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="先不要碰主干" data-node-context="开发者 › 改代码">
-          <title>另开一条分支 · 先不要碰主干 · 开发者 › 改代码</title>
+        <g id="node-write" data-node-id="write" data-node-label="从主干拉分支" tabindex="0" role="button" aria-label="聚焦从主干拉分支，不要直接推主干, 开发者 › 改代码" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="不要直接推主干" data-node-context="开发者 › 改代码">
+          <title>从主干拉分支 · 不要直接推主干 · 开发者 › 改代码</title>
           <rect x="42" y="93" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="42" y="93" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(48 99) scale(0.6875)">
@@ -5075,12 +5078,12 @@
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">另开一条分支</text>
-          <text data-detail="context" x="88" y="131" class="t-muted" font-size="8" text-anchor="middle">先不要碰主干</text>
+          <text data-node-label="" data-detail-anchor="" x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">从主干拉分支</text>
+          <text data-detail="context" x="88" y="131" class="t-muted" font-size="8" text-anchor="middle">不要直接推主干</text>
         </g>
 
-        <g id="node-ask" data-node-id="ask" data-node-label="提交合并申请" tabindex="0" role="button" aria-label="聚焦提交合并申请，请别人看过再进去, 开发者 › 改代码" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="请别人看过再进去" data-node-tag="主干有门禁" data-node-context="开发者 › 改代码">
-          <title>提交合并申请 · 请别人看过再进去 · 开发者 › 改代码 · 主干有门禁</title>
+        <g id="node-ask" data-node-id="ask" data-node-label="开合并申请" tabindex="0" role="button" aria-label="聚焦开合并申请，先测试，不推镜像, 开发者 › 改代码" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="先测试，不推镜像" data-node-tag="红了不能合并" data-node-context="开发者 › 改代码">
+          <title>开合并申请 · 先测试，不推镜像 · 开发者 › 改代码 · 红了不能合并</title>
           <rect x="174" y="85" width="92" height="68" rx="6" class="c-mask"/>
           <rect x="174" y="85" width="92" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(180 91) scale(0.6875)">
@@ -5089,47 +5092,58 @@
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="220" y="106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">提交合并申请</text>
-          <text data-detail="context" x="220" y="123" class="t-muted" font-size="8" text-anchor="middle">请别人看过再进去</text>
-        <text data-detail="fine" x="220" y="141" class="t-frontend" font-size="7" text-anchor="middle">主干有门禁</text>
+          <text data-node-label="" data-detail-anchor="" x="220" y="106" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">开合并申请</text>
+          <text data-detail="context" x="220" y="123" class="t-muted" font-size="8" text-anchor="middle">先测试，不推镜像</text>
+        <text data-detail="fine" x="220" y="141" class="t-frontend" font-size="7" text-anchor="middle">红了不能合并</text>
         </g>
 
-        <g id="node-build" data-node-id="build" data-node-label="只构建一次" tabindex="0" role="button" aria-label="聚焦只构建一次，算出 sha256 指纹, 流水线 › 定下一份镜像" aria-pressed="false" data-node-kind="backend" data-node-sublabel="算出 sha256 指纹" data-node-tag="只此一份" data-node-context="流水线 › 定下一份镜像">
-          <title>只构建一次 · 算出 sha256 指纹 · 流水线 › 定下一份镜像 · 只此一份</title>
-          <rect x="254" y="209" width="92" height="68" rx="6" class="c-mask"/>
-          <rect x="254" y="209" width="92" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(260 215) scale(0.6875)">
+        <g id="node-build" data-node-id="build" data-node-label="只构建一次" tabindex="0" role="button" aria-label="聚焦只构建一次，算出 sha256 指纹, 流水线 › 定下一份镜像" aria-pressed="false" data-node-kind="backend" data-node-sublabel="算出 sha256 指纹" data-node-context="流水线 › 定下一份镜像">
+          <title>只构建一次 · 算出 sha256 指纹 · 流水线 › 定下一份镜像</title>
+          <rect x="254" y="217" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="254" y="217" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(260 223) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="300" y="230" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">只构建一次</text>
-          <text data-detail="context" x="300" y="247" class="t-muted" font-size="8" text-anchor="middle">算出 sha256 指纹</text>
-        <text data-detail="fine" x="300" y="265" class="t-backend" font-size="7" text-anchor="middle">只此一份</text>
+          <text data-node-label="" data-detail-anchor="" x="300" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">只构建一次</text>
+          <text data-detail="context" x="300" y="255" class="t-muted" font-size="8" text-anchor="middle">算出 sha256 指纹</text>
         </g>
 
-        <g id="node-stage" data-node-id="stage" data-node-label="申请更新预发" tabindex="0" role="button" aria-label="聚焦申请更新预发，把指纹写进记录, 流水线 › 定下一份镜像" aria-pressed="false" data-node-kind="backend" data-node-sublabel="把指纹写进记录" data-node-context="流水线 › 定下一份镜像">
-          <title>申请更新预发 · 把指纹写进记录 · 流水线 › 定下一份镜像</title>
+        <g id="node-scan" data-node-id="scan" data-node-label="扫严重漏洞" tabindex="0" role="button" aria-label="聚焦扫严重漏洞，留下报告和清单, 发布负责人 › 定下一份镜像" aria-pressed="false" data-node-kind="security" data-node-sublabel="留下报告和清单" data-node-context="发布负责人 › 定下一份镜像">
+          <title>扫严重漏洞 · 留下报告和清单 · 发布负责人 › 定下一份镜像</title>
+          <rect x="254" y="341" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="254" y="341" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(260 347) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="300" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">扫严重漏洞</text>
+          <text data-detail="context" x="300" y="379" class="t-muted" font-size="8" text-anchor="middle">留下报告和清单</text>
+        </g>
+
+        <g id="node-stage" data-node-id="stage" data-node-label="给预发写申请" tabindex="0" role="button" aria-label="聚焦给预发写申请，只改预发那一页, 流水线 › 定下一份镜像" aria-pressed="false" data-node-kind="backend" data-node-sublabel="只改预发那一页" data-node-context="流水线 › 定下一份镜像">
+          <title>给预发写申请 · 只改预发那一页 · 流水线 › 定下一份镜像</title>
           <rect x="384" y="217" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="384" y="217" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(390 223) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="430" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">申请更新预发</text>
-          <text data-detail="context" x="430" y="255" class="t-muted" font-size="8" text-anchor="middle">把指纹写进记录</text>
+          <text data-node-label="" data-detail-anchor="" x="430" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">给预发写申请</text>
+          <text data-detail="context" x="430" y="255" class="t-muted" font-size="8" text-anchor="middle">只改预发那一页</text>
         </g>
 
-        <g id="node-check" data-node-id="check" data-node-label="预发先跑起来" tabindex="0" role="button" aria-label="聚焦预发先跑起来，用这份指纹试一试, 运行环境 › 定下一份镜像" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="用这份指纹试一试" data-node-context="运行环境 › 定下一份镜像">
-          <title>预发先跑起来 · 用这份指纹试一试 · 运行环境 › 定下一份镜像</title>
+        <g id="node-check" data-node-id="check" data-node-label="预发跑起来" tabindex="0" role="button" aria-label="聚焦预发跑起来，看健康，对指纹, 运行环境 › 定下一份镜像" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="看健康，对指纹" data-node-context="运行环境 › 定下一份镜像">
+          <title>预发跑起来 · 看健康，对指纹 · 运行环境 › 定下一份镜像</title>
           <rect x="384" y="465" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="384" y="465" width="92" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(390 471) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="430" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">预发先跑起来</text>
-          <text data-detail="context" x="430" y="503" class="t-muted" font-size="8" text-anchor="middle">用这份指纹试一试</text>
+          <text data-node-label="" data-detail-anchor="" x="430" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">预发跑起来</text>
+          <text data-detail="context" x="430" y="503" class="t-muted" font-size="8" text-anchor="middle">看健康，对指纹</text>
         </g>
 
-        <g id="node-allow" data-node-id="allow" data-node-label="负责人点头" tabindex="0" role="button" aria-label="聚焦负责人点头，核对是同一份指纹, 发布负责人 › 放到生产" aria-pressed="false" data-node-kind="security" data-node-sublabel="核对是同一份指纹" data-node-tag="人来放行" data-node-context="发布负责人 › 放到生产">
-          <title>负责人点头 · 核对是同一份指纹 · 发布负责人 › 放到生产 · 人来放行</title>
+        <g id="node-allow" data-node-id="allow" data-node-label="负责人点头" tabindex="0" role="button" aria-label="聚焦负责人点头，确认是同一枚指纹, 发布负责人 › 放到环境上" aria-pressed="false" data-node-kind="security" data-node-sublabel="确认是同一枚指纹" data-node-tag="不再构建" data-node-context="发布负责人 › 放到环境上">
+          <title>负责人点头 · 确认是同一枚指纹 · 发布负责人 › 放到环境上 · 不再构建</title>
           <rect x="454" y="333" width="92" height="68" rx="6" class="c-mask"/>
           <rect x="454" y="333" width="92" height="68" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(460 339) scale(0.6875)">
@@ -5137,80 +5151,103 @@
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="500" y="354" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">负责人点头</text>
-          <text data-detail="context" x="500" y="371" class="t-muted" font-size="8" text-anchor="middle">核对是同一份指纹</text>
-        <text data-detail="fine" x="500" y="389" class="t-security" font-size="7" text-anchor="middle">人来放行</text>
+          <text data-detail="context" x="500" y="371" class="t-muted" font-size="8" text-anchor="middle">确认是同一枚指纹</text>
+        <text data-detail="fine" x="500" y="389" class="t-security" font-size="7" text-anchor="middle">不再构建</text>
         </g>
 
-        <g id="node-live" data-node-id="live" data-node-label="生产跑起来" tabindex="0" role="button" aria-label="聚焦生产跑起来，还是这份指纹, 运行环境 › 放到生产" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="还是这份指纹" data-node-context="运行环境 › 放到生产">
-          <title>生产跑起来 · 还是这份指纹 · 运行环境 › 放到生产</title>
+        <g id="node-live" data-node-id="live" data-node-label="生产跑起来" tabindex="0" role="button" aria-label="聚焦生产跑起来，记下四个号码, 运行环境 › 放到环境上" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="记下四个号码" data-node-context="运行环境 › 放到环境上">
+          <title>生产跑起来 · 记下四个号码 · 运行环境 › 放到环境上</title>
           <rect x="579" y="465" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="579" y="465" width="92" height="52" rx="6" class="c-cloud" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(585 471) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="625" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">生产跑起来</text>
-          <text data-detail="context" x="625" y="503" class="t-muted" font-size="8" text-anchor="middle">还是这份指纹</text>
+          <text data-detail="context" x="625" y="503" class="t-muted" font-size="8" text-anchor="middle">记下四个号码</text>
         </g>
 
-        <g id="node-stop" data-node-id="stop" data-node-label="停在原地" tabindex="0" role="button" aria-label="聚焦停在原地，测试或扫描没过, 出了问题 › 定下一份镜像" aria-pressed="false" data-node-kind="security" data-node-sublabel="测试或扫描没过" data-node-context="出了问题 › 定下一份镜像">
-          <title>停在原地 · 测试或扫描没过 · 出了问题 › 定下一份镜像</title>
-          <rect x="254" y="589" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="254" y="589" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(260 595) scale(0.6875)">
+        <g id="node-stop" data-node-id="stop" data-node-label="停在原地" tabindex="0" role="button" aria-label="聚焦停在原地，测试或漏洞没过, 先停一下 › 改代码" aria-pressed="false" data-node-kind="security" data-node-sublabel="测试或漏洞没过" data-node-context="先停一下 › 改代码">
+          <title>停在原地 · 测试或漏洞没过 · 先停一下 › 改代码</title>
+          <rect x="174" y="589" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="174" y="589" width="92" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(180 595) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="300" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">停在原地</text>
-          <text data-detail="context" x="300" y="627" class="t-muted" font-size="8" text-anchor="middle">测试或扫描没过</text>
+          <text data-node-label="" data-detail-anchor="" x="220" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">停在原地</text>
+          <text data-detail="context" x="220" y="627" class="t-muted" font-size="8" text-anchor="middle">测试或漏洞没过</text>
         </g>
 
-        <g id="node-undo" data-node-id="undo" data-node-label="撤回这次发布" tabindex="0" role="button" aria-label="聚焦撤回这次发布，回到上一份指纹, 出了问题 › 放到生产" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="回到上一份指纹" data-node-context="出了问题 › 放到生产">
-          <title>撤回这次发布 · 回到上一份指纹 · 出了问题 › 放到生产</title>
-          <rect x="454" y="589" width="92" height="52" rx="6" class="c-mask"/>
-          <rect x="454" y="589" width="92" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(460 595) scale(0.6875)">
+        <g id="node-stay" data-node-id="stay" data-node-label="先不到生产" tabindex="0" role="button" aria-label="聚焦先不到生产，发布单写只到预发, 先停一下 › 定下一份镜像" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="发布单写只到预发" data-node-context="先停一下 › 定下一份镜像">
+          <title>先不到生产 · 发布单写只到预发 · 先停一下 › 定下一份镜像</title>
+          <rect x="384" y="589" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="384" y="589" width="92" height="52" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(390 595) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="430" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">先不到生产</text>
+          <text data-detail="context" x="430" y="627" class="t-muted" font-size="8" text-anchor="middle">发布单写只到预发</text>
+        </g>
+
+        <g id="node-undo" data-node-id="undo" data-node-label="撤回这次发布" tabindex="0" role="button" aria-label="聚焦撤回这次发布，回到上一份指纹, 先停一下 › 放到环境上" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="回到上一份指纹" data-node-context="先停一下 › 放到环境上">
+          <title>撤回这次发布 · 回到上一份指纹 · 先停一下 › 放到环境上</title>
+          <rect x="579" y="589" width="92" height="52" rx="6" class="c-mask"/>
+          <rect x="579" y="589" width="92" height="52" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(585 595) scale(0.6875)">
             <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
             <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
             <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
             <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="500" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">撤回这次发布</text>
-          <text data-detail="context" x="500" y="627" class="t-muted" font-size="8" text-anchor="middle">回到上一份指纹</text>
+          <text data-node-label="" data-detail-anchor="" x="625" y="610" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">撤回这次发布</text>
+          <text data-detail="context" x="625" y="627" class="t-muted" font-size="8" text-anchor="middle">回到上一份指纹</text>
         </g>
 
         <!-- Edge labels -->
 
         <g data-detail="context" data-edge-from="ask" data-edge-to="build" data-edge-label="合进主干" data-edge-key="1">
-          <rect x="195.8" y="188" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="220" y="198" class="t-backend" font-size="8" text-anchor="middle">合进主干</text>
+          <rect x="231.8" y="188" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="256" y="198" class="t-backend" font-size="8" text-anchor="middle">合进主干</text>
         </g>
-        <g data-detail="context" data-edge-from="build" data-edge-to="stage" data-edge-label="带上指纹" data-edge-key="2">
-          <rect x="340.8" y="281" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="365" y="291" class="t-muted" font-size="8" text-anchor="middle">带上指纹</text>
+        <g data-detail="context" data-edge-from="ask" data-edge-to="stop" data-edge-label="测试没过" data-edge-key="2">
+          <rect x="195.8" y="332" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="220" y="342" class="t-security" font-size="8" text-anchor="middle">测试没过</text>
         </g>
-        <g data-detail="context" data-edge-from="stage" data-edge-to="check" data-edge-label="合并后同步" data-edge-key="3">
-          <rect x="365" y="332" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="394" y="342" class="t-backend" font-size="8" text-anchor="middle">合并后同步</text>
+
+        <g data-detail="context" data-edge-from="scan" data-edge-to="stage" data-edge-label="漏洞通过" data-edge-key="4">
+          <rect x="369.8" y="308" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="394" y="318" class="t-backend" font-size="8" text-anchor="middle">漏洞通过</text>
         </g>
-        <g data-detail="context" data-edge-from="check" data-edge-to="allow" data-edge-label="试过没问题" data-edge-key="4">
+        <g data-detail="context" data-edge-from="scan" data-edge-to="stop" data-edge-label="漏洞没过" data-edge-key="5">
+          <rect x="275.8" y="494" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="300" y="504" class="t-security" font-size="8" text-anchor="middle">漏洞没过</text>
+        </g>
+        <g data-detail="context" data-edge-from="stage" data-edge-to="check" data-edge-label="合并后同步" data-edge-key="6">
+          <rect x="357" y="332" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="386" y="342" class="t-muted" font-size="8" text-anchor="middle">合并后同步</text>
+        </g>
+        <g data-detail="context" data-edge-from="check" data-edge-to="allow" data-edge-label="健康且一致" data-edge-key="7">
           <rect x="435" y="406" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="464" y="416" class="t-muted" font-size="8" text-anchor="middle">试过没问题</text>
+          <text x="464" y="416" class="t-backend" font-size="8" text-anchor="middle">健康且一致</text>
         </g>
-        <g data-detail="context" data-edge-from="allow" data-edge-to="live" data-edge-label="同一个 sha256" data-edge-key="5">
-          <rect x="463.8" y="432.5" width="72.4" height="14" rx="3" class="c-mask"/>
-          <text x="500" y="442.5" class="t-security" font-size="8" text-anchor="middle">同一个 sha256</text>
+        <g data-detail="context" data-edge-from="check" data-edge-to="stay" data-edge-label="预发不对" data-edge-key="8">
+          <rect x="405.8" y="518" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="430" y="528" class="t-security" font-size="8" text-anchor="middle">预发不对</text>
         </g>
-        <g data-detail="context" data-edge-from="build" data-edge-to="stop" data-edge-label="没通过" data-edge-key="6">
-          <rect x="280.6" y="394" width="38.8" height="14" rx="3" class="c-mask"/>
-          <text x="300" y="404" class="t-security" font-size="8" text-anchor="middle">没通过</text>
+        <g data-detail="context" data-edge-from="allow" data-edge-to="live" data-edge-label="同一枚指纹" data-edge-key="9">
+          <rect x="471" y="436" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="500" y="446" class="t-security" font-size="8" text-anchor="middle">同一枚指纹</text>
         </g>
-        <g data-detail="context" data-edge-from="live" data-edge-to="undo" data-edge-label="运行不正常" data-edge-key="7">
-          <rect x="596" y="556" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="625" y="566" class="t-security" font-size="8" text-anchor="middle">运行不正常</text>
+        <g data-detail="context" data-edge-from="live" data-edge-to="undo" data-edge-label="生产不健康" data-edge-key="10">
+          <rect x="565" y="518" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="594" y="528" class="t-security" font-size="8" text-anchor="middle">生产不健康</text>
         </g>
-        <g data-detail="context" data-edge-from="undo" data-edge-to="live" data-edge-label="换回旧指纹" data-edge-key="8">
-          <rect x="471" y="533.5" width="58" height="14" rx="3" class="c-mask"/>
-          <text x="500" y="543.5" class="t-database" font-size="8" text-anchor="middle">换回旧指纹</text>
+        <g data-detail="context" data-edge-from="undo" data-edge-to="live" data-edge-label="换回旧指纹" data-edge-key="11">
+          <rect x="631" y="542" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="660" y="552" class="t-database" font-size="8" text-anchor="middle">换回旧指纹</text>
         </g>
 
         <!-- Legend -->
@@ -5426,33 +5463,33 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>合并申请</h3>
+          <h3>进主干之前</h3>
         </div>
         <ul>
-          <li>&bull; 像交作业：把改动拿出来，等人看完再收进主干</li>
-          <li>&bull; 没通过就停，不会偷偷进主干</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot rose"></div>
-          <h3>保护分支</h3>
-        </div>
-        <ul>
-          <li>&bull; 主干不收直接推送，只收合并进来的改动</li>
-          <li>&bull; 生产记录也有这扇门，流水线自己合不进去</li>
+          <li>&bull; 合并申请上只测试，不接触镜像仓库密码</li>
+          <li>&bull; 测试没过就不能进主干</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>镜像指纹</h3>
+          <h3>一份镜像走完全程</h3>
         </div>
         <ul>
-          <li>&bull; 构建时算出的 sha256，钉死这一份内容</li>
-          <li>&bull; 预发和生产用同一份，回滚就是换回旧指纹</li>
+          <li>&bull; 主干上构建一次，严重漏洞会挡住预发</li>
+          <li>&bull; 预发和生产引用同一枚 sha256</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>生产门和退路</h3>
+        </div>
+        <ul>
+          <li>&bull; 预发不健康就不要点生产</li>
+          <li>&bull; 撤回时改记录；界面回滚前先关自动同步</li>
         </ul>
       </div>
     </div>

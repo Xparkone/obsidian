@@ -9,20 +9,20 @@
       {
         "id": "into-main",
         "label": "代码进主干",
-        "focus": ["write", "ask"],
-        "note": "先开分支。合并申请通过后，改动才进受保护的主干。"
+        "focus": ["write", "ask", "build", "stop"],
+        "note": "合并申请上先测试。没过就停，不会推镜像。"
       },
       {
         "id": "one-image",
         "label": "只做一份镜像",
-        "focus": ["build", "stage", "check"],
-        "note": "构建时算出 sha256。预发先跑这份指纹，确认程序能起来。"
+        "focus": ["build", "scan", "stage", "check"],
+        "note": "主干上构建一次。严重漏洞不过，就不能写预发。"
       },
       {
         "id": "go-live",
         "label": "放到生产",
-        "focus": ["check", "allow", "live", "undo"],
-        "note": "负责人核对是同一份指纹才放行。出问题就撤回这次合并。"
+        "focus": ["check", "stay", "allow", "live", "undo"],
+        "note": "预发不对就停。负责人确认同一枚指纹后，生产才跑。"
       }
     ]
   },
@@ -31,31 +31,31 @@
     { "id": "pipeline", "label": "流水线" },
     { "id": "owner", "label": "发布负责人" },
     { "id": "runtime", "label": "运行环境" },
-    { "id": "trouble", "label": "出了问题", "variant": "exception" }
+    { "id": "trouble", "label": "先停一下", "variant": "exception" }
   ],
   "phases": [
     { "id": "change", "label": "改代码", "fromCol": 0, "toCol": 1 },
     { "id": "image", "label": "定下一份镜像", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
-    { "id": "release", "label": "放到生产", "fromCol": 4, "toCol": 5 }
+    { "id": "release", "label": "放到环境上", "fromCol": 4, "toCol": 5 }
   ],
-  "mainPath": ["write", "ask", "build", "stage", "check", "allow", "live"],
+  "mainPath": ["write", "ask", "build", "scan", "stage", "check", "allow", "live"],
   "nodes": [
     {
       "id": "write",
       "lane": "author",
       "col": 0,
       "type": "frontend",
-      "label": "另开一条分支",
-      "sublabel": "先不要碰主干"
+      "label": "从主干拉分支",
+      "sublabel": "不要直接推主干"
     },
     {
       "id": "ask",
       "lane": "author",
       "col": 1,
       "type": "frontend",
-      "label": "提交合并申请",
-      "sublabel": "请别人看过再进去",
-      "tag": "主干有门禁"
+      "label": "开合并申请",
+      "sublabel": "先测试，不推镜像",
+      "tag": "红了不能合并"
     },
     {
       "id": "build",
@@ -63,24 +63,31 @@
       "col": 2,
       "type": "backend",
       "label": "只构建一次",
-      "sublabel": "算出 sha256 指纹",
-      "tag": "只此一份"
+      "sublabel": "算出 sha256 指纹"
+    },
+    {
+      "id": "scan",
+      "lane": "owner",
+      "col": 2,
+      "type": "security",
+      "label": "扫严重漏洞",
+      "sublabel": "留下报告和清单"
     },
     {
       "id": "stage",
       "lane": "pipeline",
       "col": 3,
       "type": "backend",
-      "label": "申请更新预发",
-      "sublabel": "把指纹写进记录"
+      "label": "给预发写申请",
+      "sublabel": "只改预发那一页"
     },
     {
       "id": "check",
       "lane": "runtime",
       "col": 3,
       "type": "cloud",
-      "label": "预发先跑起来",
-      "sublabel": "用这份指纹试一试"
+      "label": "预发跑起来",
+      "sublabel": "看健康，对指纹"
     },
     {
       "id": "allow",
@@ -88,8 +95,8 @@
       "col": 4,
       "type": "security",
       "label": "负责人点头",
-      "sublabel": "核对是同一份指纹",
-      "tag": "人来放行"
+      "sublabel": "确认是同一枚指纹",
+      "tag": "不再构建"
     },
     {
       "id": "live",
@@ -97,20 +104,28 @@
       "col": 5,
       "type": "cloud",
       "label": "生产跑起来",
-      "sublabel": "还是这份指纹"
+      "sublabel": "记下四个号码"
     },
     {
       "id": "stop",
       "lane": "trouble",
-      "col": 2,
+      "col": 1,
       "type": "security",
       "label": "停在原地",
-      "sublabel": "测试或扫描没过"
+      "sublabel": "测试或漏洞没过"
+    },
+    {
+      "id": "stay",
+      "lane": "trouble",
+      "col": 3,
+      "type": "frontend",
+      "label": "先不到生产",
+      "sublabel": "发布单写只到预发"
     },
     {
       "id": "undo",
       "lane": "trouble",
-      "col": 4,
+      "col": 5,
       "type": "messagebus",
       "label": "撤回这次发布",
       "sublabel": "回到上一份指纹"
@@ -118,38 +133,41 @@
   ],
   "edges": [
     { "from": "write", "to": "ask" },
-    { "from": "ask", "to": "build", "label": "合进主干", "variant": "emphasis" },
-    { "from": "build", "to": "stage", "label": "带上指纹", "labelDy": 58 },
-    { "from": "stage", "to": "check", "label": "合并后同步", "variant": "emphasis", "route": "drop", "labelDx": -36 },
-    { "from": "check", "to": "allow", "label": "试过没问题", "labelDx": 34 },
-    { "from": "allow", "to": "live", "label": "同一个 sha256", "variant": "security" },
-    { "from": "build", "to": "stop", "label": "没通过", "variant": "security", "role": "error" },
-    { "from": "live", "to": "undo", "label": "运行不正常", "variant": "security", "role": "error" },
-    { "from": "undo", "to": "live", "label": "换回旧指纹", "variant": "dashed", "role": "return" }
+    { "from": "ask", "to": "build", "label": "合进主干", "variant": "emphasis", "labelDx": 36 },
+    { "from": "ask", "to": "stop", "label": "测试没过", "variant": "security", "role": "error", "route": "drop" },
+    { "from": "build", "to": "scan" },
+    { "from": "scan", "to": "stage", "label": "漏洞通过", "variant": "emphasis", "labelDx": -36 },
+    { "from": "scan", "to": "stop", "label": "漏洞没过", "variant": "security", "role": "error" },
+    { "from": "stage", "to": "check", "label": "合并后同步", "route": "drop", "labelDx": -44 },
+    { "from": "check", "to": "allow", "label": "健康且一致", "variant": "emphasis", "labelDx": 34 },
+    { "from": "check", "to": "stay", "label": "预发不对", "variant": "security", "role": "error" },
+    { "from": "allow", "to": "live", "label": "同一枚指纹", "variant": "security" },
+    { "from": "live", "to": "undo", "label": "生产不健康", "variant": "security", "role": "error", "labelDx": -24 },
+    { "from": "undo", "to": "live", "label": "换回旧指纹", "variant": "dashed", "role": "return", "labelDx": 28, "labelDy": 24 }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "合并申请",
+      "title": "进主干之前",
       "items": [
-        "像交作业：把改动拿出来，等人看完再收进主干",
-        "没通过就停，不会偷偷进主干"
-      ]
-    },
-    {
-      "dot": "rose",
-      "title": "保护分支",
-      "items": [
-        "主干不收直接推送，只收合并进来的改动",
-        "生产记录也有这扇门，流水线自己合不进去"
+        "合并申请上只测试，不接触镜像仓库密码",
+        "测试没过就不能进主干"
       ]
     },
     {
       "dot": "emerald",
-      "title": "镜像指纹",
+      "title": "一份镜像走完全程",
       "items": [
-        "构建时算出的 sha256，钉死这一份内容",
-        "预发和生产用同一份，回滚就是换回旧指纹"
+        "主干上构建一次，严重漏洞会挡住预发",
+        "预发和生产引用同一枚 sha256"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "生产门和退路",
+      "items": [
+        "预发不健康就不要点生产",
+        "撤回时改记录；界面回滚前先关自动同步"
       ]
     }
   ]
