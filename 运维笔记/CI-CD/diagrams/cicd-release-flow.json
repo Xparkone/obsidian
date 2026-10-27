@@ -27,9 +27,11 @@
     ]
   },
   "lanes": [
-    { "id": "people", "label": "人" },
+    { "id": "author", "label": "开发者" },
     { "id": "pipeline", "label": "流水线" },
-    { "id": "runtime", "label": "运行环境" }
+    { "id": "owner", "label": "发布负责人" },
+    { "id": "runtime", "label": "运行环境" },
+    { "id": "trouble", "label": "出了问题", "variant": "exception" }
   ],
   "phases": [
     { "id": "change", "label": "改代码", "fromCol": 0, "toCol": 1 },
@@ -40,7 +42,7 @@
   "nodes": [
     {
       "id": "write",
-      "lane": "people",
+      "lane": "author",
       "col": 0,
       "type": "frontend",
       "label": "另开一条分支",
@@ -48,7 +50,7 @@
     },
     {
       "id": "ask",
-      "lane": "people",
+      "lane": "author",
       "col": 1,
       "type": "frontend",
       "label": "提交合并申请",
@@ -82,7 +84,7 @@
     },
     {
       "id": "allow",
-      "lane": "people",
+      "lane": "owner",
       "col": 4,
       "type": "security",
       "label": "负责人点头",
@@ -99,7 +101,7 @@
     },
     {
       "id": "stop",
-      "lane": "runtime",
+      "lane": "trouble",
       "col": 2,
       "type": "security",
       "label": "停在原地",
@@ -107,7 +109,7 @@
     },
     {
       "id": "undo",
-      "lane": "runtime",
+      "lane": "trouble",
       "col": 4,
       "type": "messagebus",
       "label": "撤回这次发布",
@@ -117,9 +119,9 @@
   "edges": [
     { "from": "write", "to": "ask" },
     { "from": "ask", "to": "build", "label": "合进主干", "variant": "emphasis" },
-    { "from": "build", "to": "stage", "label": "带上指纹" },
-    { "from": "stage", "to": "check", "label": "合并后同步", "variant": "emphasis" },
-    { "from": "check", "to": "allow", "label": "试过没问题" },
+    { "from": "build", "to": "stage", "label": "带上指纹", "labelDy": 58 },
+    { "from": "stage", "to": "check", "label": "合并后同步", "variant": "emphasis", "route": "drop", "labelDx": -36 },
+    { "from": "check", "to": "allow", "label": "试过没问题", "labelDx": 34 },
     { "from": "allow", "to": "live", "label": "同一个 sha256", "variant": "security" },
     { "from": "build", "to": "stop", "label": "没通过", "variant": "security", "role": "error" },
     { "from": "live", "to": "undo", "label": "运行不正常", "variant": "security", "role": "error" },
