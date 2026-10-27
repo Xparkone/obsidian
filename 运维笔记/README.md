@@ -63,6 +63,7 @@
 - [GitLab、GitLab Runner 与 Argo CD 的 GitOps 完整部署流程](CI-CD/GitLab-ArgoCD-GitLab-Runner-GitOps完整部署流程.md)
 - [发布编排与审计服务设计：飞书、钉钉审批与多 Argo CD](CI-CD/发布编排审计服务-多ArgoCD与飞书钉钉审批设计.md)
 - [可落地的 CI/CD 发布流程](CI-CD/可落地CI-CD发布流程.md)
+- [CI/CD 生产加固设计](CI-CD/CI-CD生产加固设计.md)
 - [GitLab CI + Argo CD + Harbor 生产级 CI/CD 方案与实施验收 Runbook](CI-CD/GitLab-ArgoCD-Harbor-生产级CICD方案与实施验收Runbook.md)
 - [Argo-CD-部署与使用详解.md](CI-CD/Argo-CD-部署与使用详解.md)
 - [Argocd 触发 webhook gitlab.md](CI-CD/Argocd%20触发%20webhook%20gitlab.md)
